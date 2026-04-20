@@ -1,0 +1,124 @@
+locality A
+locality B
+locality S
+
+name secret : nonce
+
+name T : nonce @ A, B, S
+corr adv ==> [T]
+name skA : pkekey Name(secret) @ A
+name skB : pkekey Name(secret) @ B
+
+struct addrs {
+    _A : Data<adv> ||nonce||,
+    _B : Data<adv> ||nonce||
+}
+
+
+enum pk {
+    | _pkA encpk(skA)
+    | _pkB encpk(skB)
+}
+
+struct signed_by_pkS {
+    _address : Data<adv> ||nonce||,
+    _pk : pk,
+    _t  : Data<adv> ||nonce||
+}
+
+
+struct tickets {
+    _s1 : Data<adv> ||signature||,
+    _s2 : Data<adv> ||signature||,
+    _t1 : signed_by_pkS,
+    _t2 : signed_by_pkS
+}
+
+name skS : sigkey signed_by_pkS @ S
+
+name A_username : nonce @ A, B
+name B_username : nonce @ A, B
+corr adv ==> [A_username]
+corr adv ==> [B_username]
+
+def S_main () @ S : Unit =
+    let sigK = get(skS) in
+    input inp in
+    parse inp as addrs(a, b) in 
+        let msg_to_sign_1 = signed_by_pkS(a, _pkA(get_encpk(skA)), get(T)) in
+        let msg_to_sign_2 = signed_by_pkS(b, _pkB(get_encpk(skB)), get(T)) in
+        let sig1 = sign(sigK, msg_to_sign_1) in
+        let sig2 = sign(sigK, msg_to_sign_2) in
+        let _ = output tickets(sig1, sig2, msg_to_sign_1, msg_to_sign_2) to endpoint(A) in
+        ()        
+    otherwise ()
+
+enum A_result {
+    | A_Ok if sec(skS) then encpk(skB) else Data<adv>
+    | A_No
+}
+
+
+def A_main() @ A 
+: A_result =
+    let a = get(A_username) in
+    let b = get(B_username) in    
+    let _ = output addrs(a, b) to endpoint(S) in
+    input inp in
+    parse inp as tickets(s1, s2, t1, t2) in 
+    corr_case skS in 
+
+    let pkA = get_encpk(skA) in
+    let msg_to_vrfy = signed_by_pkS(a, _pkA(pkA), get(T)) in
+    case vrfy(get_vk(skS), msg_to_vrfy, s1) {
+        | None => A_No()
+        | Some s => 
+            case vrfy(get_vk(skS), t2, s2) {
+                | None => A_No()
+                | Some s =>
+                    parse s as signed_by_pkS(addr, pks, t_val) in     
+                    case pks as pk {
+                        | _pkA _ => A_No()
+                        | _pkB o =>
+                            let _ = output inp to endpoint(B) in
+                            A_Ok(o)
+                        otherwise => A_No()
+                    }
+                    otherwise A_No()
+            }
+    }
+    otherwise A_No()
+
+
+enum B_result {
+    | B_Ok if sec(skS) then encpk(skA) else Data<adv>
+    | B_No
+}
+
+
+
+def B_main() @ B 
+: B_result =
+    let b = get(B_username) in
+    input inp in
+    parse inp as tickets(s1, s2, t1, t2) in 
+    corr_case skS in 
+
+    let pkB = get_encpk(skB) in
+    let msg_to_vrfy = signed_by_pkS(b, _pkB(pkB), get(T)) in
+    case vrfy(get_vk(skS), msg_to_vrfy, s2) {
+        | None => B_No()
+        | Some s => 
+            case vrfy(get_vk(skS), t1, s1) {
+                | None => B_No()
+                | Some s =>
+                    parse s as signed_by_pkS(addr, pks, t_val) in
+                    case pks as pk {
+                        | _pkB _ => B_No()
+                        | _pkA o => B_Ok(o)
+                        otherwise => B_No()
+                    }
+                    otherwise B_No()
+            }
+    }
+    otherwise B_No()

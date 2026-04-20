@@ -7,11 +7,13 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE QuasiQuotes #-}
 module ExtractionBase where
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List
 import Data.Maybe
+import Data.Char
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Reader
@@ -23,110 +25,52 @@ import Data.Type.Equality
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Name ( Name(Bn, Fn) )
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
-import Unbound.Generics.LocallyNameless.TH
+import Unbound.Generics.LocallyNameless.TH ()
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
 import AST
 import CmdArgs
-import ConcreteAST
 import System.IO
 import qualified TypingBase as TB
 import qualified SMTBase as SMT
+import ConcreteAST
+import Verus
+import PrettyVerus
+import Prettyprinter.Interpolate
 
-newtype ExtractionMonad a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT Env (ExceptT ExtractionError IO)) a)
-    deriving (Functor, Applicative, Monad, MonadState Env, MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
+newtype ExtractionMonad t a = ExtractionMonad (ReaderT (TB.Env SMT.SolverEnv) (StateT (Env t) (ExceptT ExtractionError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadState (Env t), MonadError ExtractionError, MonadIO, MonadReader (TB.Env SMT.SolverEnv))
 
-runExtractionMonad :: (TB.Env SMT.SolverEnv) -> Env -> ExtractionMonad a -> IO (Either ExtractionError a)
+runExtractionMonad :: (TB.Env SMT.SolverEnv) -> Env t -> ExtractionMonad t a -> IO (Either ExtractionError a)
 runExtractionMonad tcEnv env (ExtractionMonad m) = runExceptT . evalStateT (runReaderT m tcEnv) $ env
 
-liftCheck :: TB.Check' SMT.SolverEnv a -> ExtractionMonad a
+liftCheck :: TB.Check' SMT.SolverEnv a -> ExtractionMonad t a
 liftCheck c = do
     e <- ask
     o <- liftIO $ runExceptT $ runReaderT (TB.unCheck $ local (set TB.tcScope $ TB.TcGhost False) c) e
     case o of 
-      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "flattenPath error: " 
+      Left s -> ExtractionMonad $ lift $ throwError $ ErrSomethingFailed $ "liftCheck error: "
       Right i -> return i
 
-data RustTy = VecU8 | SliceU8 | OwlBuf | Bool | Number | String | Unit | ADT String | Option RustTy | Borrow RustTy | VerusGhost
-    deriving (Show, Eq, Generic, Typeable)
 
-instance OwlPretty RustTy where
-  owlpretty VecU8 = owlpretty "Vec<u8>"
-  owlpretty SliceU8 = owlpretty "&[u8]"
-  owlpretty Bool = owlpretty "bool"
-  owlpretty Number = owlpretty "usize" --should just work
-  owlpretty String = owlpretty "String"
-  owlpretty Unit = owlpretty "()"
-  owlpretty (ADT s) = owlpretty s
-  owlpretty (Option r) = owlpretty "Option" <> angles (owlpretty r)
-  owlpretty OwlBuf = owlpretty "OwlBuf"
-  owlpretty (Borrow r) = owlpretty "&" <> owlpretty r
-  owlpretty VerusGhost = owlpretty "Ghost<()>"
- 
-data SpecTy = SpecSeqU8 | SpecBool | SpecNumber | SpecString | SpecUnit | SpecADT String | SpecOption SpecTy | SpecGhost
-    deriving (Show, Eq, Generic, Typeable)
 
-instance OwlPretty SpecTy where
-  owlpretty SpecSeqU8 = owlpretty "Seq<u8>"
-  owlpretty SpecBool = owlpretty "bool"
-  owlpretty SpecNumber = owlpretty "usize"
-  owlpretty SpecString = owlpretty "String"
-  owlpretty SpecUnit = owlpretty "()"
-  owlpretty (SpecADT s) = owlpretty s
-  owlpretty (SpecOption r) = owlpretty "Option" <> angles (owlpretty r)
-  owlpretty SpecGhost = owlpretty "Ghost<()>"
-
-type OwlFunDef = Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr
-
-data Env = Env {
-    _flags :: Flags,
-    _path :: String,
-    _aeadCipherMode :: AEADCipherMode,
-    _hmacMode :: HMACMode,
-    _owlUserFuncs :: [(String, TB.UserFunc)],
-    _funcs :: M.Map String ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)), -- return type, how to print
-    _specFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
-    _adtFuncs :: M.Map String (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad  String),
-    _specAdtFuncs :: M.Map String ([OwlDoc] -> OwlDoc),
-    _typeLayouts :: M.Map String Layout,
-    _lenConsts :: M.Map String Int,
-    _structs :: M.Map String [Maybe (String, RustTy)], -- rust type for each field
-    _enums :: M.Map (S.Set String) (String, M.Map String (Maybe RustTy)),
-    _oracles :: M.Map String ([String], M.Map Int ([String], [String], Layout)), -- how to print the output length, where to slice to get the subparts
-    _includes :: S.Set String, -- files we have included so far
-    _freshCtr :: Integer,
-    _curRetTy :: Maybe String, -- return type of the def currently being extracted (needed for type annotations)
-    _kdfCalls :: [(([NameKind], [AExpr]), (RustTy, String))], -- key is (aexpr args, name kinds), can't use M.Map with AExpr keys
-    _adtCalls :: [((String, [AExpr]), (RustTy, String))], -- key is (adt name, aexpr args)
-    _userFuncsCompiled :: M.Map String (OwlDoc, OwlDoc) -- (compiled spec, compiled exec)
+data Env t = Env {
+        _flags :: Flags
+    ,   _path :: String
+    ,   _freshCtr :: Integer
+    ,   _varCtx :: M.Map (CDataVar t) t
+    ,   _funcs :: M.Map String ([FormatTy], FormatTy) -- function name -> (arg types, return type)
+    ,   _owlUserFuncs :: M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy)) -- (return type for pub and sec (Just if needs extraction))
+    ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
+    ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
+    ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
 }
 
-data AEADCipherMode = Aes128Gcm | Aes256Gcm | Chacha20Poly1305 deriving (Show, Eq, Generic, Typeable)
 
-data HMACMode = Sha1 | Sha256 | Sha384 | Sha512 deriving (Show, Eq, Generic, Typeable)
 
-defaultCipher :: AEADCipherMode
-defaultCipher = Chacha20Poly1305
-
-defaultHMACMode :: HMACMode
-defaultHMACMode = Sha512
-data Layout =
-  LBytes Int -- number of bytes
-  | LHexConst String -- hex constant
-  | LUnboundedBytes -- Bytes without statically knowable length. Restricted to be the last field in a struct.
-  | LStruct String [(String, Layout)] -- field, layout
-  | LEnum String (M.Map String (Int, Maybe Layout)) -- finite map from tags to (tag byte, layout)
-    deriving (Show, Eq, Generic, Typeable)
-
-instance OwlPretty Layout where
-    owlpretty (LBytes i) = owlpretty "bytes" <> parens (owlpretty i)
-    owlpretty LUnboundedBytes = owlpretty "unbounded_bytes"
-    owlpretty (LHexConst s) = owlpretty "hex_const" <> parens (owlpretty "0x" <> owlpretty s)
-    owlpretty (LStruct name fields) = owlpretty "struct" <+> owlpretty name <> owlpretty ":" <+> owlpretty fields
-    owlpretty (LEnum name cases) = owlpretty "enum" <+> owlpretty name <> owlpretty ":" <+> owlpretty (M.keys cases)
-
+-- TODO: these may not all be needed
 data ExtractionError =
-      CantLayoutType CTy
+      CantLayoutType Ty
     | TypeError String
     | UndefinedSymbol String
     | OutputWithUnknownDestination
@@ -142,11 +86,13 @@ data ExtractionError =
     | OddLengthHexConst
     | PreimageInExec String
     | GhostInExec String
+    | LiftedError ExtractionError
+    | CantCastType String String String
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
-    owlpretty (CantLayoutType ct) =
-        owlpretty "Can't make a layout for type:" <+> owlpretty ct
+    owlpretty (CantLayoutType t) =
+        owlpretty "Can't make a layout for type:" <+> owlpretty t
     owlpretty (TypeError s) =
         owlpretty "Type error during extraction:" <+> owlpretty s
     owlpretty (UndefinedSymbol s) =
@@ -177,32 +123,96 @@ instance OwlPretty ExtractionError where
         owlpretty "Found a call to `preimage`, which is not allowed in exec code:" <+> owlpretty s
     owlpretty (GhostInExec s) =
         owlpretty "Found a ghost value in exec code:" <+> owlpretty s
+    owlpretty (LiftedError e) =
+        owlpretty "Lifted error:" <+> owlpretty e
+    owlpretty (CantCastType v t1 t2) =
+        owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
+
+type LocalityName = String
+type NameData = (String, FLen, Int, BufSecrecy) -- name, type, number of processID indices, whether should be SecretBuf or OwlBuf
+type VNameData = (String, ConstUsize, Int, BufSecrecy)
+type OwlDefData = (String, TB.Def)
+data LocalityData nameData defData = LocalityData {
+    _nLocIdxs :: Int, 
+    _localNames :: [nameData], 
+    _sharedNames :: [nameData], 
+    _defs :: [defData], 
+    _tables :: [(String, Ty)], 
+    _counters :: [String]
+} deriving Show
+makeLenses ''LocalityData
+data ExtractionData defData tyData nameData userFuncData = ExtractionData {
+    _locMap :: M.Map LocalityName (LocalityData nameData defData),
+    _presharedNames :: [(nameData, [LocalityName])],
+    _pubKeys :: [nameData],
+    _tyDefs :: [(String, tyData)],
+    _userFuncs :: [userFuncData]
+} deriving Show
+makeLenses ''ExtractionData
+
+type OwlExtractionData = ExtractionData OwlDefData TB.TyDef NameData (String, TB.UserFunc)
+type OwlLocalityData = LocalityData NameData OwlDefData
+type CFExtractionData = ExtractionData (Maybe (CDef FormatTy)) (CTyDef FormatTy) NameData (CUserFunc FormatTy)
+type CRExtractionData = ExtractionData (Maybe (CDef VerusTy)) (CTyDef (Maybe ConstUsize, VerusTy)) VNameData (CUserFunc VerusTy)
+type FormatLocalityData = LocalityData NameData (Maybe (CDef FormatTy))
+type VerusLocalityData = LocalityData VNameData (Maybe (CDef VerusTy))
+
+
+makeLenses ''Env
+
+liftExtractionMonad :: ExtractionMonad t a -> ExtractionMonad t' a
+liftExtractionMonad m = do
+    tcEnv <- ask
+    env' <- get
+    let env = Env {
+            _flags = env' ^. flags,
+            _path = env' ^. path,
+            _freshCtr = env' ^. freshCtr,
+            _varCtx = M.empty,
+            _funcs = env' ^. funcs,
+            _owlUserFuncs = env' ^. owlUserFuncs,
+            _memoKDF = [],
+            _genVerusNameEnv = M.empty,
+            _genVerusPkEnv = M.empty
+        }
+    o <- liftIO $ runExtractionMonad tcEnv env m
+    case o of 
+        Left s -> throwError $ LiftedError s
+        Right i -> return i
+
+
+
+lookupVar :: CDataVar t -> ExtractionMonad t (Maybe t)
+lookupVar x = do
+    s <- use varCtx
+    return $ M.lookup x s
 
 printErr :: ExtractionError -> IO ()
 printErr e = print $ owlpretty "Extraction error:" <+> owlpretty e
 
-debugPrint :: String -> ExtractionMonad ()
+debugPrint :: String -> ExtractionMonad t ()
 debugPrint = liftIO . putStrLn
 
-replacePrimes :: String -> String
-replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
+debugLog :: String -> ExtractionMonad t ()
+debugLog s = do
+    fs <- use flags
+    when (fs ^. fDebugExtraction) $ debugPrint ("    " ++ s)
 
-replacePrimes' :: OwlDoc -> OwlDoc
-replacePrimes' = owlpretty . replacePrimes . show
+instance Fresh (ExtractionMonad t) where
+    fresh (Fn s _) = do
+        n <- use freshCtr
+        freshCtr %= (+) 1
+        return $ Fn s n
+    fresh nm@(Bn {}) = return nm
 
-rustifyName :: String -> String
-rustifyName s = "owl_" ++ replacePrimes s
+initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty
+    where
+        mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy))
+        mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
 
-rustifyName' :: OwlDoc -> OwlDoc
-rustifyName' = owlpretty . rustifyName . show
-
-unrustifyName :: String -> String
-unrustifyName = drop 4
-
-specName :: String -> String
-specName s = "owlSpec_" ++ replacePrimes s
 
 flattenResolvedPath :: ResolvedPath -> String
 flattenResolvedPath PTop = ""
@@ -210,453 +220,135 @@ flattenResolvedPath (PDot PTop y) = y
 flattenResolvedPath (PDot x y) = flattenResolvedPath x ++ "_" ++ y
 flattenResolvedPath s = error $ "failed flattenResolvedPath on " ++ show s
 
-
-tailPath :: Path -> ExtractionMonad String
+tailPath :: Path -> ExtractionMonad t String
 tailPath (PRes (PDot _ y)) = return y
 tailPath p = throwError $ ErrSomethingFailed $ "couldn't do tailPath of path " ++ show p
 
-flattenPath :: Path -> ExtractionMonad String
+flattenPath :: Path -> ExtractionMonad t String
 flattenPath (PRes rp) = do
     rp' <- liftCheck $ TB.normResolvedPath rp
     return $ flattenResolvedPath rp'
 flattenPath p = error $ "bad path: " ++ show p
 
-locName :: String -> String
-locName x = "loc_" ++ replacePrimes x
-
-cfgName :: String -> String
-cfgName x = "cfg_" ++ replacePrimes x
-
-stateName :: String -> String
-stateName x = "state_" ++ replacePrimes x
-
-sidName :: String -> String
-sidName x = "sid_" ++ replacePrimes x
-
-makeLenses ''Env
-
-debugLog :: String -> ExtractionMonad ()
-debugLog s = do
-    fs <- use flags
-    when (fs ^. fDebugExtraction) $ debugPrint ("    " ++ s)
-
-instance Fresh ExtractionMonad where
-    fresh (Fn s _) = do
-        n <- use freshCtr
-        freshCtr %= (+) 1
-        return $ Fn s n
-    fresh nm@(Bn {}) = return nm
-
-showAEADCipher :: ExtractionMonad String
-showAEADCipher = do
-    c <- use aeadCipherMode
-    return $ case c of
-        Aes128Gcm -> "owl_aead::Mode::Aes128Gcm"
-        Aes256Gcm -> "owl_aead::Mode::Aes256Gcm"
-        Chacha20Poly1305 -> "owl_aead::Mode::Chacha20Poly1305"
-
-showHMACMode :: ExtractionMonad String
-showHMACMode = do
-    h <- use hmacMode
-    return $ case h of
-        Sha1 -> "owl_hmac::Mode::Sha1"
-        Sha256 -> "owl_hmac::Mode::Sha256"
-        Sha384 -> "owl_hmac::Mode::Sha384"
-        Sha512 -> "owl_hmac::Mode::Sha512"
-
-aeadKeySize :: AEADCipherMode -> Int
-aeadKeySize c = case c of
-       Aes128Gcm -> 16
-       Aes256Gcm -> 32
-       Chacha20Poly1305 -> 32
-
-useAeadKeySize :: ExtractionMonad Int
-useAeadKeySize = do
-    c <- use aeadCipherMode
-    return $ aeadKeySize c
-
-aeadTagSize :: AEADCipherMode -> Int
-aeadTagSize c = case c of
-       Aes128Gcm -> 16
-       Aes256Gcm -> 16
-       Chacha20Poly1305 -> 16
-
-useAeadTagSize :: ExtractionMonad Int
-useAeadTagSize = do
-    c <- use aeadCipherMode
-    return $ aeadTagSize c
-
-aeadNonceSize :: AEADCipherMode -> Int
-aeadNonceSize c = case c of
-       Aes128Gcm -> 12
-       Aes256Gcm -> 12
-       Chacha20Poly1305 -> 12
-
-useAeadNonceSize :: ExtractionMonad Int
-useAeadNonceSize = do
-    c <- use aeadCipherMode
-    return $ aeadNonceSize c
-
-hmacKeySize :: Int
-hmacKeySize = 32 -- TODO This is specific to Wireguard
-
-useHmacKeySize :: ExtractionMonad Int
-useHmacKeySize = return hmacKeySize
-
-pkeKeySize :: Int
-pkeKeySize = 1219
-
-pkePubKeySize :: Int
-pkePubKeySize = 1219
-
-sigKeySize :: Int
-sigKeySize = 1219
-
-vkSize :: Int
-vkSize = 1219
-
-dhSize :: Int
-dhSize = 32 -- TODO This is specific to Wireguard
-
-hmacLen :: Int
-hmacLen = 16 -- TODO This is specific to Wireguard
-
-counterSize :: Int
-counterSize = 8 -- TODO This is specific to Wireguard---should be a param
-
-crhSize :: Int
-crhSize = 32 -- TODO This is specific to Wireguard
-
-kdfKeySize :: Int
-kdfKeySize = 32 -- TODO This is specific to Wireguard
-
-initLenConsts :: M.Map String Int
-initLenConsts = M.fromList [
-        (rustifyName "signature", 256),
-        (rustifyName "enckey", aeadKeySize defaultCipher),
-        (rustifyName "nonce", aeadNonceSize defaultCipher),
-        (rustifyName "mackey", hmacKeySize),
-        (rustifyName "maclen", hmacLen),
-        (rustifyName "pke_sk", pkeKeySize),
-        (rustifyName "pke_pk", pkePubKeySize),
-        (rustifyName "sigkey", sigKeySize),
-        (rustifyName "kdfkey", kdfKeySize),
-        (rustifyName "vk", vkSize),
-        (rustifyName "DH", dhSize),
-        (rustifyName "group", dhSize),
-        (rustifyName "counter", counterSize),
-        (rustifyName "crh", crhSize),
-        (rustifyName "tag", 1)
-    ]
-
-initTypeLayouts :: M.Map String Layout
-initTypeLayouts = M.map LBytes initLenConsts
-
--- Confirm: we call `serialize` when we need to treat an ADT as a sequence of bytes for a crypto op
--- TODO make the serializing more efficient
-printOwlArg :: (RustTy, String) -> String
-printOwlArg (OwlBuf, s) = "(" ++ s ++ ").as_slice()"
-printOwlArg (SliceU8, s) = s
-printOwlArg (VecU8, s) = "vec_as_slice(&" ++ s ++ ")"
-printOwlArg (ADT name, s) = "vec_as_slice(&(serialize_" ++ name ++ "(&" ++ s ++ ")))"
--- printOwlArg (Rc (ADT name), s) = "vec_as_slice(&(serialize_" ++ name ++ "(&(*" ++ s ++ "))))"
-printOwlArg (_, s) = s
-
-printOwlOp :: String -> [(RustTy, String)] -> String
-printOwlOp op args = op ++ "(" ++ (foldl1 (\acc s -> acc ++ ", " ++ s) . map printOwlArg $ args) ++ ")"
 
 
-initFuncs :: M.Map String ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String))
-initFuncs = 
-    let eqChecker = (\args -> case args of
-                                [(Bool, x, _), (Bool, y, _)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(Number, x, _), (Number, y, _)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(String, x, _), (String, y, _)] -> return $ (Bool, x ++ " == " ++ y)
-                                [(Unit, x, _), (Unit, y, _)] -> return $ (Bool, x ++ " == " ++ y)
-                                -- [(ADT _,x), (ADT _,y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ".data, &" ++ y ++ ".data)")
-                                -- [(Rc VecU8, x), (Rc VecU8, y)] -> return $ (Bool, "rc_vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(VecU8, x, _), (VecU8, y, _)] -> return $ (Bool, "vec_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(SliceU8, x, _), (SliceU8, y, _)] -> return $ (Bool, "slice_eq(&" ++ x ++ ", &" ++ y ++ ")")
-                                [(OwlBuf, x, _), (OwlBuf, y, _)] -> return $ (Bool, "slice_eq(&" ++ x ++ ".as_slice() , &" ++ y ++ ".as_slice())")
-                                _ -> throwError $ TypeError $ "got wrong args for eq"
-                        ) 
-    in M.fromList [
-            ("eq", eqChecker),
-            ("checknonce", eqChecker),
-            ("dhpk", (\args -> case args of
-                    [(t, x, _)] -> do return $ (VecU8, printOwlOp "owl_dhpk" [(t,x)])
-                    _ -> throwError $ TypeError $ "got wrong number of args for dhpk"
-            )),
-            ("dh_combine", (\args -> case args of
-                    [(pkt, pk, _), (skt, sk, _)] -> do return $ (VecU8, printOwlOp "owl_dh_combine" [(pkt, pk), (skt, sk)]) 
-                    _ -> throwError $ TypeError $ "got wrong number of args for dh_combine"
-            )),
-            ("unit", (\_ -> return (Unit, "()"))),
-            ("true", (\_ -> return (Bool, "true"))),
-            ("false", (\_ -> return (Bool, "false"))),
-            ("Some", (\args -> case args of
-                    [(t,x, _)] -> return $ (Option t, "Some(" ++ x ++ ")")
-                    _ -> throwError $ TypeError $ "got wrong number of args for Some"
-            )),
-            ("None", (\_ -> return (Option Unit, "None"))), -- dummy
-            ("length", (\args -> case args of
-                    -- [(Rc VecU8,x)] -> return $ (Number, "vec_length(&(*" ++ x ++ "))")
-                    [(VecU8,x, _)] -> return $ (Number, "vec_length(&" ++ x ++ ")")
-                    [(SliceU8,x, _)] -> return $ (Number, "slice_len(&" ++ x ++ ")")
-                    [(OwlBuf,x, _)] -> return $ (Number, "" ++ x ++ ".len()")
-                    _ -> throwError $ TypeError $ "got wrong number of args for length"
-            )),
-            ("zero", (\_ -> return (Number, "0"))),
-            ("plus", (\args -> case args of
-                    [(Number, x, _), (Number, y, _)] -> return $ (Number, x ++ " + " ++ y)
-                    _ -> throwError $ TypeError $ "got wrong number of args for plus"
-            )),
-            ("mult", (\args -> case args of
-                    [(Number, x, _), (Number, y, _)] -> return $ (Number, x ++ " * " ++ y)
-                    _ -> throwError $ TypeError $ "got wrong number of args for mult"
-            )),
-            ("cipherlen", (\args -> case args of
-                    [(_,x, _)] -> do
-                        tsz <- useAeadTagSize
-                        return $ (Number, x ++ " + " ++ show tsz)
-                    _ -> throwError $ TypeError $ "got wrong number of args for cipherlen"
-            )),
-            ("is_group_elem", (\args -> case args of
-                    [(t,x,_)] -> return $ (Bool, printOwlOp "owl_is_group_elem" [(t,x)])
-                    _ -> throwError $ TypeError $ "got wrong number of args for is_group_elem"
-            )),
-            ("concat", (\args -> case args of
-                    [(tx,x,_), (ty,y,_)] -> return $ (VecU8, printOwlOp "owl_concat" [(tx, x), (ty, y)])
-                    _ -> throwError $ TypeError $ "got wrong number of args for concat"
-            )),
-            ("crh", (\args -> case args of
-                    [(t,x,_)] -> return $ (VecU8, printOwlOp "owl_crh" [(t,x)])
-                    _ -> throwError $ TypeError $ "got wrong number of args for crh"
-            )),
-            -- ("xor", (VecU8, \args -> case args of
-            --     [(_,x), (ADT _,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ".0[..])"
-            --     [(_,x), (_,y)] -> return $ x ++ ".owl_xor(&" ++ y ++ ")"
-            --     _ -> throwError $ TypeError $ "got wrong args for xor"
-            -- )),
-            ("andb", (\args -> case args of
-                [(Bool,x, _), (Bool,y, _)] -> return $ (Bool, x ++ " && " ++ y)
-                _ -> throwError $ TypeError $ "got wrong args for andb"
-            )),
-            ("notb", (\args -> case args of
-                [(Bool,x, _)] -> return $ (Bool, "! " ++ x)
-                _ -> throwError $ TypeError $ "got wrong args for andb"
-            ))
-        ] 
+unbindCDepBind :: (Alpha a, Alpha t, Typeable t) => CDepBind t a -> ExtractionMonad tt ([(CDataVar t, String, t)], a)
+unbindCDepBind (CDPDone a) = return ([], a)
+unbindCDepBind (CDPVar t s xd) = do
+    (x, d) <- unbind xd 
+    (xs, a) <- unbindCDepBind d 
+    return ((x, s, t) : xs, a)
 
-initEnv :: Flags -> String -> TB.Map String TB.UserFunc -> Env
-initEnv flags path userFuncs = Env flags path defaultCipher defaultHMACMode userFuncs initFuncs M.empty M.empty M.empty initTypeLayouts initLenConsts M.empty M.empty M.empty S.empty 0 Nothing [] [] M.empty
+bindCDepBind :: (Alpha a, Alpha t, Typeable t) => [(CDataVar t, String, t)] -> a -> ExtractionMonad tt (CDepBind t a)
+bindCDepBind [] a = return $ CDPDone a
+bindCDepBind ((x, s, t):xs) a = do
+    d <- bindCDepBind xs a
+    return $ CDPVar t s (bind x d)
 
-lookupTyLayout' :: String -> ExtractionMonad (Maybe Layout)
-lookupTyLayout' n = do
-    ls <- use typeLayouts
-    return $ ls M.!? n
+replacePrimes :: String -> String
+replacePrimes = map (\c -> if c == '\'' || c == '.' then '_' else c)
 
-lookupTyLayout :: String -> ExtractionMonad Layout
-lookupTyLayout n = do
-    o <- lookupTyLayout' n
-    case o of
-        Just l -> return l
-        Nothing -> do
-            ls <- use typeLayouts
-            debugPrint $ "failed lookupTyLayout: " ++ n ++ " in " ++ show (M.keys ls)
-            throwError $ UndefinedSymbol n
+execName :: String -> VerusName
+execName owlName = "owl_" ++ replacePrimes owlName
 
-lookupNameLayout :: NameExp -> ExtractionMonad Layout
-lookupNameLayout n = do
-    n' <- case n ^. val of 
-        NameConst _ _ _  -> flattenNameExp n
-        KDFName _ _ _ nks i _ _ -> do
-            let nk = nks !! i
-            return $ rustifyName . show . owlpretty $ nk
-    o <- lookupTyLayout' n'
-    case o of
-        Just l -> return l
-        Nothing -> do
-            ls <- use typeLayouts
-            debugPrint $ "failed lookupNameLayout: " ++ n' ++ " in " ++ show (M.keys ls)
-            throwError $ UndefinedSymbol n'
+-- cmpNameLifetime :: String -> String -> VerusName
+-- cmpNameLifetime owlName lt = withLifetime ("owl_" ++ owlName) lt
+
+specName :: String -> VerusName
+specName owlName = "owlSpec_" ++ replacePrimes owlName
+
+unExecName :: VerusName -> String
+unExecName s = 
+    if "owl_" `isPrefixOf` s then drop 4 s else error "unExecName: not an owl name: " ++ s
+
+specNameOfExecName :: VerusName -> String
+specNameOfExecName s = 
+    if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s
+
+fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
+fLenOfNameKind nk = do
+    return $ FLNamed $ case nk of
+        NK_KDF -> "kdfkey"
+        NK_DH  -> "group"
+        NK_Enc -> "enckey"
+        NK_PKE -> "pkekey"
+        NK_Sig -> "sigkey"
+        NK_MAC -> "mackey"
+        NK_Nonce s -> s
+
+fLenOfNameTy :: NameType -> ExtractionMonad t FLen
+fLenOfNameTy nt = do
+    nk <- liftCheck $ TB.getNameKind nt
+    fLenOfNameKind nk
 
 
-lookupFunc :: Path -> ExtractionMonad (Maybe ([(RustTy, String, String)] -> ExtractionMonad (RustTy, String)))
-lookupFunc fpath = do
-    fs <- use funcs
-    f <- tailPath fpath
-    -- debugPrint $ owlpretty "lookup" <+> pretty f <+> pretty "in" <+> pretty (M.keys fs)
-    return $ fs M.!? f
-    
-lookupStruct :: String -> ExtractionMonad [Maybe (String, RustTy)]
-lookupStruct s = do
-    ss <- use structs
-    case ss M.!? s of
-        Just fs -> return fs
-        Nothing -> throwError $ TypeError $ "struct not found: " ++ s
+secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
+secrecyOfNameKind nk = do
+    return $ case nk of
+        NK_KDF -> BufSecret
+        NK_DH  -> BufSecret
+        NK_Enc -> BufSecret
+        NK_PKE -> BufSecret
+        NK_Sig -> BufSecret
+        NK_MAC -> BufSecret
+        NK_Nonce _ -> BufSecret
 
-lookupAdtFunc :: String -> ExtractionMonad (Maybe (String, RustTy, Bool, [(RustTy, String)] -> ExtractionMonad String))
-lookupAdtFunc fn = do
-    ufs <- use owlUserFuncs
-    adtfs <- use adtFuncs
-    -- debugPrint $ owlpretty "lookupAdtFunc of" <+> owlpretty fn <+> owlpretty "in" <+> owlpretty ufs
-    case lookup fn ufs of
-        -- special handling for struct constructors, since their names are path-scoped
-        Just (TB.StructConstructor _) -> return $ adtfs M.!? fn 
-        Just (TB.StructProjector _ p) -> return $ adtfs M.!? p
-        Just (TB.EnumConstructor _ c) -> return $ adtfs M.!? c
-        Just _ -> return Nothing-- throwError $ ErrSomethingFailed $ "Unsupported owl user func: " ++ show fn
-        Nothing -> return Nothing
+secrecyOfNameTy :: NameType -> ExtractionMonad t BufSecrecy
+secrecyOfNameTy nt = do
+    nk <- liftCheck $ TB.getNameKind nt
+    secrecyOfNameKind nk
 
-lookupUserFunc :: String -> ExtractionMonad (Maybe OwlFunDef)
-lookupUserFunc fn = do
-    ufs <- use owlUserFuncs
-    case lookup fn ufs of
-        Just (TB.FunDef b) -> return $ Just b
-        _ -> return Nothing
+concreteLength :: ConstUsize -> ExtractionMonad t Int
+concreteLength (CUsizeLit i) = return i
+concreteLength (CUsizeConst s) = do
+    -- NOTE: these lengths are dependent on the particular crypto primitives being used
+    l <- case s of
+        "KDFKEY_SIZE"    -> return 32
+        "GROUP_SIZE"     -> return 32
+        "ENCKEY_SIZE"    -> return 32
+        "MACKEY_SIZE"    -> return 64
+        "NONCE_SIZE"     -> return 12
+        "TAG_SIZE"       -> return 16
+        "MACLEN_SIZE"    -> return 16
+        "COUNTER_SIZE"   -> return 8
+        "SIGNATURE_SIZE" -> return 64
+        -- The below are for compatibility with old Owl
+        "VK_SIZE"        -> return 1219
+        "SIGKEY_SIZE"    -> return 1219
+        "PKEKEY_SIZE"    -> return 1219
+        "PKE_PK_SIZE"    -> return 1219
+        _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
+    debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
+    return l
+concreteLength (CUsizePlus a b) = do
+    a' <- concreteLength a
+    b' <- concreteLength b
+    return $ a' + b'
 
-flattenNameExp :: NameExp -> ExtractionMonad String
-flattenNameExp n = case n ^. val of
-  NameConst _ s _ -> do
-      p <- flattenPath s
-      return $ rustifyName p
---   KDFName _ _ -> do
---       p <- flattenPath (n ^. val)
---       return $ rustifyName p
-  -- _ -> throwError $ UnsupportedNameExp n
+lowerLenConst :: String -> String
+lowerLenConst s = map toUpper s ++ "_SIZE"
+
+lowerFLen :: FLen -> ConstUsize
+lowerFLen (FLConst n) = CUsizeLit n
+lowerFLen (FLNamed n) = 
+    let n' = lowerLenConst n in
+    CUsizeConst n'
+lowerFLen (FLPlus a b) = 
+    let a' = lowerFLen a in
+    let b' = lowerFLen b in
+    CUsizePlus a' b'
+lowerFLen (FLCipherlen a) = 
+    let n' = lowerFLen a in
+    CUsizePlus n' (CUsizeConst "TAG_SIZE")
 
 
-rustifyArgTy :: CTy -> ExtractionMonad RustTy
-rustifyArgTy (CTOption ct) = do
-    rt <- rustifyArgTy ct
-    return $ Option rt
-rustifyArgTy (CTConst p) = do
-    n <- flattenPath p
-    l <- lookupTyLayout . rustifyName $ n
-    return $ case l of
-        LBytes _ -> VecU8
-        LUnboundedBytes -> VecU8
-        LStruct s _ -> ADT s
-        LEnum s _ -> ADT s
-rustifyArgTy CTBool = return Bool
-rustifyArgTy CTUnit = return Unit
-rustifyArgTy CTGhost = return VerusGhost
-rustifyArgTy _ = return $ SliceU8
-
-rustifyRetTy :: CTy -> ExtractionMonad RustTy
-rustifyRetTy (CTOption ct) = do
-    rt <- rustifyRetTy ct
-    return $ Option rt
-rustifyRetTy (CTConst p) = do
-    n <- flattenPath p
-    l <- lookupTyLayout . rustifyName $ n
-    return $ case l of
-        LBytes _ -> OwlBuf
-        LUnboundedBytes -> OwlBuf
-        LStruct s _ -> ADT s
-        LEnum s _ -> ADT s
-rustifyRetTy CTBool = return Bool
-rustifyRetTy CTUnit = return Unit
-rustifyRetTy CTGhost = return VerusGhost
-rustifyRetTy _ = return $ OwlBuf
-
--- For computing data structure members
-specDataTyOf :: RustTy -> SpecTy
-specDataTyOf VecU8 = SpecSeqU8
-specDataTyOf SliceU8 = SpecSeqU8
-specDataTyOf OwlBuf = SpecSeqU8
-specDataTyOf Bool = SpecBool
-specDataTyOf Number = SpecNumber
-specDataTyOf String = SpecString
-specDataTyOf Unit = SpecUnit
-specDataTyOf (ADT s) = SpecADT (specName . unrustifyName $ s)
-specDataTyOf (Option rt) = SpecOption (specDataTyOf rt)
-specDataTyOf (Borrow rt) = specDataTyOf rt
-specDataTyOf VerusGhost = SpecGhost
-
-rustifySpecDataTy :: CTy -> ExtractionMonad SpecTy
-rustifySpecDataTy ct = do
-    rt <- rustifyArgTy ct
-    return $ specDataTyOf rt
-
-specTyOf :: RustTy -> SpecTy
-specTyOf (ADT s) = SpecSeqU8 -- in itree specs, everything is maintained as Seq<u8>
-specTyOf (Option rt) = SpecOption (specTyOf rt)
-specTyOf (Borrow rt) = specTyOf rt
-specTyOf r = specDataTyOf r
-
-rustifySpecTy :: CTy -> ExtractionMonad SpecTy
-rustifySpecTy ct = do
-    rt <- rustifyArgTy ct
-    return $ specTyOf rt
-
--- rcClone :: OwlDoc
--- rcClone = owlpretty "arc_clone"
-
--- rcNew :: OwlDoc
--- rcNew = owlpretty "arc_new"
-
-getCurRetTy :: ExtractionMonad String
-getCurRetTy = do
-    t <- use curRetTy
-    case t of      
-        Nothing -> throwError $ ErrSomethingFailed "getCurRetTy of Nothing"
-        Just s -> return s
-
-viewVar :: RustTy -> String -> String
-viewVar VecU8 s = s ++ ".dview()"
-viewVar SliceU8 s = s ++ ".dview()"
-viewVar OwlBuf s = s ++ ".dview()"
-viewVar Bool s = s
-viewVar Number s = s
-viewVar String s = s
-viewVar Unit s = s
-viewVar (ADT _) s = s ++ ".dview()" -- TODO nesting?
-viewVar (Option rt) s = s ++ ".dview()"
-viewVar (Borrow rt) s = viewVar rt s
-viewVar VerusGhost s = s
-
-hexStringToByteList :: String -> ExtractionMonad OwlDoc
-hexStringToByteList [] = return $ owlpretty ""
+hexStringToByteList :: String -> ExtractionMonad t (Doc ann)
+hexStringToByteList [] = return $ pretty ""
 hexStringToByteList (h1 : h2 : t) = do
     t' <- hexStringToByteList t
-    return $ owlpretty "0x" <> owlpretty h1 <> owlpretty h2 <> owlpretty "u8," <+> t'
+    commaIfNeeded <- if null t then return "" else return ","
+    return $ pretty "0x" <> pretty h1 <> pretty h2 <> pretty "u8" <> pretty commaIfNeeded <+> t'
 hexStringToByteList _ = throwError OddLengthHexConst
-
-
-
-resolveANF :: M.Map String (a, Maybe AExpr) -> AExpr -> ExtractionMonad AExpr
-resolveANF binds a = do
-    case a^.val of
-        AEVar s x -> do 
-            case binds M.!? (rustifyName . show $ x) of
-                Nothing -> throwError $ ErrSomethingFailed $ "resolveANF failed on: " ++ show x ++ ", " ++ show s 
-                Just (_, ianf) -> 
-                    case ianf of 
-                    Nothing -> return a
-                    Just a' -> resolveANF binds a'
-        AEApp f ps args -> do
-            args' <- mapM (resolveANF binds) args
-            return $ mkSpanned $ AEApp f ps args'
-        AEHex _ -> return a
-        --AEPreimage f ps args -> do
-        --    args' <- mapM (resolveANF binds) args
-        --    return $ mkSpanned $ AEPreimage f ps args'
-        AEGet _ -> return a
-        AEGetEncPK _ -> return a
-        AEGetVK _ -> return a
-        AELenConst _ -> return a
-        AEInt _ -> return a
-        AEKDF _ _ _ _ _ -> return a
-
-
-lookupStringAExprMap :: [((String, [AExpr]), a)] -> (String, [AExpr]) -> Maybe a
-lookupStringAExprMap [] (n, args) = Nothing
-lookupStringAExprMap (((ln, largs), r) : tl) (n, args) =
-    if n == ln && all (uncurry aeq) (zip args largs)
-    then Just r
-    else lookupStringAExprMap tl (n, args)
 
 lookupNameKindAExprMap :: [(([NameKind], [AExpr]), a)] -> [NameKind] -> [AExpr] -> Maybe a
 lookupNameKindAExprMap [] nks args = Nothing
@@ -666,53 +358,295 @@ lookupNameKindAExprMap (((lnks, largs), r) : tl) nks args =
     else lookupNameKindAExprMap tl nks args
 
 
-lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad (Maybe (RustTy, String))
+lookupKdfCall :: [NameKind] -> [AExpr] -> ExtractionMonad t (Maybe (CDataVar t, t))
 lookupKdfCall nks k = do
-    hcs <- use kdfCalls
+    hcs <- use memoKDF
     return $ lookupNameKindAExprMap hcs nks k
 
-lookupAdtCall :: (String, [AExpr]) -> ExtractionMonad (Maybe (RustTy, String))
-lookupAdtCall k = do
-    adtcs <- use adtCalls
-    return $ lookupStringAExprMap adtcs k
 
-makeKdfSliceMap :: [NameKind] -> ExtractionMonad ([String], M.Map Int ([String], [String], Layout))
-makeKdfSliceMap nks = do
-    (totLen, sliceMap) <- foldM (\(t, m) (i, nk) -> do
-            (rtstr, len) <- case nk of
-                NK_KDF -> do
-                    let l = kdfKeySize
-                    return ("kdfkey", l)
-                -- NK_DH 
-                NK_Enc -> do
-                    l <- useAeadKeySize
-                    return ("enckey", l)
-                -- NK_PKE 
-                -- NK_Sig 
-                NK_MAC -> do
-                    l <- useHmacKeySize
-                    return ("mackey", l)
-                NK_Nonce nl -> do
-                    when (nl /= "nonce") $ throwError $ ErrSomethingFailed "custom nonce lengths unsupported"
-                    l <- useAeadNonceSize
-                    return (nl, l)
-                _ -> throwError $ UnsupportedOracleReturnType (show nk)
-            return (t ++ [rtstr], M.insert i (t, t ++ [rtstr], LBytes len) m)
-        ) (["0"], M.empty) (zip [0..] nks)
-    return (totLen, sliceMap)
+---- Equality on FormatTys ignoring buffer secrecy
+eqUpToSecrecy :: FormatTy -> FormatTy -> Bool
+eqUpToSecrecy (FBuf _ l1) (FBuf _ l2) = l1 == l2 || l1 == Nothing || l2 == Nothing
+eqUpToSecrecy (FOption t1) (FOption t2) = eqUpToSecrecy t1 t2
+eqUpToSecrecy f1 f2 = f1 == f2
+
+---- Equality on FormatTys ignoring FBuf length
+eqUpToBufLen :: FormatTy -> FormatTy -> Bool
+eqUpToBufLen (FBuf s1 _) (FBuf s2 _) = s1 == s2
+eqUpToBufLen (FOption t1) (FOption t2) = eqUpToBufLen t1 t2
+eqUpToBufLen f1 f2 = f1 == f2
+
+secrecyOfFTy :: FormatTy -> BufSecrecy
+secrecyOfFTy (FBuf s _) = s
+secrecyOfFTy (FStruct _ fs) = if all ((== BufPublic) . secrecyOfFTy . snd) fs then BufPublic else BufSecret
+secrecyOfFTy (FEnum _ cs) = if all ((== BufPublic) . secrecyOfFTy) (mapMaybe snd cs) then BufPublic else BufSecret
+secrecyOfFTy (FOption f) = secrecyOfFTy f
+secrecyOfFTy _ = BufPublic
+
+joinSecrecy :: BufSecrecy -> BufSecrecy -> BufSecrecy
+joinSecrecy BufPublic BufPublic = BufPublic
+joinSecrecy _ _ = BufSecret
+
+joinSecrecies :: [BufSecrecy] -> BufSecrecy
+joinSecrecies = foldr joinSecrecy BufPublic
+
+secretizeFTy :: FormatTy -> FormatTy
+secretizeFTy (FBuf _ l) = FBuf BufSecret l
+secretizeFTy (FStruct n fs) = FStruct ("secret_" ++ n) $ map (fmap secretizeFTy) fs
+secretizeFTy (FEnum n cs) = FEnum n $ map (fmap (fmap secretizeFTy)) cs
+secretizeFTy (FOption f) = FOption $ secretizeFTy f
+secretizeFTy (FHexConst s) = FBuf BufSecret $ Just $ FLConst $ length s `div` 2
+secretizeFTy f = f
+
+------------------------------------------------------------------------------------------------------
+---- Vest stuff
+
+-- Any format that uses Vest's `uint` or `Tag` combinators cannot have a secret parser
+-- Enums use `Tag` for the enum tag
+-- Structs must have all secret-parsable fields to be secret-parsable 
+hasSecParser :: FormatTy -> Bool
+hasSecParser (FBuf BufSecret _) = True
+hasSecParser (FStruct _ fs) = all (hasSecParser . snd) fs
+hasSecParser FGhost = True
+hasSecParser _ = False 
+
+canSecretParse :: FormatTy -> Bool
+canSecretParse f =
+    hasSecParser f ||
+        case f of
+            FStruct _ fs -> any ((==) BufSecret . secrecyOfFTy . snd) fs
+            _ -> False
+
+-- For serialization, we don't care if the buf is secret or public to begin with, since we 
+-- may need to upcast the public buf to secret when serializing
+hasSecSerializer :: FormatTy -> Bool
+hasSecSerializer (FBuf _ _) = True
+hasSecSerializer (FStruct _ fs) = all (hasSecSerializer . snd) fs
+hasSecSerializer FGhost = True
+hasSecSerializer _ = False 
 
 
-canBeVest :: Layout -> Bool
-canBeVest (LStruct _ fs) = go True . map snd $ fs
-    where 
-        go acc [] = acc
-        go acc [LUnboundedBytes] = acc
-        go acc (LBytes _ : t) = go acc t
-        go acc (LHexConst _ : t) = go acc t
-        go _ _ = False
-canBeVest _ = False
+mkNestPattern :: [Doc ann] -> Doc ann
+mkNestPattern l = 
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
 
-bufOpt :: ExtractionMonad Bool
-bufOpt = do
-    fs <- use flags
-    return $ fs ^. fExtractBufOpt
+nestOrdChoiceTy :: [Doc ann] -> Doc ann
+nestOrdChoiceTy l = 
+    [di|ord_choice_type!(#{hsep . punctuate comma $ l})|]
+
+nestOrdChoice :: [Doc ann] -> Doc ann
+nestOrdChoice l = 
+        [di|ord_choice!(#{hsep . punctuate comma $ l})|]
+
+-- injOrdChoice i l x macro prints the macro call for x in a list of length l at index i
+injOrdChoice :: Int -> Int -> Doc ann -> Doc ann -> Doc ann
+injOrdChoice i l x macro =
+    let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]] in
+    [di|#{macro}(#{starstr})|]   
+
+listIdxToInjPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToInjPat i l x = return $ injOrdChoice i l x [di|inj_ord_choice_pat!|]   
+
+listIdxToInjResult :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
+listIdxToInjResult i l x = return $ injOrdChoice i l x [di|inj_ord_choice_result!|]   
+
+
+withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
+withJustNothing f (Just x) = Just <$> f x
+withJustNothing f Nothing = return (Just Nothing)
+
+compareByFieldNames :: (String, a) -> (String, a) -> Ordering
+compareByFieldNames (a, _) (b, _) = compare a b
+
+specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
+specCombTyOf' (FBuf BufSecret (Just flen)) = do
+    return $ Just [di|Variable|]
+specCombTyOf' (FBuf BufSecret Nothing) = do
+    return $ Just [di|Tail|]
+specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Variable|]
+specCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
+specCombTyOf' (FStruct _ fs) = do
+    fs' <- mapM (specCombTyOf' . snd) fs
+    case sequence fs' of
+        Just fs'' -> do
+            let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+specCombTyOf' (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
+    cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
+    case sequence cs' of
+        Just cs'' -> do
+            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Variable|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoiceTy constCs
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+specCombTyOf' (FHexConst s) = do
+    let l = length s `div` 2
+    return $ Just [di|OwlConstBytes<#{l}>|]
+specCombTyOf' _ = return Nothing
+
+specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
+specCombTyOf = liftFromJust specCombTyOf'
+
+execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
+execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Variable|]
+execCombTyOf' (FBuf BufSecret Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Variable|]
+execCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
+execCombTyOf' (FStruct _ fs) = do
+    fs' <- mapM (execCombTyOf' . snd) fs
+    case sequence fs' of
+        Just fs'' -> do
+            let nest = mkNestPattern fs''
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+execCombTyOf' (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
+    cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
+    case sequence cs' of
+        Just cs'' -> do
+            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Variable|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoiceTy constCs
+            return $ Just [di|#{nest}|]
+        Nothing -> return Nothing
+execCombTyOf' (FHexConst s) = do
+    let l = length s `div` 2
+    return $ Just [di|OwlConstBytes<#{l}>|]
+execCombTyOf' _ = return Nothing
+
+execCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
+execCombTyOf = liftFromJust execCombTyOf'
+
+-- (combinator type, any constants that need to be defined)
+specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+specCombOf' _ (FBuf BufSecret (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Variable(#{l})|]
+specCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
+specCombOf' _ (FBuf BufPublic (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Variable(#{l})|]
+specCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
+specCombOf' constSuffix (FStruct _ fs) = do
+    fcs <- mapM (specCombOf' constSuffix . snd) fs
+    case sequence fcs of
+        Just fcs' -> do
+            let (fs', consts) = unzip fcs'
+            let nest = mkNestPattern fs'
+            -- We don't return the consts here, since they would already have been
+            -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+specCombOf' constSuffix (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
+    cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
+    case sequence cs' of
+        Just ccs'' -> do
+            let cs'' = foldr (\opt cs -> 
+                        case opt of
+                            Just (c, const) -> Just c : cs
+                            Nothing -> Nothing : cs
+                    ) [] ccs''
+            let consts = [[di|Tag::spec_new(U8, #{i})|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Variable(0)|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
+            let nest = nestOrdChoice constCs
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+specCombOf' constSuffix (FHexConst s) = do
+    let l = length s `div` 2
+    bl <- hexStringToByteList s
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let const = [di|spec const SPEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] = [#{bl}];|]
+    return $ Just ([di|OwlConstBytes::<#{l}>(SPEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+specCombOf' _ _ = return Nothing
+
+specCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+specCombOf s = liftFromJust (specCombOf' s)
+
+-- (combinator type, any constants that need to be defined)
+execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
+execCombOf' _ (FBuf BufSecret (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Variable(#{l})|]
+execCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
+execCombOf' _ (FBuf BufPublic (Just flen)) = do
+    l <- concreteLength $ lowerFLen flen
+    return $ noconst [di|Variable(#{l})|]
+execCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
+execCombOf' constSuffix (FStruct _ fs) = do
+    fcs <- mapM (execCombOf' constSuffix . snd) fs
+    case sequence fcs of
+        Just fcs' -> do
+            let (fs', consts) = unzip fcs'
+            let nest = mkNestPattern fs'
+            -- We don't return the consts here, since they would already have been
+            -- returned and printed when the nested struct was defined
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+execCombOf' constSuffix (FEnum _ csStart) = do
+    let cs = sortBy compareByFieldNames csStart
+    cs' <- mapM (withJustNothing (specCombOf' constSuffix) . snd) cs
+    case sequence cs' of
+        Just ccs'' -> do
+            let cs'' = foldr (\opt cs -> 
+                        case opt of
+                            Just (c, const) -> Just c : cs
+                            Nothing -> Nothing : cs
+                    ) [] ccs''
+            let consts = [[di|Tag::new(U8, #{i})|] | i <- [1 .. length cs'']]
+            let cs''' = map (fromMaybe [di|Variable(0)|]) cs''
+            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
+            let nest = nestOrdChoice constCs
+            return $ noconst [di|#{nest}|]
+        Nothing -> return Nothing
+execCombOf' constSuffix (FHexConst s) = do
+    bl <- hexStringToByteList s
+    let l = length s `div` 2
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let const = [__di|
+    exec const EXEC_BYTES_CONST_#{s}_#{constSuffix'}: [u8; #{l}] 
+        ensures EXEC_BYTES_CONST_#{s}_#{constSuffix'} == SPEC_BYTES_CONST_#{s}_#{constSuffix'} 
+    {
+        let arr: [u8; #{l}] = [#{bl}];
+        assert(arr == SPEC_BYTES_CONST_#{s}_#{constSuffix'});
+        arr
+    }
+    |]
+    return $ Just ([di|OwlConstBytes::<#{l}>(EXEC_BYTES_CONST_#{s}_#{constSuffix'})|], const)
+execCombOf' _ _ = return Nothing
+
+execCombOf :: String -> FormatTy -> ExtractionMonad t (Doc ann, Doc ann)
+execCombOf s = liftFromJust (execCombOf' s)
+
+
+execParsleyCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe ParsleyCombinator)
+execParsleyCombOf' _ (FBuf BufPublic (Just flen)) = do
+    return $ Just $ PCBytes flen
+execParsleyCombOf' _ (FBuf BufPublic Nothing) = return $ Just $ PCTail
+execParsleyCombOf' constSuffix (FHexConst s) = do
+    let constSuffix' = map Data.Char.toUpper constSuffix
+    let len = length s `div` 2
+    return $ Just $ PCConstBytes len $ "EXEC_BYTES_CONST_" ++ s ++ "_" ++ constSuffix'
+execParsleyCombOf' _ _ = return Nothing
+
+execParsleyCombOf :: String -> FormatTy -> ExtractionMonad t ParsleyCombinator
+execParsleyCombOf s = liftFromJust (execParsleyCombOf' s)
+
+noconst :: a -> Maybe (a, Doc ann)
+noconst x = Just (x, [di||])
+
+liftFromJust :: (a -> ExtractionMonad t (Maybe b)) -> a -> ExtractionMonad t b
+liftFromJust f x = do
+    res <- f x
+    case res of
+        Just r -> return r
+        Nothing -> throwError $ ErrSomethingFailed "liftFromJust failed"

@@ -76,8 +76,8 @@ instance  OwlPretty NameExpX where
                             <>
                             owlpretty ";"
                             <>
-                            (flatAlt (owlpretty "<nametype>") (owlpretty nt))
-                            -- owlpretty nt
+                            -- (flatAlt (owlpretty "<nametype>") (owlpretty nt))
+                            owlpretty nt
                             <> owlpretty ">"
                             <> tupled (map owlpretty [a, b, c])
     owlpretty (NameConst vs n xs) = 
@@ -287,8 +287,8 @@ instance  OwlPretty NameTypeX where
                     owlpretty "pat" <> y <> ppat
                         )
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty
-    owlpretty (NT_App p is) = 
-        owlpretty p <> owlprettyIdxParams is 
+    owlpretty (NT_App p is as) = 
+        owlpretty p <> owlprettyIdxParams is  <> tupled (map owlpretty as)
     owlpretty (NT_PKE ty) = owlpretty "pke" <+> owlpretty ty
     owlpretty (NT_MAC ty) = owlpretty "mac" <+> owlpretty ty
     -- owlpretty (NT_PRF xs) = owlpretty "prf" <+> owlpretty "[" <> hsep (map (\(ae, nt) -> owlpretty ae <+> owlpretty "->" <+> owlpretty nt) xs) <> owlpretty "]"

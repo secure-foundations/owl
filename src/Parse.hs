@@ -15,6 +15,8 @@ import qualified Data.Functor.Identity as I
 import qualified Data.Set as S
 import Unbound.Generics.LocallyNameless
 import AST
+import Numeric
+import Data.Char (ord)
 import Pretty
 
 type Parser = ParsecT String () IO 
@@ -29,7 +31,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "enckey",  "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -673,6 +675,10 @@ parseNameType =
         t <- parseTy
         symbol "aad"
         x <- identifier
+        oself <- optionMaybe identifier
+        let self = case oself of
+                     Nothing -> "%self"
+                     Just v -> v
         symbol "."
         pr <- parseProp
         reserved "nonce"
@@ -686,7 +692,7 @@ parseNameType =
         let pat = case opat of
                     Just v -> v
                     Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
-        return $ NT_StAEAD t (bind (s2n x) pr) p pat 
+        return $ NT_StAEAD t (bind (s2n x, s2n self) pr) p pat 
     )
     <|>
     (parseSpanned $ do
@@ -723,7 +729,15 @@ parseNameType =
     (parseSpanned $ do
         p <- parsePath
         ps <- parseIdxParams
-        return $ NT_App p ps
+        oargs <- optionMaybe $ do
+            symbol "("
+            xs <- parseAExpr `sepBy` (symbol ",")
+            symbol ")"
+            return xs
+        let as = case oargs of
+                   Nothing -> []
+                   Just v -> v
+        return $ NT_App p ps as
     )
 
 parseKDFStrictness = 
@@ -894,9 +908,17 @@ parseDecls =
         reserved "nametype"
         n <- identifier
         ps <- parseIdxParamBinds
+        oxs <- optionMaybe $ do
+            symbol "("
+            xs <- identifier `sepBy` (symbol ",")
+            symbol ")"
+            return xs
+        let xs = case oxs of
+                   Nothing -> []
+                   Just v -> map s2n v
         symbol "="
         nt <- parseNameType
-        return $ DeclNameType n (bind ps nt)
+        return $ DeclNameType n (bind (ps, xs) nt)
     )
     <|>
     (parseSpanned $ do
@@ -1150,6 +1172,21 @@ parseDebugCommand =
         a <- parseAExpr
         symbol ")"
         return $ DebugPrintTyOf (ignore a) a
+    )
+    <|>
+    (try $ do
+        reserved "checkStructMatches"
+        symbol "(" 
+        x <- parsePath
+        op <- optionMaybe parseParams
+        symbol "(" 
+        args <- parseArgs
+        symbol ")"
+        symbol ")"
+        let ps = case op of
+                   Just ps -> ps
+                   Nothing -> []
+        return $ DebugCheckMatchesStruct args x ps
     )
     <|>
     (try $ do
@@ -1527,6 +1564,13 @@ parseExprTerm =
     )
     <|>
     (parseSpanned $ do
+        reserved "openTyOf"
+        a <- parseAExpr
+        reserved "in"
+        e <- parseExpr
+        return $ EOpenTyOf a e)
+    <|>
+    (parseSpanned $ do
         reserved "pcase"
         attr <- parsePCaseAttribute
         p <- parseProp
@@ -1894,6 +1938,13 @@ parseAExprTerm =
         reserved "false"
         return $ AEApp (topLevelPath $ "false") [] []
     )
+    <|>
+    (parseSpanned $ do
+        char '\"'
+        s <- many $ noneOf "\"\n\r"
+        char '\"'
+        whiteSpace
+        return $ AEHex $ concat (map (\i -> showHex (ord i) "") s))
     <|>
     (parseSpanned $ do
         whiteSpace

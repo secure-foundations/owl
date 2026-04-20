@@ -161,6 +161,9 @@
 (define-fun TestEnumTag ((x Int) (y Bits)) Bits
     (eq (Prefix y 2) (EnumTag x)))
 
+(define-fun None? ((x Bits)) Bits (TestEnumTag 0 x))
+(define-fun Some? ((x Bits)) Bits (TestEnumTag 1 x))
+
 (declare-sort Name)
 (declare-fun ValueOf (Name) Bits)
 (declare-fun TName (Name) Type)
@@ -524,6 +527,13 @@
               (= TRUE (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))))
     :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (dhpk (ValueOf n3))))
     :pattern dh_combine_neq_dhpk
+)))
+
+(assert (forall ((n1 Name) (n2 Name) (n3 Name)) (!
+    (not (and (HasNameKind n1 DHkey) (HasNameKind n2 DHkey) 
+              (= TRUE (eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (ValueOf n3)))))
+    :pattern ((eq (dh_combine (dhpk (ValueOf n1)) (ValueOf n2)) (ValueOf n3)))
+    :pattern dh_combine_neq_name
 )))
 
 

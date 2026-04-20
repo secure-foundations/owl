@@ -14,12 +14,24 @@ name k<@i> : st_aead Name(X<@i>)
     nonce N
     @ alice<i>
 
+struct dummy_struct {
+      _dummy_tag : Const(0xdeadbeef)
+    , _dummy_val : Data<adv>
+}
+
+func get_dummy_tag() = 0xdeadbeef
+
 def alice_main<@i>() @ alice<i> : Unit = 
     inc_counter N<@i>;
     let x = get_counter N<@i> in 
     assert (aad(k<@i>)[get(aad_val<@i>)]);
     let c = st_aead_enc<N<@i>>(get(k<@i>), get(X<@i>), get(aad_val<@i>)) in 
-    output c to endpoint(alice<i>);
+    let hash_something = crh(0xdeadbeef) in
+    let dummy_tag = get_dummy_tag() in
+    let hash_something_else = crh(0xfeedface) in
+    let dummy = dummy_struct(dummy_tag, c) in
+    let hash_yet_something_else = crh(0xfeedfacedeadbeef) in
+    output dummy to endpoint(alice<i>);
     corr_case k<@i> in
     input h in 
     case st_aead_dec(get(k<@i>), c, h, x) {

@@ -3,23 +3,34 @@
 #![allow(non_upper_case_globals)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
+#[cfg_attr(verus_keep_ghost, forbid(unsafe_code))]
 
-pub use vstd::{modes::*, prelude::*, seq::*, string::*};
+pub use vstd::{modes::*, prelude::*, seq::*, view::*};
 pub mod speclib;
 pub use crate::speclib::{*, itree::*};
 pub mod execlib;
 pub use crate::execlib::{*};
+pub mod owl_const_bytes;
+pub use crate::owl_const_bytes::*;
 pub mod owl_aead;
 pub mod owl_dhke;
 pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub mod deep_view;
-pub use crate::deep_view::{*};
-pub mod parse_serialize;
+pub use vest::{
+    properties::*,
+    regular::*,
+    regular::builder::*,
+    regular::bytes::*,
+    regular::repetition::*,
+    regular::tag::*,
+    regular::sequence::*,
+    regular::variant::*,
+    regular::uints::*,
+    utils::*,
+};
 
-pub use extraction_lib::*;
 pub use std::collections::HashMap;
 pub use std::env;
 pub use std::fs;
@@ -30,64 +41,106 @@ pub use std::str;
 pub use std::thread;
 pub use std::time::Duration;
 pub use std::time::Instant;
-// pub use crate::parse_serialize::View as _;
 
 verus! {
-pub open const spec fn CIPHER() -> owl_aead::Mode { crate::owl_aead::Mode::Chacha20Poly1305 }
-pub const fn cipher() -> (r:owl_aead::Mode) ensures r == CIPHER() { crate::owl_aead::Mode::Chacha20Poly1305 }
-pub open const spec fn KEY_SIZE() -> usize { owl_aead::spec_key_size(CIPHER()) }
-pub const fn key_size() -> (r:usize) ensures r == KEY_SIZE() { owl_aead::key_size(cipher()) }
-pub open const spec fn TAG_SIZE() -> usize { owl_aead::spec_tag_size(CIPHER()) }
-pub const fn tag_size() -> (r:usize) ensures r == TAG_SIZE() { owl_aead::tag_size(cipher()) }
-pub open const spec fn NONCE_SIZE() -> usize { owl_aead::spec_nonce_size(CIPHER()) }
-pub const fn nonce_size() -> (r:usize) ensures r == NONCE_SIZE() { owl_aead::nonce_size(cipher()) }
-pub open const spec fn HMAC_MODE() -> owl_hmac::Mode { crate::owl_hmac::Mode::Sha512 }
-pub const fn hmac_mode() -> (r:owl_hmac::Mode) ensures r == HMAC_MODE() { crate::owl_hmac::Mode::Sha512 }
-pub open const spec fn MACKEY_SIZE() -> usize { owl_hmac::spec_key_size(HMAC_MODE()) }
-pub const fn mackey_size() -> (r:usize) ensures r == MACKEY_SIZE() { owl_hmac::key_size(hmac_mode()) }
-pub open const spec fn KDFKEY_SIZE() -> usize { owl_hkdf::spec_kdfkey_size() }
-pub const fn kdfkey_size() -> (r:usize) ensures r == KDFKEY_SIZE() { owl_hkdf::kdfkey_size() }
+pub spec const SPEC_CIPHER: owl_aead::Mode = crate::owl_aead::Mode::Chacha20Poly1305;
+pub spec const SPEC_ENCKEY_SIZE: usize = owl_aead::spec_key_size(CIPHER);
+pub spec const SPEC_TAG_SIZE: usize = owl_aead::spec_tag_size(CIPHER);
+pub spec const SPEC_NONCE_SIZE: usize = owl_aead::spec_nonce_size(CIPHER);
+pub spec const SPEC_HMAC_MODE: owl_hmac::Mode = crate::owl_hmac::Mode::Sha512;
+pub spec const SPEC_MACKEY_SIZE: usize = owl_hmac::spec_key_size(HMAC_MODE);
+pub spec const SPEC_KDFKEY_SIZE: usize = owl_hkdf::spec_kdfkey_size();
+pub spec const SPEC_COUNTER_SIZE: usize = 8usize;
+pub spec const SPEC_SIGNATURE_SIZE: usize = 64usize;
+pub spec const SPEC_MACLEN_SIZE: usize = 16usize;    
 
-#[verifier(external_type_specification)]
-#[verifier(external_body)]
-pub struct TcpListenerWrapper ( std::net::TcpListener );
+#[verifier::when_used_as_spec(SPEC_CIPHER)]
+pub exec const CIPHER: owl_aead::Mode ensures CIPHER == SPEC_CIPHER { crate::owl_aead::Mode::Chacha20Poly1305 }
 
-#[verifier(external_type_specification)]
-pub struct OwlErrorWrapper ( OwlError );
+#[verifier::when_used_as_spec(SPEC_ENCKEY_SIZE)]
+pub exec const ENCKEY_SIZE: usize ensures ENCKEY_SIZE == SPEC_ENCKEY_SIZE { owl_aead::key_size(CIPHER) }
 
+#[verifier::when_used_as_spec(SPEC_TAG_SIZE)]
+pub exec const TAG_SIZE: usize ensures TAG_SIZE == SPEC_TAG_SIZE { owl_aead::tag_size(CIPHER) }
 
-#[verifier(external_body)]
-pub fn owl_output<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, x: &[u8], dest_addr: &StrSlice, ret_addr: &StrSlice)
-    requires old(t).view().is_output(x.dview(), endpoint_of_addr(dest_addr.view()))
-    ensures  t.view() == old(t).view().give_output()
-{
-    let msg = msg { ret_addr: std::string::String::from(ret_addr.into_rust_str()), payload: std::vec::Vec::from(x) };
-    let serialized = serialize_msg(&msg);
-    let mut stream = TcpStream::connect(dest_addr.into_rust_str()).unwrap();
-    stream.write_all(&serialized).unwrap();
-    stream.flush().unwrap();
+#[verifier::when_used_as_spec(SPEC_NONCE_SIZE)]
+pub exec const NONCE_SIZE: usize ensures NONCE_SIZE == SPEC_NONCE_SIZE { owl_aead::nonce_size(CIPHER) }
+
+#[verifier::when_used_as_spec(SPEC_HMAC_MODE)]
+pub exec const HMAC_MODE: owl_hmac::Mode ensures HMAC_MODE == SPEC_HMAC_MODE { crate::owl_hmac::Mode::Sha512 }
+
+#[verifier::when_used_as_spec(SPEC_MACKEY_SIZE)]
+pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { owl_hmac::key_size(HMAC_MODE) }
+
+#[verifier::when_used_as_spec(SPEC_KDFKEY_SIZE)]
+pub exec const KDFKEY_SIZE: usize ensures KDFKEY_SIZE == SPEC_KDFKEY_SIZE { owl_hkdf::kdfkey_size() }
+
+#[verifier::when_used_as_spec(SPEC_COUNTER_SIZE)]
+pub exec const COUNTER_SIZE: usize ensures COUNTER_SIZE == SPEC_COUNTER_SIZE { 8usize }
+
+#[verifier::when_used_as_spec(SPEC_SIGNATURE_SIZE)]
+pub exec const SIGNATURE_SIZE: usize ensures SIGNATURE_SIZE == SPEC_SIGNATURE_SIZE { 64usize }
+
+#[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
+pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 16usize }
+
+pub trait OwlEffects {
+    fn owl_output<A>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        x: &[u8],
+        dest_addr: Option<&str>,
+        ret_addr: &str,
+    )
+        requires
+            old(t).view().is_output(
+                x.view(),
+                option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
+            ),
+        ensures
+            t.view() == old(t).view().give_output(),
+    ;
+
+    fn owl_input<A>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+    ) -> (ie: (Vec<u8>, String))
+        requires
+            old(t).view().is_input(),
+        ensures
+            t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
+    ;
+
+    fn owl_sample<A, 'a>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        n: usize,
+    ) -> (res: SecretBuf<'a>)
+        requires
+            old(t).view().is_sample(n),
+        ensures
+            t.view() == old(t).view().get_sample(res.view()),
+            res.len_valid(),
+    ;
+
+    fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
+        &mut self,
+        Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
+        comb: C,
+        val: C::Type,
+        dest_addr: Option<&str>,
+        ret_addr: &str,
+    ) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
+        requires
+            comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
+                b,
+                option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
+            ),
+        ensures
+            t.view() == old(t).view().give_output(),
+    ;
 }
 
-#[verifier(external_body)]
-pub fn owl_input<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, listener: &TcpListener) -> (ie:(Vec<u8>, String))
-    requires old(t).view().is_input()
-    ensures  t.view() == old(t).view().take_input(ie.0.dview(), endpoint_of_addr(ie.1.view()))
-{
-    let (mut stream, _addr) = listener.accept().unwrap();
-    let mut reader = io::BufReader::new(&mut stream);
-    let received: std::vec::Vec<u8> = reader.fill_buf().unwrap().to_vec();
-    reader.consume(received.len());
-    let msg : msg = deserialize_msg(&received);
-    (msg.payload, String::from_rust_string(msg.ret_addr))
-}
-
-#[verifier(external_body)]
-pub fn owl_sample<A>(Tracked(t): Tracked<&mut ITreeToken<A,Endpoint>>, n: usize) -> (res:Vec<u8>)
-    requires old(t).view().is_sample(n)
-    ensures  t.view() == old(t).view().get_sample(res.dview())
-{
-    owl_util::gen_rand_bytes(n)
-}
 
 // for debugging purposes, not used by the compiler
 #[verifier(external_body)]
@@ -95,10 +148,9 @@ pub fn debug_print_bytes(x: &[u8]) {
     println!("debug_print_bytes: {:?}", x);
 }
 
-pub fn ghost_unit() -> (res: Ghost<()>)
-    ensures res == Ghost(())
-{
-    Ghost(())
+#[derive(Debug)]
+pub enum OwlError {
+    IntegerOverflow,
 }
 
 } // verus!

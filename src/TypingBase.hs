@@ -141,7 +141,7 @@ data ModBody = ModBody {
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
     _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
-    _nameTypeDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameType),
+    _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
     _ctrEnv :: Map String (Bind ([IdxVar], [IdxVar]) Locality),
@@ -674,7 +674,7 @@ inODHProp salt ikm info = do
 normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
-      NT_App p is -> resolveNameTypeApp p is >>= normalizeNameType
+      NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
       NT_KDF pos bcases -> do
           (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
           cases' <- withVars 
@@ -747,10 +747,8 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
-getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
+getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
+getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
     mapM_ checkIdxSession is
     mapM_ checkIdxPId ps
     mapM_ inferIdx is_case
@@ -761,10 +759,9 @@ getODHNameInfo (PRes (PDot p s)) (is, ps) a c (i, is_case) j = do
           ((ixs, pxs), bdy) <- unbind bd
           assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
           let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          let b = dhCombine (dhpk (aeGet ne1)) (aeGet ne2)
           (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
           assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ subst z b $ cases !! i
+          let bpcases  = subst x a $ subst y c $ subst z ikm $ cases !! i
           (xs_case, pcases')  <- unbind bpcases
           assert ("KDF case index arity mismatch") $ length xs_case == length is_case
           let (p, cases') = substs (zip xs_case is_case) pcases'
@@ -782,21 +779,23 @@ getNameKind nt =
       NT_StAEAD _ _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
-      NT_App p ps -> resolveNameTypeApp p ps >>= getNameKind
+      NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
       NT_KDF _ _ -> return $ NK_KDF
     
-resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> Check' senv NameType
-resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) = do
+resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
+resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
     forM_ is checkIdxSession
     forM_ ps checkIdxPId
+    forM_ as inferAExpr
     md <- openModule p
     case lookup s (md ^. nameTypeDefs) of 
       Nothing -> typeError $ "Unknown name type: " ++ show (owlpretty pth)
       Just bnd -> do
-          ((xs, ys), nt) <- unbind bnd
-          assert ("Wrong index arity on name type") $ (length is, length ps) == (length xs, length ys)
-          return $ substs (zip xs is) $ substs (zip ys ps) $ nt
-resolveNameTypeApp pth _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
+          (((xs, ys), args), nt) <- unbind bnd
+          assert ("Wrong index arity on name type: " ++ show (owlpretty pth)) $ (length is, length ps) == (length xs, length ys)
+          assert ("Wrong var arity on name type") $ length args == length as
+          return $ substs (zip xs is) $ substs (zip ys ps) $ substs (zip args as) $ nt
+resolveNameTypeApp pth _ _ = typeError $ "Uhoh: " ++ show (owlpretty pth)
 
 
 getNameTypeOpt :: NameExp -> Check' senv (Maybe NameType)
@@ -812,9 +811,6 @@ getNameType ne = do
     case ntOpt of
         Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
         Just nt -> return nt
-
-
-
 
 pushLogTypecheckScope :: Check' senv ()
 pushLogTypecheckScope = do
@@ -911,7 +907,7 @@ lenConstOfUniformName ne = do
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
                     NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
-                    NT_App p ps -> resolveNameTypeApp p ps >>= go
+                    NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check' senv AExpr
@@ -1139,9 +1135,9 @@ extractAAD ne a = do
       Nothing -> typeError $ "Unknown name type: " ++ show ne
       Just (nt, _) -> 
           case nt^.val of
-            NT_StAEAD _ yp _ _ -> do
-                (y, p) <- unbind yp
-                return $ subst y a p
+            NT_StAEAD _ ysp _ _ -> do
+                ((y, slf), p) <- unbind ysp
+                return $ subst y a $ subst slf (aeGet ne) $ p
             _ -> typeError $ "Wrong name type for extractAAD: " ++ show ne
 
 extractPredicate :: Path -> [Idx] -> [AExpr] -> Check' senv Prop
@@ -1699,6 +1695,29 @@ getTyDataVars p = toListOf fv p
 
 getTyIdxVars :: Ty -> [IdxVar]
 getTyIdxVars p = toListOf fv p
+
+
+tyNonGhost :: Ty -> Check' senv Bool
+tyNonGhost t = do
+    l <- coveringLabel' t
+    lblNonGhost l
+
+lblNonGhost :: Label -> Check' senv Bool
+lblNonGhost l  =
+    case l^.val of
+      LName _ -> return True
+      LZero -> return True
+      LAdv -> return True
+      LTop -> return True
+      LGhost -> return False
+      LJoin l1 l2 -> liftM2 (&&) (lblNonGhost l1) (lblNonGhost l2)
+      LConst _ -> return True
+      LRangeIdx xl -> lblNonGhost $ snd $ unsafeUnbind xl
+      LRangeVar xl -> lblNonGhost $ snd $ unsafeUnbind xl
+
+
+
+
 
 
 -- get strongest type that doesn't mention x

@@ -32,7 +32,7 @@ import Prettyprinter
 import Data.IORef
 
 builtinFuncs :: [String]
-builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "kem_pk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh", "xor"]
+builtinFuncs = ["UNIT", "TRUE", "FALSE", "eq", "Some", "None", "andb", "length", "plus", "mult", "zero", "concat", "cipherlen", "pk_cipherlen", "vk", "dhpk", "kem_pk", "enc_pk", "dh_combine", "sign", "pkdec", "dec", "vrfy", "mac", "mac_vrfy", "checknonce", "prf", "H", "is_group_elem", "crh", "xor", "Some?", "None?"]
 
 data PathType = 
     PTName
@@ -331,9 +331,10 @@ resolveNameType e = do
         where
             go t =
                 case t of
-                  NT_App pth is -> do
+                  NT_App pth is as -> do
                       pth' <- resolvePath (e^.spanOf) PTNameType pth
-                      return $ NT_App pth' is
+                      as' <- mapM resolveAExpr as
+                      return $ NT_App pth' is as'
                   NT_DH -> return t
                   NT_KEM nt -> NT_KEM <$> resolveNameType nt
                   NT_Nonce _ -> return t
@@ -698,6 +699,10 @@ resolveExpr e =
           op' <- traverse resolveProp op
           k' <- resolveExpr k
           return $ Spanned (e^.spanOf) $ EPCase p' op' ob k'
+      EOpenTyOf a k -> do 
+          a' <- resolveAExpr a
+          k' <- resolveExpr k
+          return $ Spanned (e^.spanOf) $ EOpenTyOf a' k'
       ECorrCaseNameOf a op k -> do 
           a' <- resolveAExpr a
           op' <- traverse resolveProp op
@@ -728,6 +733,11 @@ resolveExpr e =
 resolveDebugCommand :: DebugCommand -> Resolve DebugCommand
 resolveDebugCommand dc = 
     case dc of
+      DebugCheckMatchesStruct aes p fps -> do
+          aes' <- mapM resolveAExpr aes
+          p' <- resolvePath (ignore def) PTFunc p
+          fps' <- mapM resolveFuncParam fps
+          return $ DebugCheckMatchesStruct aes' p' fps'
       DebugPrintTyOf s a -> do
           s' <- resolveAExpr (unignore s)
           a' <- resolveAExpr a

@@ -12,6 +12,7 @@ import TypingBase
 import Control.Monad
 import Control.Monad.Reader
 import Unbound.Generics.LocallyNameless
+import Unbound.Generics.LocallyNameless.Unsafe
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Data.Typeable (Typeable)
@@ -57,7 +58,7 @@ nameDefFlows n nt = do
               l <- symLabel $ mkSpanned $ LName $ mkSpanned $ KEMName n (mkIVar $ s2n i)
               return $ (sFlows l ln, l)
           return $ sForall [(SAtom i, indexSort)] ax [l] ("ax_" ++ show ctr)
-      NT_App p is -> (liftCheck $ resolveNameTypeApp p is) >>= nameDefFlows n
+      NT_App p is as -> (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows n
       NT_Nonce _ -> return sTrue
       NT_DH -> return sTrue
       NT_Enc t -> do
@@ -313,10 +314,10 @@ mkSymLbl l =
       LGhost -> return $ S.singleton $ AlphaOrd SGhost
       LJoin x y -> liftM2 S.union (mkSymLbl x) (mkSymLbl y)
       LRangeVar xl -> do
-          (xi, l) <- unbind xl
-          if xi `elem` toListOf fv l then 
-                                   typeError $ "Trying to simplify label containing range over bv"
-                                   else mkSymLbl l
+          (xi, l') <- unbind xl
+          if xi `elem` toListOf fv l' then 
+                                   typeError $ "Trying to simplify label containing range over bv: " ++ show (owlpretty l)
+                                   else mkSymLbl l'
       LRangeIdx xl -> do
           (xi, l) <- unbind xl
           if xi `elem` getIdxVars l then  do
@@ -350,8 +351,21 @@ lblFromSym' s = do
 normLabel :: Label -> Check Label
 normLabel l = do
     l' <- simplLabel l
-    s <- mkSymLbl l'
-    lblFromSym' s
+    if lblHasRangeBV l' then return l' else do 
+        s <- mkSymLbl l'
+        lblFromSym' s
 
+
+lblHasRangeBV :: Label -> Bool
+lblHasRangeBV l =
+    case l^.val of
+      LJoin l1 l2 -> lblHasRangeBV l1 || lblHasRangeBV l2
+      LGhost -> False
+      LConst _ -> False
+      LRangeIdx il -> 
+          let (i, l) = unsafeUnbind il in
+          lblHasRangeBV l
+      LRangeVar _ -> True
+      _ -> False
 
 

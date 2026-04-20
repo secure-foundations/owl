@@ -1,0 +1,114 @@
+/*
+ *  Forward secrecy example with ephemeral DH keys for Alice and Bob.
+ *  Idea: Bob's long term signing key can be compromised, but as long as
+ *  the ephemeral DH keys are not compromised, the derived channel key should
+ *  remain secret.
+ *  TODO: we don't have a distinction between ephemeral and static, so this
+ *  example encompasses both the "good" and "bad" cases?
+ */ 
+
+locality alice
+locality bob
+
+// Ephemeral DH keys for Alice and Bob.
+// We lose forward secrecy, but retain basic non-temporal secrecy, if these are 
+// treated as static keys instead. 
+name alice_eph: DH @ alice
+name bob_eph: DH @ bob
+
+// Bob's signing key, which can be long-lived (?)
+name bob_sigkey : sigkey dhpk(bob_eph) @ bob
+
+name channel_secret : nonce @ alice, bob // lattice point for messages
+
+odh L : alice_eph, bob_eph -> 
+    {salt info.
+        True -> strict enckey Name(channel_secret)
+    }
+
+struct bob_msg {
+    _bob_pk: dhpk(bob_eph),
+    _bob_sig: Data<adv> ||signature||
+}
+
+// Clean session for Alice
+predicate alice_clean() =
+    sec(alice_eph) /\ sec(bob_eph)
+
+// Clean session for Bob
+predicate bob_clean(received_alice_pk) =
+    received_alice_pk == dhpk(get(alice_eph)) /\ sec(bob_eph) /\ sec(alice_eph)
+
+// Corruption scenarios
+corr [alice_eph] ==> [channel_secret]
+corr [bob_eph] ==> [channel_secret]
+corr [bob_sigkey] ==> [channel_secret] /\ [bob_eph] /\ [alice_eph]
+
+def alice_main() @ alice: Option Unit =
+    let _ = output dhpk(get(alice_eph)) to endpoint(bob) in
+    input bob_inpt in
+    parse bob_inpt as bob_msg(bob_pk, bob_sig) in {
+    corr_case bob_sigkey in
+    case vrfy(get_vk(bob_sigkey), bob_pk, bob_sig) {
+    | Some pubkeys_msg => {
+        guard is_group_elem(pubkeys_msg) in
+        guard eq(pubkeys_msg, bob_pk) in
+        let ss = dh_combine(bob_pk, get(alice_eph)) in
+
+        // SHOULD DELETE alice_eph HERE
+
+        let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in 
+
+        // alice sends one message
+        let c = aenc(k, get(channel_secret)) in
+        let _ = output c to endpoint(bob) in
+
+        // alice receives one message
+        input c in 
+        corr_case alice_eph in
+        corr_case bob_eph in
+        corr_case nameOf(k) in
+        case adec(k, c) {
+        | Some ptxt =>
+            let _ = assert(alice_clean[] ==> ptxt == get(channel_secret)) in
+            Some(())
+        | None => None()
+        }
+    }
+    | None => None()
+    }
+    } otherwise None()
+
+def bob_main() @ bob: Option Unit =
+    input alice_pk in
+    guard is_group_elem(alice_pk) in
+    pcase (alice_pk == dhpk(get(alice_eph))) in
+    let pubkeys_sig = sign(get(bob_sigkey), dhpk(get(bob_eph))) in
+    let bob_msg = bob_msg(dhpk(get(bob_eph)), pubkeys_sig) in
+    let _ = output bob_msg to endpoint(alice) in
+    let ss = dh_combine(alice_pk, get(bob_eph)) in
+
+    // SHOULD DELETE bob_eph HERE
+
+    let k = kdf<;odh L[0];enckey;0>(0x, ss, 0x) in
+    
+    // bob receives one message
+    input c in 
+    corr_case alice_eph in
+    corr_case bob_eph in
+    corr_case nameOf(k) in
+    case adec(k, c) {
+    | Some ptxt => {
+        let _ = assert(bob_clean[alice_pk] ==> ptxt == get(channel_secret)) in
+
+        // TODO: bob should be able to prove alice_pk == dhpk(get(alice_eph)) here
+        // otherwise AEAD would fail. Do we need AAD for this?
+
+        // bob sends one message
+        let c = aenc(k, get(channel_secret)) in
+        let _ = output c to endpoint(alice) in
+
+        Some(())
+        }
+    | None => None()
+    }

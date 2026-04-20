@@ -279,7 +279,7 @@ lookupIndex x xs = go 0 xs
                            | otherwise = go (i + 1) ys
 
 builtInSMTFuncs :: [String]
-builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh", "xor"]
+builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh", "xor", "Some?", "None?"]
 
 
 setupFunc :: (ResolvedPath, Int) -> Sym ()
@@ -442,9 +442,10 @@ smtStructRefinement fps spath idp structval = do
                 sn <- smtName $ PDot spath sx
                 let fld = SApp [SAtom sn, structval]
                 vt1 <- smtTy fld t
-                let l = case (stripRefinements t)^.val of
-                          TGhost -> []
-                          _ -> [sLength fld]
+                tNonGhost <- liftCheck $ tyNonGhost t
+                let l = case tNonGhost of 
+                          True -> [sLength fld]
+                          False -> []
                 let plength1 = ([vt1], l)
                 (x, k) <- liftCheck $ unbind xk
                 case k of

@@ -1,3 +1,6 @@
+TODO: Move to [official Owl docs](https://gancher.dev/owl-docs).
+
+
 # Overview of cryptographic typing rules
 
 Each cryptographic primitive in Owl is modeled in the following way:
@@ -12,8 +15,8 @@ _overapproximating_ rule, which applies when the well-typed rule does not.
 Owl encodes static corruption by modeling the adversary via a label, `adv`,
 that remains constant throughout typechecking. Many cryptographic operations
 rely on secrecy hypotheses of the form `sec(n)`, where `n` is a name; the
-proposition `sec(n)` is an abbreviation for `[n] <= adv`. Similarly, `corr(n)`
-is an abbreviatino for `[n] !<= adv`. 
+proposition `sec(n)` is an abbreviation for `[n] !<= adv`. Similarly, `corr(n)`
+is an abbreviation for `[n] <= adv`. 
 
 Whenever a rule requires that `sec(n)` holds, then we need to perform a
 `corr_case` if one has not already been performed for `n`. For example:
@@ -142,5 +145,5 @@ One can also call `get_encpk(n)` to obtain the public key.
 Nonces model opaque random bytes, and have no additional cryptographic typing
 rules.
 
-
+## Key Derivation Functions
 

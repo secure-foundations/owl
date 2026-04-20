@@ -1,0 +1,106 @@
+locality alice
+locality bob
+
+name nA : nonce @ alice
+name nB : nonce @ bob
+
+struct nsl_alice_msg3 { 
+    _na3A : Name(nA),
+    _na3B : Name(nB) 
+}
+
+enum nsl_alice_message { 
+    | Msg1 Name(nA)
+    | Msg3 nsl_alice_msg3
+}
+
+name skB : pkekey nsl_alice_message @ bob
+
+struct nsl_bob_message { 
+    _nb_cipher : Ghost,
+    _nbA : if honest_pk_enc<skB>(_nb_cipher) then Name(nA) else Data<adv>, 
+    _nbB : Name(nB) 
+}
+
+struct nsl_result {
+    _nrA : Name(nA), 
+    _nrB : Name(nB) 
+}
+
+enum nsl_result_maybe { 
+    | NRSome nsl_result
+    | NRNone
+}
+
+name skA : pkekey nsl_bob_message @ alice
+
+def alice_main () @ alice : if sec(nA) /\ sec(nB) then
+nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>  = 
+    let pkB = get_encpk(skB) in
+    let c = pkenc(pkB, Msg1(get(nA))) in
+    let _ = output c to endpoint(bob) in
+    input i in
+    corr_case skA in
+    corr_case nA in
+    corr_case nB in
+    case pkdec(get(skA), i) { 
+        | None => NRNone()
+        | Some x =>
+            parse x as nsl_bob_message(c_orig, nA', nB') in
+            if checknonce(get(nA), nA') then 
+                false_elim in 
+                let c' = pkenc(pkB, Msg3(nsl_alice_msg3(get(nA), nB'))) in 
+                let _ = output c' to endpoint(bob) in
+                let res : if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = NRSome(nsl_result(get(nA), nB')) in
+                res
+            else {
+                false_elim in 
+                assert ([nA] /\ [nB] <= adv /\ [nA] /\ [nB]);
+                NRNone()
+            }
+            otherwise NRNone()
+    }
+
+def bob_main () @ bob : (if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]>) = 
+    let pkA = get_encpk(skA) in
+    input i in
+    corr_case skB in
+    corr_case nA in
+    corr_case nB in
+    case pkdec(get(skB), i) {
+    | None => NRNone()
+    | Some payload =>
+        case payload as nsl_alice_message {
+        | Msg1 nA' =>  
+            if eq(length(nA'), |nonce|) then 
+                let p = nsl_bob_message(i, nA', get(nB)) in 
+                let c = pkenc(pkA, p) in
+                output c to endpoint(alice);
+                input i' in
+                case pkdec(get(skB), i') { 
+                    | None => NRNone()
+                    | Some payload2 =>
+                        case payload2 as nsl_alice_message {
+                            | Msg1 _ => NRNone()
+                            | Msg3 p => 
+                                parse p as nsl_alice_msg3(nA3A, nA3B) in
+                                let b1 = checknonce(get(nB), nA3B) in 
+                                let b2 = checknonce(nA', nA3A) in 
+                                if b1 && b2 then 
+                                    false_elim in
+                                    let res: if sec(nA) /\ sec(nB) then nsl_result_maybe else Data<adv /\ [nA] /\ [nB]> = 
+                                        NRSome(nsl_result(nA', get(nB))) in
+                                    res
+                                else 
+                                    false_elim in
+                                    NRNone()
+                                otherwise NRNone()
+                            otherwise => NRNone()
+                        }
+                }
+            else false_elim in NRNone()
+         | Msg3 _ => NRNone()
+         otherwise => NRNone()
+        }
+    }
+                                    

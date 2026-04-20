@@ -20,10 +20,10 @@ enum Result {
     | NoResult
 }
 
-def alice () @ alice
+def alice_main () @ alice
      : if sec(k_data) then Result else Data<adv> = 
     let c = aenc(get(psk), get(k_data)) in
-    output c;
+    output c to endpoint(bob);
     input i in 
     corr_case k_data in
     let res = adec(get(k_data), i) in 
@@ -32,13 +32,13 @@ def alice () @ alice
      | None => NoResult()
     }
     
-def bob () @ bob : Unit =
+def bob_main () @ bob : Unit =
     input i in // i : Data<adv>
     corr_case psk in
     case adec(get(psk), i)  {
      | Some k => 
         let c = aenc(k, get(x)) in
-        output c
+        output c to endpoint(alice)
      | None => ()
     }
         
