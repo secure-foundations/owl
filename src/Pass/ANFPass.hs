@@ -92,6 +92,10 @@ anf e =
               e' <- anf e1
               elet e' tyann (Nothing) (Just s) $ \y -> 
                   anf $ subst x (mkSpanned $ AEVar (ignore s) y) k
+      EKEMEncaps a s xk -> do
+          xk' <- anfBind xk
+          ea <- anfAExpr a
+          elet ea Nothing (Just a) Nothing $ \y -> return $ Spanned (e^.spanOf) $ EKEMEncaps (aevar (a^.spanOf) y) s xk'
       ELet _ _ (Just _) _ _ -> error "Got anfVar in anf routine"
       ELetGhost a s xk -> do
           (x, k) <- unbind xk

@@ -188,6 +188,7 @@
 )))
 (declare-const Sigkey NameKind)
 (declare-const DHkey NameKind)
+(declare-const KEMKey NameKind)
 (declare-const PKEkey NameKind)
 (declare-const KDFkey NameKind)
 (declare-const MACkey NameKind)
@@ -201,6 +202,9 @@
 
 (declare-const SignatureLen Int)
 (assert (> SignatureLen 0))
+
+(declare-const KEMCipherLen Int)
+(assert (> KEMCipherLen 0))
 
 (declare-const PKEPubLen Int)
 (assert (> PKEPubLen 0))
@@ -325,6 +329,8 @@
 
 (declare-fun HonestPKEnc (Name Bits) Bool) ; Abstract predcate for if the PK
 ; encryption is honest or adversarial
+(declare-fun HonestKEMEncaps (Name Bits) Bool) ; Abstract predcate for if the KEM
+; encapsulation is honest or adversarial
 
 (declare-fun IsConstant (Bits) Bool) ; The set of bits that names should never
 ; intersect. For soundness, this set must have measure zero
@@ -499,6 +505,8 @@
 
 (declare-sort Index)
 (declare-fun Happened (String (List Index) (List Bits)) Bool)
+
+(declare-fun KEMName (Name Index) Name)
 
 ;; Builtin function axioms
 (assert (distinct TRUE FALSE UNIT))

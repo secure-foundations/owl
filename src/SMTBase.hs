@@ -495,6 +495,7 @@ lengthConstant s =
       "kdfkey" ->  SApp [SAtom "NameKindLength", SAtom "KDFkey"]
       "mackey" ->  SApp [SAtom "NameKindLength", SAtom "MACkey"]
       "signature" -> SAtom "SignatureLen"
+      "kem_cipherlen" -> SAtom "KEMCipherLen"
       "group" -> SAtom "GroupLen"
       "vk" -> SAtom "VKLen"
       "pke_pk" -> SAtom "PKEPubLen"
@@ -688,6 +689,10 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
+      KEMName ne i -> do
+          v <- getSymName ne
+          vi <- symIndex i
+          return $ SApp [SAtom "KEMName", v, vi]
       KDFName a b c nks j nt _ -> do
           va <- interpretAExp a
           vb <- interpretAExp b
@@ -814,6 +819,10 @@ interpretProp = withPropMemo $ \p -> do
           vn <- getSymName ne
           a' <- interpretAExp a
           return $ SApp $ [SAtom "HonestPKEnc", vn, a']
+      (PHonestKEMEncaps ne a) -> do
+          vn <- getSymName ne
+          a' <- interpretAExp a
+          return $ SApp $ [SAtom "HonestKEMEncaps", vn, a']
       (PHappened s (id1, id2) xs) -> do
           vs <- mapM interpretAExp xs
           ivs <- mapM symIndex id1
@@ -859,6 +868,7 @@ class SMTNameKindOf a where
 instance SMTNameKindOf NameType where
     smtNameKindOf nt = 
         case nt^.val of
+          NT_KEM _ -> return $ SAtom "KEMKey"
           NT_DH -> return $ SAtom "DHkey"
           NT_Enc _ -> return $ SAtom "Enckey"
           NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"

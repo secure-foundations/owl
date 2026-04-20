@@ -50,6 +50,14 @@ removeGhost l =
 nameDefFlows :: NameExp -> NameType -> Sym SExp
 nameDefFlows n nt = do
     case nt^.val of 
+      NT_KEM _ -> do
+          i <- freshSMTIndexName
+          ctr <- getFreshCtr
+          ln <- symLabel $ mkSpanned $ LName n
+          (ax, l) <- withSMTIndices [(s2n i, IdxGhost)] $ do
+              l <- symLabel $ mkSpanned $ LName $ mkSpanned $ KEMName n (mkIVar $ s2n i)
+              return $ (sFlows l ln, l)
+          return $ sForall [(SAtom i, indexSort)] ax [l] ("ax_" ++ show ctr)
       NT_App p is as -> (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows n
       NT_Nonce _ -> return sTrue
       NT_DH -> return sTrue
