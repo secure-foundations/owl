@@ -1,0 +1,28 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+
+    name A : DH @ alice
+    name B : DH @ alice
+    name C : DH @ alice
+    name D : DH @ alice
+
+    odh L : 0x, dh_ss(A, B) ++ dh_ss(C, D), 0x -> strict enckey Name(n)
+
+}
+
+corr [A] ==> [n]
+corr [B] ==> [n]
+corr [C] ==> [n]
+corr [D] ==> [n]
+
+def main() @ alice : Unit =
+    corr_case A in
+    corr_case B in
+    corr_case C in
+    corr_case D in
+    let k = kdf<L;enckey;0>(0x, dh_combine(dhpk(get(A)), get(B)) ++ dh_combine(dhpk(get(C)), get(D)), 0x) in
+    let c = aenc(k, get(n)) in
+    output c

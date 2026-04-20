@@ -93,7 +93,18 @@ setupNameEnvRO = do
           --    emit $ SApp [SAtom "declare-fun", sn, SApp (replicate iar indexSort ++ replicate var bitstringSort), nameSort]
     mkCrossDisjointness fdfs
     mkSelfDisjointness fdfs
-    -- Axioms relevant for each def 
+    -- Declare per-label KDF name functions and their disjointness axioms
+    kdfRules <- liftCheck $ collectKDFScopeRules
+    forM_ kdfRules $ \(lbl, bRule) -> do
+        let (((is1, is2), dvars), _) = unsafeUnbind bRule
+        let paramSorts = replicate (length is1 + length is2) indexSort
+                      ++ replicate (length dvars) bitstringSort
+                      ++ [SAtom "Int", SAtom "Int"]
+        emit $ SApp [SAtom "declare-fun",
+                     SAtom ("%kdf_" ++ cleanSMTIdent lbl),
+                     SApp paramSorts, nameSort]
+    mkKDFDisjointness kdfRules fdfs
+    -- Axioms relevant for each def
     forM_ fdfs $ \fd -> do
         withSMTNameDef fd $ \(sn, pth) ((is, ps)) ont -> do
             -- Name def flows
@@ -168,7 +179,7 @@ mkCrossDisjointness fdfs = do
 mkSelfDisjointness :: [SMTNameDef] -> Sym ()
 mkSelfDisjointness fdfs = do
     -- TODO: factor in preqreqs?
-    forM_ fdfs $ \fd -> 
+    forM_ fdfs $ \fd ->
         withSMTNameDef fd $ \(sn, pth) ((is1, ps1)) _ ->  do
             withSMTNameDef fd $ \_ ((is2, ps2)) _ -> do
                 when ((length is1 + length ps1) > 0) $ do
@@ -177,7 +188,7 @@ mkSelfDisjointness fdfs = do
                     let v1 = sApp (sn : (map fst q1))
                     let v2 = sApp (sn : (map fst q2))
                     let q1_eq_q2 = sAnd $ map (\i -> sEq (fst $ q1 !! i) (fst $ q2 !! i)) [0 .. (length q1 - 1)]
-                    let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1], 
+                    let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE", SApp [SAtom "eq", SApp [SAtom "ValueOf", v1],
                                                                              SApp [SAtom "ValueOf", v2]]]
                     emitAssertion $ sForall (q1 ++ q2)
                         (v1_eq_v2 `sImpl` q1_eq_q2)
@@ -185,6 +196,65 @@ mkSelfDisjointness fdfs = do
                         ("self_disj_" ++ T.unpack (renderSExp sn))
 
 
+-- Helper: unbind a KDF rule binding to get fresh quantifier variables and the applied SMT term.
+-- Index vars get sort Index, data vars get sort Bits, and two fresh Int vars capture start/segment.
+withKDFRuleVars :: (String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)
+                -> ([(SExp, SExp)] -> SExp -> Sym a)
+                -> Sym a
+withKDFRuleVars (lbl, bRule) k = do
+    (((is1, is2), dvars), _) <- liftCheck $ unbind bRule
+    ctr <- getFreshCtr
+    let idxVars  = map (\i -> (SAtom (cleanSMTIdent $ show i), indexSort)) (is1 ++ is2)
+    let bitsVars = map (\v -> (SAtom (cleanSMTIdent $ show v), bitstringSort)) dvars
+    let sVar   = SAtom ("kdf_s_"   ++ cleanSMTIdent lbl ++ "_" ++ show ctr)
+    let segVar = SAtom ("kdf_seg_" ++ cleanSMTIdent lbl ++ "_" ++ show ctr)
+    let intVars = [(sVar, SAtom "Int"), (segVar, SAtom "Int")]
+    let allVars = idxVars ++ bitsVars ++ intVars
+    let term = sApp $ SAtom ("%kdf_" ++ cleanSMTIdent lbl) : map fst allVars
+    k allVars term
+
+mkKDFDisjointness :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
+                  -> [SMTNameDef]
+                  -> Sym ()
+mkKDFDisjointness kdfRules baseDefs = do
+    -- Self-disjointness (injectivity) for each kdf rule function
+    forM_ kdfRules $ \rule@(lbl, _) ->
+        withKDFRuleVars rule $ \qvars1 term1 ->
+            withKDFRuleVars rule $ \qvars2 term2 -> do
+                let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE",
+                                     SApp [SAtom "eq", SApp [SAtom "ValueOf", term1],
+                                                        SApp [SAtom "ValueOf", term2]]]
+                let args_eq = sAnd $ map (\i -> sEq (fst $ qvars1 !! i) (fst $ qvars2 !! i))
+                                         [0 .. length qvars1 - 1]
+                emitAssertion $ sForall (qvars1 ++ qvars2)
+                    (v1_eq_v2 `sImpl` args_eq)
+                    [term1, term2]
+                    ("kdf_self_disj_" ++ cleanSMTIdent lbl)
+    -- Cross-disjointness between pairs of kdf rule functions
+    let kdfPairs = [(x, y) | (x : ys) <- tails kdfRules, y <- ys]
+    forM_ kdfPairs $ \(rule1@(lbl1, _), rule2@(lbl2, _)) ->
+        withKDFRuleVars rule1 $ \qvars1 term1 ->
+            withKDFRuleVars rule2 $ \qvars2 term2 -> do
+                let v1_eq_v2 = SApp [SAtom "=", SAtom "TRUE",
+                                     SApp [SAtom "eq", SApp [SAtom "ValueOf", term1],
+                                                        SApp [SAtom "ValueOf", term2]]]
+                let pat = (if null qvars1 then [] else [term1]) ++ (if null qvars2 then [] else [term2])
+                emitAssertion $ sForall (qvars1 ++ qvars2) (sNot v1_eq_v2) pat
+                    ("kdf_cross_disj_" ++ cleanSMTIdent lbl1 ++ "_" ++ cleanSMTIdent lbl2)
+    -- Cross-disjointness between each kdf rule function and each base name function
+    forM_ kdfRules $ \rule@(lbl, _) ->
+        forM_ baseDefs $ \baseDef ->
+            withKDFRuleVars rule $ \kdfVars kdfTerm ->
+                withSMTNameDef baseDef $ \(sn, _) ((is, ps)) _ -> do
+                    let baseVars = map (\i -> (SAtom $ show i, indexSort)) (is ++ ps)
+                    let baseTerm = sApp (sn : map fst baseVars)
+                    let k_eq_b = SApp [SAtom "=", SAtom "TRUE",
+                                       SApp [SAtom "eq", SApp [SAtom "ValueOf", kdfTerm],
+                                                          SApp [SAtom "ValueOf", baseTerm]]]
+                    let pat = (if null kdfVars then [] else [kdfTerm])
+                           ++ (if null baseVars then [] else [baseTerm])
+                    emitAssertion $ sForall (kdfVars ++ baseVars) (sNot k_eq_b) pat
+                        ("kdf_base_disj_" ++ cleanSMTIdent lbl ++ "_" ++ T.unpack (renderSExp sn))
 
 
 
@@ -348,10 +418,7 @@ smtTy xv t =
       TName n -> do
           kdfRefinement <- case n^.val of
                              NameConst _ _ _ -> return sTrue
-                             KDFName a b c nks j nt _ -> do 
-                                 (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
-                                 -- p <- kdfPerm va vb vc start segment nt
-                                 return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
+                             KDFName nks j _ _ -> return sTrue
           vn <- getSymName n
           return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
       TVK n -> do

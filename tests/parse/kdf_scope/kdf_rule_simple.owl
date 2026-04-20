@@ -1,0 +1,10 @@
+// Tests: kdf L : C1, psk, 0x -> strict kdfkey
+
+locality alice
+
+kdf_scope G {
+    name psk : kdfkey @ alice
+    name C1 : kdfkey @ alice
+
+    kdf L : C1, psk, 0x -> strict kdfkey
+}

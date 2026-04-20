@@ -131,7 +131,7 @@ instance Alpha CorrConstraint
 instance Subst Idx CorrConstraint
 instance Subst ResolvedPath CorrConstraint
 
-data ModBody = ModBody { 
+data ModBody = ModBody {
     _isModuleType :: IsModuleType,
     _localities :: Map String (Either Int ResolvedPath), -- left is arity; right is if it's a synonym
     _defs :: Map String Def, 
@@ -140,7 +140,7 @@ data ModBody = ModBody {
     _predicates :: Map String (Bind ([IdxVar], [DataVar]) Prop),
     _advCorrConstraints :: [Bind ([IdxVar], [DataVar]) CorrConstraint],
     _tyDefs :: Map TyVar TyDef,
-    _odh    :: Map String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)),
+    _kdfScopes :: Map String KDFScopeDef,
     _nameTypeDefs :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _userFuncs :: Map String UserFunc,
     _nameDefs :: Map String (Bind ([IdxVar], [IdxVar]) NameDef), 
@@ -148,6 +148,26 @@ data ModBody = ModBody {
     _modules :: Map String ModDef
 }
     deriving (Show, Generic, Typeable)
+
+data KDFScopeDef = KDFScopeDef {
+    _ksdRules      :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody),
+    _ksdOdhPairs   :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))],
+    _ksdEntryNames :: [String]   -- names (DH + kdfkey) declared in this scope
+}
+    deriving (Show, Generic, Typeable)
+
+instance Alpha KDFScopeDef
+instance Subst ResolvedPath KDFScopeDef
+instance Subst Idx KDFScopeDef
+
+-- Accumulator threaded through checkDecl while inside a kdf_scope block
+data KDFScopeState = KDFScopeState
+    { _kssGroupName   :: String
+    , _kssKdfKeyNames :: [String]
+    , _kssDHNames     :: [String]
+    , _kssRules       :: Map String (Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)
+    , _kssOdhPairs    :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) (NameExp, NameExp))]
+    }
 
 instance Alpha ModBody
 instance Subst ResolvedPath ModBody
@@ -193,6 +213,7 @@ data Env senv = Env {
     _normalizePropHook :: Prop -> Check' senv Prop,
     _decidePropHook :: Prop -> Check' senv (Maybe Bool),
     _curDef :: Maybe String,
+    _curKDFScope :: Maybe KDFScopeState,
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
     _inSMT :: Bool,
@@ -277,6 +298,8 @@ makeLenses ''MemoEntry
 makeLenses ''Env
 
 makeLenses ''ModBody
+makeLenses ''KDFScopeDef
+makeLenses ''KDFScopeState
 
 modDefKind :: ModDef -> Check' senv IsModuleType
 modDefKind (MBody xd) =
@@ -600,28 +623,9 @@ checkCounterIsLocal p0@(PRes (PDot p s)) (vs1, vs2) = do
                 assert ("Wrong locality for counter") $ l1' `aeq` l2'
       Nothing -> typeError $ "Unknown counter: " ++ show p0
 
-inKDFBody :: KDFBody -> AExpr -> AExpr -> AExpr -> Check' senv Prop
-inKDFBody kdfBody salt info self = do
-    (((sx, x), (sy, y), (sz, z)), cases') <- unbind kdfBody
-    let cases = subst x salt $ subst y info $ subst z self $ cases'
-    bs <- forM cases $ \bcase -> do
-        (xs, (p, _)) <- unbind bcase
-        return $ mkExistsIdx xs p
-    return $ foldr pOr pFalse bs
-
+-- inODHProp: stub returning False; ODH checking now done via tryKDFRuleHint in Typing.hs
 inODHProp :: AExpr -> AExpr -> AExpr -> Check' senv Prop
-inODHProp salt ikm info = do
-    let dhCombine x y = mkSpanned $ AEApp (topLevelPath "dh_combine") [] [x, y]
-    let dhpk x = mkSpanned $ AEApp (topLevelPath "dhpk") [] [x]
-    cur_odh <- view $ curMod . odh
-    ps <- forM cur_odh $ \(_, bnd2) -> do
-        ((is, ps), (ne1, ne2, kdfBody)) <- unbind bnd2
-        let pd1 = pEq ikm (dhCombine (dhpk $ mkSpanned $ AEGet ne1)
-                                                          (mkSpanned $ AEGet ne2)
-                                               )
-        pd2 <- inKDFBody kdfBody salt info ikm
-        return $ mkExistsIdx (is ++ ps) $ pd1 `pAnd` pd2
-    return $ foldr pOr pFalse ps
+inODHProp salt ikm info = return pFalse
 
 --getROStrictness :: NameExp -> Check' senv ROStrictness 
 --getROStrictness ne = 
@@ -675,19 +679,7 @@ normalizeNameType :: NameType -> Check' senv NameType
 normalizeNameType nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
       NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
-      NT_KDF pos bcases -> do
-          (((sx, x), (sy, y), (sz, z)), cases) <- unbind bcases
-          cases' <- withVars 
-            [(x, (ignore sx, Nothing, tGhost)), 
-             (y, (ignore sy, Nothing, tGhost)), 
-             (z, (ignore sz, Nothing, tGhost))] $ forM cases $ \bcase -> do 
-                (is, (p, nts)) <- unbind bcase
-                withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) is) $ do
-                    nts' <- forM nts $ \(str, nt) -> do
-                        nt' <- normalizeNameType nt
-                        return (str, nt')
-                    return $ bind is (p, nts')
-          return $ Spanned (nt^.spanOf) $ NT_KDF pos (bind ((sx, x), (sy, y), (sz, z)) cases')
+      NT_KDF -> return nt  -- bare kdfkey, no cases to normalize
       _ -> return nt
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
@@ -723,39 +715,69 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                          BaseDef (nt, lcls) -> do
                              assert ("Value parameters not allowed for base names") $ length as == 0
                              return $ Just (nt, Just (PDot p n, lcls)) 
-             KDFName a b c nks j nt ib -> do
-                 _ <- local (set tcScope $ TcGhost False) $ mapM inferAExpr [a, b, c]
-                 when (not $ unignore ib) $ do
-                     nth <- view checkNameTypeHook
-                     nth nt
-                 assert ("Name kind row index out of scope") $ j < length nks
-                 return $ Just (nt, Nothing)
+             KDFName nks j ib ref -> do
+                 mBody <- lookupKDFScopeRule (_ksrrLabel ref) (_ksrrIdxs ref) (_ksrrArgs ref)
+                 case mBody of
+                   Nothing -> typeError $ "Unknown KDF group rule in name type: " ++ _ksrrLabel ref
+                   Just body -> do
+                     let KDFOutputSpec outputs = _ksrbOutput body
+                     unless (unignore ib) $ do
+                         assert ("KDF name kinds length mismatch for rule " ++ _ksrrLabel ref ++
+                                 ": annotation has " ++ show (length nks) ++
+                                 " output(s), rule declares " ++ show (length outputs))
+                                (length nks == length outputs)
+                         expectedNks <- mapM (\(_, outNt') -> getNameKind outNt') outputs
+                         assert ("KDF name kinds mismatch for rule " ++ _ksrrLabel ref ++
+                                 ": annotation has " ++ show (owlpretty (NameKindRow nks)) ++
+                                 ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
+                                (nks == expectedNks)
+                     assert "Name kind row index out of scope" $ j < length nks
+                     assert "KDF j out of scope for rule outputs" $ j < length outputs
+                     let (_, outNt) = outputs !! j
+                     unless (unignore ib) $ do
+                         nth <- view checkNameTypeHook
+                         nth outNt
+                     return $ Just (outNt, Nothing)
     case res of
       Nothing -> return Nothing
       Just (nt, lcls) -> do
           nt' <- normalizeNameType nt
           return $ Just (nt', lcls)
 
-getODHNameInfo :: Path -> ([Idx], [Idx]) -> AExpr -> AExpr -> AExpr -> KDFSelector -> Int -> Check' senv (NameExp, NameExp, Prop, [(KDFStrictness, NameType)])
-getODHNameInfo (PRes (PDot p s)) (is, ps) a ikm c (i, is_case) j = do
-    mapM_ checkIdxSession is
-    mapM_ checkIdxPId ps
-    mapM_ inferIdx is_case
-    md <- openModule p
-    case lookup s (md^.odh) of
-      Nothing -> typeError $ "Unknown ODH handle: " ++ show s
-      Just bd -> do
-          ((ixs, pxs), bdy) <- unbind bd
-          assert ("KDF index arity mismatch") $ (length ixs, length pxs) == (length is, length ps)
-          let (ne1, ne2, kdfBody) = substs (zip ixs is) $ substs (zip pxs ps) $ bdy
-          (((sx, x), (sy, y), (sz, z)), cases) <- unbind kdfBody
-          assert ("Number of KDF case mismatch") $ i < length cases
-          let bpcases  = subst x a $ subst y c $ subst z ikm $ cases !! i
-          (xs_case, pcases')  <- unbind bpcases
-          assert ("KDF case index arity mismatch") $ length xs_case == length is_case
-          let (p, cases') = substs (zip xs_case is_case) pcases'
-          assert ("KDF name row mismatch") $ j < length cases'
-          return (ne1, ne2, p, cases')
+lookupKDFScopeRule :: String -> ([Idx], [Idx]) -> [AExpr] -> Check' senv (Maybe KDFScopeRuleBody)
+lookupKDFScopeRule lbl (vs1, vs2) actuals = do
+    kgs <- view (curMod . kdfScopes)
+    let findInGroups [] = return Nothing
+        findInGroups ((_, gdef):rest) =
+            case lookup lbl (gdef^.ksdRules) of
+              Nothing -> findInGroups rest
+              Just bRule -> do
+                  (((is1, is2), dvars), body) <- unbind bRule
+                  when ((length vs1, length vs2) /= (length is1, length is2)) $
+                      typeError $ "Index arity mismatch for KDF scope rule " ++ show lbl ++
+                          ": expected (" ++ show (length is1) ++ ", " ++ show (length is2) ++
+                          ") indices but got (" ++ show (length vs1) ++ ", " ++ show (length vs2) ++ ")"
+                  when (length dvars /= length actuals) $
+                      typeError $ "Bytestring argument arity mismatch for KDF scope rule " ++ show lbl ++
+                          ": expected " ++ show (length dvars) ++
+                          " arguments but got " ++ show (length actuals)
+                  return $ Just
+                         $ substs (zip dvars actuals)
+                         $ substs (zip is1 vs1)
+                         $ substs (zip is2 vs2) body
+    findInGroups kgs
+
+
+findScopeForLabel :: String -> Check' senv (Maybe (String, KDFScopeDef))
+findScopeForLabel lbl = do
+    kgs <- view (curMod . kdfScopes)
+    return $ go kgs
+  where
+    go [] = Nothing
+    go ((gname, gdef):rest) =
+        case lookup lbl (_ksdRules gdef) of
+          Just _  -> Just (gname, gdef)
+          Nothing -> go rest
 
 
 getNameKind :: NameType -> Check' senv NameKind
@@ -769,7 +791,7 @@ getNameKind nt =
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
       NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
-      NT_KDF _ _ -> return $ NK_KDF
+      NT_KDF -> return $ NK_KDF
     
 resolveNameTypeApp :: Path -> ([Idx], [Idx]) -> [AExpr] -> Check' senv NameType
 resolveNameTypeApp pth@(PRes (PDot p s)) (is, ps) as = do
@@ -820,13 +842,18 @@ withPushLog k = do
     popLogTypecheckScope
     return r
 
+liftPutDoc :: OwlDoc -> Check' senv ()
+liftPutDoc doc = do
+    noColor <- view $ envFlags . fNoColor
+    liftIO $ if noColor then putDoc (unAnnotate doc) else putDoc doc
+
 logTypecheck :: OwlDoc -> Check' senv ()
 logTypecheck s = do
     b <- view $ envFlags . fLogTypecheck
     when b $ do
         r <- view $ typeCheckLogDepth
         n <- liftIO $ readIORef r
-        liftIO $ putDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
+        liftPutDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
     bd <- view $ envFlags . fDebug
     case bd of
       Just fname -> do 
@@ -895,7 +922,7 @@ lenConstOfUniformName ne = do
                     NT_Enc _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_StAEAD _ _ _ _ -> return $ mkSpanned $ AELenConst "enckey"
                     NT_MAC _ -> return $ mkSpanned $ AELenConst "mackey"
-                    NT_KDF _ _ -> return $ mkSpanned $ AELenConst "kdfkey"
+                    NT_KDF -> return $ mkSpanned $ AELenConst "kdfkey"
                     NT_App p ps as -> resolveNameTypeApp p ps as >>= go
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
@@ -1319,12 +1346,8 @@ normalizeNameExp ne =
                              assert ("Wrong arity") $ length xs == length as
                              normalizeNameExp $ substs (zip xs as) ne2
                          _ -> return ne
-      KDFName a b c nks j nt ib -> do
-          a' <- resolveANF a >>= normalizeAExpr 
-          b' <- resolveANF b >>= normalizeAExpr 
-          c' <- resolveANF c >>= normalizeAExpr 
-          nt' <- normalizeNameType nt
-          return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+      KDFName nks j ib ref -> return ne
+      _ -> error ("Not normalizing name exp: " ++ show (owlpretty ne))
 
 -- Traversing modules to collect global info
 
@@ -1393,6 +1416,10 @@ collectEnvAxioms f = do
 
 collectNameDefs :: Check' senv (Map ResolvedPath (Bind ([IdxVar], [IdxVar]) NameDef))
 collectNameDefs = collectEnvInfo (_nameDefs)
+
+collectKDFScopeRules :: Check' senv [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
+collectKDFScopeRules = collectEnvAxioms $ \mb ->
+    concatMap (\(_, gdef) -> _ksdRules gdef) (_kdfScopes mb)
 
 collectFlowAxioms :: Check' senv ([(Label, Label)])
 collectFlowAxioms = collectEnvAxioms (_flowAxioms)
@@ -1482,7 +1509,7 @@ normResolvedPath p = normModulePath p
 
 normalizePath :: Path -> Check' senv Path
 normalizePath (PRes p) = PRes <$> normResolvedPath p
-normalizePath _ = error "normalizePath: unresolved path"
+normalizePath p = error $ "normalizePath: unresolved path: " ++ show p
 
 getModDefFVs :: ModDef -> [Name ResolvedPath]
 getModDefFVs = toListOf fv
@@ -1649,13 +1676,11 @@ stripNameExp x e =
             typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
           else
             return e 
-      KDFName a b c nks j nt ib -> do
-          a' <- resolveANF a
-          b' <- resolveANF b
-          c' <- resolveANF c
-          if x `elem` (getAExprDataVars a' ++ getAExprDataVars b' ++ getAExprDataVars c' ++ toListOf fv nt) then 
+      KDFName nks j ib ref -> do
+          outNt <- getNameType e
+          if x `elem` toListOf fv outNt then
              typeError $ "Cannot remove " ++ show x ++ " from the scope of " ++ show (owlpretty e)
-          else return $ Spanned (e^.spanOf) $ KDFName a' b' c' nks j nt ib
+          else return $ Spanned (e^.spanOf) $ KDFName nks j ib ref
       
 stripLabel :: DataVar -> Label -> Check' senv Label
 stripLabel x l = return l

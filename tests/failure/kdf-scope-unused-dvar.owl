@@ -1,0 +1,11 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // SHOULD FAIL (constraint 3): bytestring parameter x does not appear
+    // anywhere in the salt, IKM, or info.
+    kdf L(x) : k, 0x, 0x -> enckey Name(n)
+}

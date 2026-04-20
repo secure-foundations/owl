@@ -15,41 +15,57 @@ struct s {
     _b : Data<adv> ||nonce||
 }
 
-name k : kdf {ikm info.
-    (info == 0x01) -> enckey Name(alice1),
-    (info == 0x02) -> strict kdf {ikm info.
-        (info == 0x01) -> enckey Name(alice2),
-        (info == 0x02) -> kdf {ikm info.
-            (info == 0x01) -> enckey Name(alice3)
-        }
-    }
-} @ alice, bob
+kdf_scope G {
+    name k : kdfkey @ alice, bob
+    
+    kdf L1_enc : k, 0x, 0x01 -> enckey Name(alice1)
+    kdf L1_kdf : k, 0x, 0x02 -> strict kdfkey
+    kdf L2_enc : 0x, KDF<L1_kdf;kdfkey;0>, 0x01 -> enckey Name(alice2)
+    kdf L2_kdf : 0x, KDF<L1_kdf;kdfkey;0>, 0x02 -> strict kdfkey
+    kdf L3_enc : KDF<L2_kdf;kdfkey;0>, 0x, 0x01 -> enckey Name(alice3)
+
+    // This is just a hack for extraction to test slicing the KDF output
+    // It's not supposed to mean anything cryptographically
+    name kk : kdfkey @ bob
+    kdf L4 : kk, 0x, 0x -> strict (nonce) || nonce
+}
+
+
+// name k : kdf {ikm info.
+//     (info == 0x01) -> enckey Name(alice1),
+//     (info == 0x02) -> strict kdf {ikm info.
+//         (info == 0x01) -> enckey Name(alice2),
+//         (info == 0x02) -> kdf {ikm info.
+//             (info == 0x01) -> enckey Name(alice3)
+//         }
+//     }
+// } @ alice, bob
 
 corr [k] ==> [alice1]
 corr [k] ==> [alice2]
 
-// This is just a hack for extraction to test slicing the KDF output
-// It's not supposed to mean anything cryptographically
-name kk : kdf {ikm info.
-    True -> strict (nonce) || nonce
-} @ bob
+
+// name kk : kdf {ikm info.
+//     True -> strict (nonce) || nonce
+// } @ bob
 corr adv ==> [kk]
 
 def alice_main() @ alice : Unit = 
     // corr_case k in
-    let ek = kdf<0;;enckey;0>(get(k), 0x, 0x01) in 
+    let ek = kdf<L1_enc;enckey;0>(get(k), 0x, 0x01) in 
     // assert (corr(k) ==> corr(KDF<k;0>(0x, 0x01)[0]));
     let c = aenc(ek, get(alice1)) in 
     output c to endpoint(bob);
-    let k2 = kdf<1;;kdfkey;0>(get(k), 0x, 0x02) in
-    let ek2 = kdf<0;;enckey;0>(k2, 0x, 0x01) in
+    let k2 = kdf<L1_kdf;kdfkey;0>(get(k), 0x, 0x02) in
+    let ek2 = kdf<L2_enc;enckey;0>(0x, k2, 0x01) in
+    // debug printTyContext;
     let c2 = aenc(ek2, get(alice2)) in 
     output c2 to endpoint(bob);
     ()
 
 def bob_main() @ bob : Unit = 
-    let k1 = kdf<0;; nonce || nonce; 0>(get(kk), 0x, 0x) in 
-    let k2 = kdf<0;; nonce || nonce; 1>(get(kk), 0x, 0x) in 
+    let k1 = kdf<L4;nonce || nonce; 0>(get(kk), 0x, 0x) in 
+    let k2 = kdf<L4;nonce || nonce; 1>(get(kk), 0x, 0x) in 
     ()
 
 /*

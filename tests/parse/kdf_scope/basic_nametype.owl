@@ -1,0 +1,9 @@
+// Tests: KDF<L;kdfkey;0> reference in salt position of kdf_scope rule
+
+locality alice
+
+kdf_scope G {
+    name C1 : kdfkey @ alice
+    kdf L1 : C1, 0x, 0x -> strict kdfkey
+    kdf L2 : KDF<L1;kdfkey;0>, 0x, 0x -> strict kdfkey
+}

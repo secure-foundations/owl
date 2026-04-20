@@ -1,0 +1,30 @@
+// IKM concat mixes public zero-arity funcs with dh_ss(A,B) between them.
+// (Predicates are Props in Owl and cannot sit in IKM; funcs are the right
+// surface form for f() / g() public label fragments in rule bodies.)
+
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+
+    name A : DH @ alice
+    name B : DH @ alice
+
+    // Public constants as zero-arity funcs (callable as f() / g() in salt/ikm).
+    func f() = 0x01
+    func g() = 0x02
+
+    odh L : 0x, f() ++ dh_ss(B, A) ++ g(), 0x -> strict enckey Name(n)
+
+}
+
+corr [A] ==> [n]
+corr [B] ==> [n]
+
+def main() @ alice : Unit =
+    corr_case A in
+    corr_case B in
+    let k = kdf<L;enckey;0>(0x, 0x01 ++ dh_combine(dhpk(get(A)), get(B)) ++ 0x02, 0x) in
+    let c = aenc(k, get(n)) in
+    output c

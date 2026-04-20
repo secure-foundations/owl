@@ -1,0 +1,18 @@
+// Tests kdf rules with predicates on arguments
+
+locality alice: 1
+
+kdf_scope G {
+    name A<i@m> : DH @ alice<m>
+    name B<i@m> : DH @ alice<m>
+    name C1<@m> : kdfkey @ alice<m>
+
+    kdf L3<@m>(ikm) where (forall j:idx. ikm != dhpk(get(A<i@m>))): C1, ikm, 0x ->
+        strict kdfkey || public nonce
+}
+
+// def test<i> () @ alice : SecName(KDF<G.L<i>; kdfkey; 0>) =
+//     let salt = get(G.C1) in
+//     let ikm = dh_combine(dhpk(get(G.A)), get(G.B)) in
+//     let result = kdf<G.L<i>; kdfkey; 0>(salt, ikm, 0x) in
+//     result

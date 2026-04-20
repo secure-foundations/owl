@@ -1,0 +1,19 @@
+locality alice
+
+name n : nonce @ alice
+counter n_ctr @ alice
+
+
+kdf_scope S {
+    name k: kdfkey @ alice
+    
+    predicate foo(x, ikm) = true
+
+    kdf L(ikm) : k, ikm, 0x ->
+        strict kdfkey || 
+        strict st_aead (Data<adv> |0|)
+            aad x. foo[x, ikm]
+            nonce n_ctr
+}
+
+  

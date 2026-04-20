@@ -7,6 +7,7 @@
 {-# LANGUAGE DataKinds #-} 
 {-# LANGUAGE DeriveGeneric #-}
 module PathResolution where
+import Data.List (intercalate)
 import AST
 import Error.Diagnose.Position (Position)
 import Control.Lens
@@ -118,8 +119,9 @@ resolveError pos msg = do
     fl <- takeDirectory <$> (view $ flags . fFilePath)
     f <- view $ flags . fFileContents
     let rep = Err Nothing msg [(unignore pos, This ("Resolution error: " ++ msg))] []
-    let diag = addFile (addReport def rep) (fn) f  
-    printDiagnostic stdout True True 4 defaultStyle diag 
+    let diag = addFile (addReport def rep) (fn) f
+    noColor <- view $ flags . fNoColor
+    printDiagnostic stdout True (not noColor) 4 defaultStyle diag
     Resolve $ lift $ throwError () 
 
 resolveDepBind :: Alpha a => DepBind a -> (a -> Resolve a) -> Resolve (DepBind a)
@@ -244,21 +246,18 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclODH s b -> do
-          (is, (ne1, ne2, kdfBody)) <- unbind b
-          ne1' <- resolveNameExp ne1
-          ne2' <- resolveNameExp ne2
-          (args, cases) <- unbind kdfBody
-          cases' <- forM cases $ \bpnts -> do 
-              (ixs, (p, nts)) <- unbind bpnts 
-              p' <- resolveProp p
-              nts' <- forM nts $ \(str, nt) -> do
-                  nt' <- resolveNameType nt
-                  return (str, nt')
-              return $ bind ixs $ (p', nts')
-          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
+      DeclKDFRule ruleDeclX -> do
+          ruleDeclX' <- resolveKDFRuleDeclX (d^.spanOf) ruleDeclX
+          let d' = Spanned (d^.spanOf) $ DeclKDFRule ruleDeclX'
+          ds' <- resolveDecls ds
+          return (d' : ds')
+      DeclKDFScope s innerDecls -> do
           p <- view curPath
-          ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
+          innerDecls' <- resolveDecls innerDecls
+          let d' = Spanned (d^.spanOf) $ DeclKDFScope s innerDecls'
+          -- Propagate paths from inner decls to subsequent outer decls.
+          -- The scope name itself is NOT added to any path map.
+          ds' <- withDeclPaths innerDecls' p $ resolveDecls ds
           return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
@@ -302,6 +301,54 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over modPaths $ T.insert s (False, p)) $ resolveDecls ds 
           return (d' : ds')
+
+-- | Propagate path-map additions from a list of (already-resolved) inner
+--   decls to a subsequent computation, so that names declared inside a
+--   kdf_scope are visible to outer declarations.
+withDeclPaths :: [Decl] -> ResolvedPath -> Resolve a -> Resolve a
+withDeclPaths innerDecls p k = foldr (\d -> local (declPathUpdates d p)) k innerDecls
+
+declPathUpdates :: Decl -> ResolvedPath -> ResolveEnv -> ResolveEnv
+declPathUpdates d p = case d^.val of
+    DeclName s _      -> over namePaths (T.insert s p)
+    DeclNameType s _  -> over nameTypePaths (T.insert s p)
+    DeclFun s _       -> over funcPaths (T.insert s p)
+    DeclPredicate s _ -> over predPaths (T.insert s p)
+    DeclDefHeader s _ -> over defPaths (T.insert s p)
+    DeclDef s _       -> over defPaths (T.insert s p)
+    DeclEnum s bnd    ->
+        let (_, vs) = unsafeUnbind bnd
+        in  over tyPaths   (T.insert s p)
+          . over funcPaths (T.insertMany $ map (\(x, _) -> (x, p)) vs)
+          . over funcPaths (T.insertMany $ map (\(x, _) -> (x ++ "?", p)) vs)
+    DeclStruct s bnd  ->
+        let (_, vs) = unsafeUnbind bnd
+        in  over tyPaths   (T.insert s p)
+          . over funcPaths (T.insert s p)
+          . over funcPaths (T.insertMany $ map (\x -> (x, p)) (depBindNames vs))
+    DeclTy s _        -> over tyPaths (T.insert s p)
+    DeclCounter s _   -> over ctrPaths (T.insert s p)
+    DeclDetFunc s _ _ -> over funcPaths (T.insert s p)
+    DeclTable s _ _   -> over tablePaths (T.insert s p)
+    DeclLocality s _  -> over localityPaths (T.insert s p)
+    DeclModule s _ _ _ -> over modPaths (T.insert s (False, p))
+    _                  -> id
+
+-- | Resolve all fields of a KDFScopeRuleDeclX in place.
+resolveKDFRuleDeclX :: Ignore Position -> KDFScopeRuleDeclX -> Resolve KDFScopeRuleDeclX
+resolveKDFRuleDeclX _pos ruleDecl = do
+    ((idxs, dvars), body) <- unbind (_ksrdBody ruleDecl)
+    wh'   <- resolveProp (_ksrbdWhere body)
+    salt' <- resolveAExpr (_ksrbdSalt body)
+    ikm'  <- resolveAExpr (_ksrbdIkm body)
+    info' <- resolveAExpr (_ksrbdInfo body)
+    let KDFOutputSpec outputs = _ksrbdOutput body
+    outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt))
+                     outputs
+    let body' = body { _ksrbdWhere = wh', _ksrbdSalt = salt', _ksrbdIkm = ikm'
+                     , _ksrbdInfo = info', _ksrbdOutput = KDFOutputSpec outputs'
+                     }
+    return $ ruleDecl { _ksrdBody = bind (idxs, dvars) body' }
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 
@@ -349,16 +396,7 @@ resolveNameType e = do
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
-                  NT_KDF pos b -> do
-                      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
-                      cases' <- forM cases $ \bpnts -> do 
-                          (is, (p, nts)) <- unbind bpnts
-                          p' <- resolveProp p
-                          nts' <- forM nts $ \(str, nt) -> do
-                              nt' <- resolveNameType nt
-                              return (str, nt')
-                          return $ bind is (p', nts')
-                      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
+                  NT_KDF -> return NT_KDF
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -406,6 +444,11 @@ resolveTy e = do
                   THexConst a -> return $ THexConst a
 
 
+resolveKDFScopeRuleRef :: KDFScopeRuleRef -> Resolve KDFScopeRuleRef
+resolveKDFScopeRuleRef ref = do
+    args' <- mapM resolveAExpr (ref^.ksrrArgs)
+    return $ ref & ksrrArgs .~ args'
+
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 
     case ne^.val of
@@ -413,12 +456,9 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName a b c nks j nt ib -> do
-            a' <- resolveAExpr a
-            b' <- resolveAExpr b
-            c' <- resolveAExpr c
-            nt' <- resolveNameType nt
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+        KDFName nks j ib ref -> do
+            ref' <- resolveKDFScopeRuleRef ref
+            return $ Spanned (ne^.spanOf) $ KDFName nks j ib ref'
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -445,7 +485,7 @@ resolvePath' pos pt p =
                   Just (b, p) -> do
                       let xs' = if b then xs else x:xs
                       return $ PRes $ go (Just p) (reverse xs')
-                  Nothing -> do
+                  Nothing ->
                       return $ PRes $ go Nothing (reverse (x:xs))
           return res
       PUnresolvedVar s -> 
@@ -561,7 +601,9 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF x y nks i -> return cop
+      CKDF refs nks j -> do
+          refs' <- mapM resolveKDFScopeRuleRef refs
+          return $ CKDF refs' nks j
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat

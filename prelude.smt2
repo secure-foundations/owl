@@ -268,6 +268,8 @@
     :pattern (dh_combine (dhpk x) y)
     :qid dh_combine_comm
 )))
+
+; Below two axioms are only sound if we have the "unique subgroup" property for the DH group
 (assert (forall ((x Bits) (y Bits) (z Bits)) (!
     (=> (and (IsExponent x) (IsExponent y) (= TRUE (is_group_elem z))
              (= TRUE (eq (dh_combine z x) (dh_combine z y))))
@@ -330,7 +332,6 @@
 ; intersect. For soundness, this set must have measure zero
 
 (declare-fun KDF (Bits Bits Bits Int Int) Bits)
-(declare-fun KDFName (Bits Bits Bits Int Int) Name)
 
 (assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int)) (!
     (=>

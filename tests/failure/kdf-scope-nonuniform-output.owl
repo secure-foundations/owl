@@ -1,0 +1,8 @@
+locality alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // SHOULD FAIL: DH is not a uniform name type, so this output is rejected
+    kdf L : k, 0x, 0x -> DH
+}

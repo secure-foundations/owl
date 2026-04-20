@@ -1,0 +1,12 @@
+// Tests: odh L<i> : C1, dh_combine(A, B), 0x -> strict kdfkey
+
+locality alice
+locality bob
+
+kdf_scope G {
+    name A : DH @ alice
+    name B : DH @ bob
+    name C1 : kdfkey @ alice
+
+    odh L<i> : C1, dh_combine(A, B), 0x -> strict kdfkey
+}

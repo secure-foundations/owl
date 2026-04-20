@@ -31,7 +31,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf", "kdf_scope", "kdfkey", "odh", "kdf", "where", "nametype", "public", "dh_ss"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -79,31 +79,31 @@ parseSpanned k = do
     p' <- getPosition
     return $ Spanned (ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)) v
 
-parseKDFSelector :: Parser KDFSelector
-parseKDFSelector = do
-    i <- many1 digit
-    ps <- parseIdxParams1
-    return (read i, ps)
+-- Convert a NameKind to a NameType (for KDF name expressions using the new
+-- kdf_scope-based format, where the NameType is inferred from the name kind).
+nameKindToNameType :: NameKind -> NameType
+nameKindToNameType NK_KDF       = mkSpanned NT_KDF
+nameKindToNameType (NK_Nonce s) = mkSpanned $ NT_Nonce s
+nameKindToNameType NK_Enc       = mkSpanned $ NT_Enc (tData advLbl advLbl)
+nameKindToNameType NK_MAC       = mkSpanned $ NT_MAC (tData advLbl advLbl)
+nameKindToNameType NK_Sig       = mkSpanned $ NT_Sig (tData advLbl advLbl)
+nameKindToNameType NK_DH        = mkSpanned NT_DH
+nameKindToNameType NK_PKE       = mkSpanned $ NT_PKE (tData advLbl advLbl)
 
 parseNameExp :: Parser NameExp
-parseNameExp = 
-    (parseSpanned $ do
+parseNameExp =
+    -- kdf_scope format: KDF<G.L<i>; nks; j>
+    (try $ parseSpanned $ do
         reserved "KDF"
         symbol "<"
+        ref <- parseKDFScopeRuleRef
+        symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
         j <- many1 digit
-        symbol ";"
-        nt <- parseNameType
         symbol ">"
-        symbol "("
-        a <- parseAExpr
-        symbol ","
-        b <- parseAExpr
-        symbol ","
-        c <- parseAExpr
-        symbol ")"
-        return $ KDFName a b c nks (read j) nt (ignore False)
+        let ji = read j
+        return $ KDFName nks ji (ignore False) ref
     )
     <|>
     (parseSpanned $ do
@@ -283,7 +283,12 @@ parseTyTerm =
         symbol ")"
         p' <- getPosition
         let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
-        return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
+        return $ case n^.val of
+          KDFName _ _ _ _ ->
+              -- kdf_scope form: secrecy is structural (TName is never a leaf type),
+              -- so skip the TRefined wrapper to avoid LName(KDFName) in SMT
+              Spanned pos $ TName n
+          _ -> Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
     )
     <|>
     (do
@@ -680,18 +685,8 @@ parseNameType =
         return $ NT_MAC t)
     <|>
     (parseSpanned $ do
-        kpos <- alt (reserved "kdf" >> return KDF_SaltPos) (reserved "dualkdf" >> return KDF_IKMPos)
-        symbol "{"
-        x <- identifier
-        y <- identifier
-        oz <- optionMaybe identifier
-        let z = case oz of
-                  Just v -> v
-                  Nothing -> "%self"
-        symbol "."
-        kdfCases <- kdfCase `sepBy1` (symbol ",")
-        symbol "}"
-        return $ NT_KDF kpos (bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases)
+        reserved "kdfkey"
+        return NT_KDF
     )
     <|>
     (parseSpanned $ do
@@ -708,35 +703,10 @@ parseNameType =
         return $ NT_App p ps as
     )
 
-parseKDFStrictness = 
+parseKDFStrictness =
     (reserved "strict" >> return KDFStrict)
     <|>
     (reserved "public" >> return KDFPub)
-
-
-kdfCase :: Parser (Bind [IdxVar] (Prop, [(KDFStrictness, NameType)]))
-kdfCase = do 
-    ois <- parseIdxParamBinds1
-    p <- parseProp
-    symbol "->"
-    nts <- (do
-        ostrict <- optionMaybe $ parseKDFStrictness
-        nt <- parseNameType
-        let strictness = case ostrict of 
-                            Nothing -> KDFUnstrict
-                            Just v -> v
-        return (strictness, nt)) `sepBy` (symbol "||")
-    return $ bind ois (p, nts)
-
-parseKDFHint :: Parser (NameExp, Int, Int)
-parseKDFHint = do 
-    n <- parseNameExp
-    symbol "["
-    i <- many1 digit
-    symbol ","
-    j <- many1 digit
-    symbol "]"
-    return (n, read i, read j)
 
 parseLocality :: Parser Locality
 parseLocality = do
@@ -794,9 +764,96 @@ parseNameDeclBody =
     (return $ DeclAbstractName)
     
  
-parseDecls = 
-    many $ 
-    parseNameDecl 
+-- kdf_scope sub-parsers
+
+-- parseAExpr, but with two extra term-level productions recognized in
+-- kdf_scope rule bodies:
+--   1. `dh_ss(A, B)` -> dh_combine(dhpk(get(A)), get(B))
+--   2. bare NameExp  -> AEGet ne  (or AEVar if the bare ident is a rule formal)
+-- Reuses parseAExprTable so `++` folds via the normal AExpr grammar.
+parseRuleBodyAExpr :: [String] -> Parser AExpr
+parseRuleBodyAExpr ruleParams =
+    buildExpressionParser parseAExprTable (parseRuleBodyAExprTerm ruleParams)
+
+parseRuleBodyAExprTerm :: [String] -> Parser AExpr
+parseRuleBodyAExprTerm ruleParams =
+    try dhSsShort <|> try nameShort <|> parseAExprTerm
+  where
+    dhSsShort = parseSpanned $ do
+        reserved "dh_ss"
+        symbol "("
+        ne1 <- parseNameExp
+        symbol ","
+        ne2 <- parseNameExp
+        symbol ")"
+        let getNE ne = mkSpanned $ AEGet ne
+        let dhpkOf ne = mkSpanned $
+                AEApp (topLevelPath "dhpk") [] [getNE ne]
+        return $ AEApp (topLevelPath "dh_combine") []
+                       [dhpkOf ne1, getNE ne2]
+    nameShort = parseSpanned $ do
+        ne <- parseNameExp
+        notFollowedBy (whiteSpace >> char '(')  -- don't consume function calls
+        case ne^.val of
+          NameConst ([], []) (PUnresolvedVar s) []
+            | s `elem` ruleParams ->
+                return $ AEVar (ignore s) (s2n s)
+          _ -> return $ AEGet ne
+
+parseKDFOutputSpec :: Parser KDFOutputSpec
+parseKDFOutputSpec = do
+    nts <- (do
+        ostrict <- optionMaybe parseKDFStrictness
+        nt <- parseNameType
+        let strictness = case ostrict of
+                           Nothing -> KDFUnstrict
+                           Just v -> v
+        return (strictness, nt)) `sepBy1` (symbol "||")
+    return $ KDFOutputSpec nts
+
+parseKDFRuleFormals :: Parser [DataVar]
+parseKDFRuleFormals =
+    option [] $ do
+        symbol "("
+        names <- identifier `sepBy1` (symbol ",")
+        symbol ")"
+        return $ map s2n names
+
+parseKDFRule :: Parser Decl
+parseKDFRule = parseSpanned $ do
+    isODH <- alt (reserved "odh" >> return True) (reserved "kdf" >> return False)
+    lbl <- identifier
+    idxs <- parseIdxParamBinds
+    args <- parseKDFRuleFormals
+    let ruleParams = map name2String args
+    wh <- option (mkSpanned PTrue) (reserved "where" >> parseProp)
+    symbol ":"
+    salt <- parseRuleBodyAExpr ruleParams
+    symbol ","
+    ikm <- parseRuleBodyAExpr ruleParams
+    symbol ","
+    info <- parseAExpr
+    symbol "->"
+    out <- parseKDFOutputSpec
+    let body = KDFScopeRuleBodyDecl wh salt ikm info out
+    return $ DeclKDFRule $ KDFScopeRuleDecl isODH lbl $ bind (idxs, args) body
+
+parseKDFScope :: Parser Decl
+parseKDFScope = parseSpanned $ do
+    reserved "kdf_scope"
+    grp <- identifier
+    symbol "{"
+    items <- many parseOneDecl
+    symbol "}"
+    return $ DeclKDFScope grp items
+
+parseOneDecl :: Parser Decl
+parseOneDecl =
+    parseKDFScope
+    <|>
+    parseKDFRule
+    <|>
+    parseNameDecl
     <|>
     parseEnum
     <|>
@@ -848,28 +905,6 @@ parseDecls =
             symbol "="
             parseTy
         return $ DeclTy n t
-    )
-    <|>
-    (parseSpanned $ do
-        reserved "odh"
-        n <- identifier
-        ps <- parseIdxParamBinds
-        symbol ":"
-        ne1 <- parseNameExp
-        symbol ","
-        ne2 <- parseNameExp
-        symbol "->"
-        symbol "{"
-        x <- identifier
-        y <- identifier
-        oz <- optionMaybe identifier
-        let z = case oz of
-                  Just v -> v
-                  Nothing -> "%self"
-        symbol "."
-        kdfCases <- kdfCase `sepBy1` (symbol ",")
-        symbol "}"
-        return $ DeclODH n (bind ps $ (ne1, ne2, bind ((x, s2n x), (y, s2n y), (z, s2n z)) kdfCases))
     )
     <|>
     (parseSpanned $ do
@@ -986,7 +1021,7 @@ parseDecls =
         loc <- parseLocality
         return $ DeclTable n t loc)
     <|>
-    (parseSpanned $ do       
+    (parseSpanned $ do
         reserved "module"
         imt <- parseIsModType
         n <- identifier
@@ -1005,9 +1040,11 @@ parseDecls =
             parseModuleExp ModType $ "TYPEOF" ++ n
         symbol "="
         me <- parseModuleExp imt n
-        let (bdy, otype) = mkModuleBinders modArgs me omt 
-        return $ DeclModule n imt bdy otype 
+        let (bdy, otype) = mkModuleBinders modArgs me omt
+        return $ DeclModule n imt bdy otype
     )
+
+parseDecls = many parseOneDecl
 
 parseDepBind :: Alpha a => Parser (a -> DepBind a)
 parseDepBind = do
@@ -1605,29 +1642,29 @@ parseROHint = do
                Just v -> v
     return (p, inds, xs)
 
+parseKDFScopeRuleRef :: Parser KDFScopeRuleRef
+parseKDFScopeRuleRef = do
+    lbl <- identifier
+    idxs <- parseIdxParams
+    actuals <- option [] $ do
+        symbol "("
+        es <- parseAExpr `sepBy1` (symbol ",")
+        symbol ")"
+        return es
+    return $ KDFScopeRuleRef lbl idxs actuals
+
 parseCryptOp :: Parser CryptOp
-parseCryptOp = 
+parseCryptOp =
     (do
         reserved "kdf"
         symbol "<"
-        oann1 <- parseKDFSelector `sepBy` (symbol ",")
-        symbol ";"
-        oann2 <- (alt
-                    (do
-                        reserved "odh"
-                        s <- identifier
-                        p <- parseIdxParams
-                        symbol "["
-                        i <- parseKDFSelector
-                        symbol "]"
-                        return $ Right (s, p, i))
-                    (Left <$> parseKDFSelector)) `sepBy` (symbol ",")
+        refs <- parseKDFScopeRuleRef `sepBy` (symbol ",")
         symbol ";"
         nks <- parseNameKind `sepBy1` (symbol "||")
         symbol ";"
         j <- many1 digit
         symbol ">"
-        return $ CKDF oann1 oann2 nks (read j)
+        return $ CKDF refs nks (read j)
     )
     <|>
     (do

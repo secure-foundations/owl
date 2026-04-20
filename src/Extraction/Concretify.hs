@@ -184,7 +184,7 @@ formatTyOfNameExp ne = do
             fl <- fLenOfNameTy nt
             sec <- secrecyOfNameTy nt
             return $ FBuf sec $ Just fl
-        KDFName _ _ _ nks i _ _ -> do
+        KDFName nks i _ _ -> do
             let nk = nks !! i
             sec <- secrecyOfNameKind nk
             FBuf sec . Just <$> fLenOfNameKind nk
@@ -748,7 +748,7 @@ tySigOfCall p = do
 
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
-concretifyCryptOp resolvedArgs (CKDF _ _ nks nkidx) [salt, ikm, info] = do
+concretifyCryptOp resolvedArgs (CKDF _ nks nkidx) [salt, ikm, info] = do
     let nk = nks !! nkidx
     kdfLen <- kdfLenOf nks
     outLen <- fLenOfNameKind nk

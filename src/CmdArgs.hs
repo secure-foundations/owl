@@ -18,12 +18,15 @@ data Flags = Flags {
     _fDebugExtraction :: Bool,
     _fExtractBufOpt :: Bool,
     _fDoTests :: Bool,
+    _fTestWithSMTCache :: Bool,
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
     _fFilePath :: String, 
     _fLocalTypeError :: Bool,
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
+    _fOnlyParse :: Bool,
+    _fNoColor :: Bool,
     _fFileContents :: String
                    }
 
@@ -50,6 +53,9 @@ parseArgs =
           ( long "test" <> help "Do tests")
       <*>
           switch
+          ( long "test-with-smtcache" <> help "Do tests without clearing the SMT cache" )
+      <*>
+          switch
           ( long "lax" <> help "Lax checking (skip some SMT queries)" )
       <*>
           switch
@@ -62,6 +68,10 @@ parseArgs =
           switch
           ( long "log-typecheck" <> help "Log typechecker progress" )
       <*> option (Just <$> str) (long "only-check" <> help "Only check the given function" <> value Nothing)
+      <*> switch
+          ( long "only-parse" <> help "Run parser only; print parsed module and exit" )
+      <*> switch
+          ( long "no-color-output" <> help "Print errors without terminal colors (suitable for file output)" )
       <*> (pure "")
     where
         extractAllFlag = switch (long "extract" <> short 'e' <> help "Extract all specs and code")
@@ -81,7 +91,8 @@ doParseArgs = do
 
 postProcessFlags :: Flags -> Flags
 postProcessFlags f = 
-    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f }
+    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f,
+        _fDoTests = _fTestWithSMTCache f || _fDoTests f }
 
 getHelpMessage :: String
 getHelpMessage = 

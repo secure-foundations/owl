@@ -1,0 +1,12 @@
+// Tests: odh L<n_eph@n,m> where n_eph !=idx n : ...
+
+locality alice
+locality bob
+
+kdf_scope G {
+    name A<@n> : DH @ alice
+    name B<@m> : DH @ bob
+    name C2<@n> : kdfkey @ alice
+
+    odh L_corr<n_eph@n,m> where n_eph !=idx n : C2<@n_eph>, dh_combine(A<@n>, B<@m>), 0x -> strict kdfkey
+}

@@ -1,0 +1,11 @@
+locality alice
+
+kdf_scope G {
+    name C1 : kdfkey @ alice
+
+    kdf L: 0x, C1, 0x -> strict kdfkey
+}
+
+def test<i> () @ alice : Data<adv> =
+    let public_nonce = kdf<;kdfkey||nonce;1>(0xabcd, 0x1234, 0x5678) in
+    public_nonce

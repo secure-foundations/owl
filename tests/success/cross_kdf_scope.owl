@@ -1,0 +1,38 @@
+locality alice
+locality bob
+
+name n1 : nonce @ alice
+name n2 : nonce @ alice
+
+corr adv ==> [n1] // needed in case we derive a bad key in this example, since nothing is signed
+// corr adv ==> [n2]
+
+kdf_scope S1 {
+  name A: DH @ bob
+  name B: DH @ alice
+  odh L1 : 0x, dh_ss(A,B), 0x -> strict enckey Name(n1)
+}
+kdf_scope S2 {
+  name C: DH @ bob
+  name D: DH @ alice
+  odh L2 : 0x, dh_ss(C,D), 0x -> strict enckey Name(n2)
+}
+
+corr [A] ==> [n1]
+corr [B] ==> [n1]
+corr [C] ==> [n2]
+corr [D] ==> [n2]
+
+def alice_main() @ alice : Option Unit =
+    input x in
+    guard is_group_elem(x) in
+    let ss = dh_combine(x, get(B)) in
+    corr_case B in
+    corr_case A in
+    pcase (x == dhpk(get(A))) in
+    debug printTyOf(ss);
+    let k = kdf<L1; enckey; 0>(0x, ss, 0x) in
+    debug printTyOf(k);
+    let c = aenc(k, get(n1)) in
+    output c;
+    Some(())

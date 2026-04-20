@@ -1,0 +1,19 @@
+// Tests that a mismatched kdf argument fails type checking
+
+locality alice
+
+kdf_scope G {
+    name A : DH @ alice
+    name B : DH @ alice
+    name C1 : kdfkey @ alice
+
+    kdf L1(x): C1, x, 0x ->
+        strict kdfkey || public nonce
+}
+
+def this_should_fail () @ alice : SecName(KDF<L1(0x1234); kdfkey || nonce; 0>) =
+    let salt = get(C1) in
+    let ikm = dhpk(get(B)) in
+    // The provided `ikm` doesn't match the expected value of `0x1234` in the kdf rule, so this should fail to type check.
+    let result = kdf<L1(0x1234); kdfkey || nonce; 0>(salt, ikm, 0x) in
+    result

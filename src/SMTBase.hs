@@ -688,14 +688,16 @@ getSymName ne = do
         vs1 <- mapM symIndex is1
         vs2 <- mapM symIndex is2
         sName sn (vs1 ++ vs2) 
-      KDFName a b c nks j nt _ -> do
-          va <- interpretAExp a
-          vb <- interpretAExp b
-          vc <- interpretAExp c
+      KDFName nks j _ ref -> do
           nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
           let start = sPlus $ take j nk_lengths
           let segment = nk_lengths !! j
-          return $ SApp [SAtom "KDFName", va, vb, vc, start, segment]
+          let (idxs1, idxs2) = _ksrrIdxs ref
+          vidxs1 <- mapM symIndex idxs1
+          vidxs2 <- mapM symIndex idxs2
+          vargs <- mapM interpretAExp (_ksrrArgs ref)
+          return $ sApp $ [SAtom ("%kdf_" ++ cleanSMTIdent (_ksrrLabel ref))]
+                       ++ vidxs1 ++ vidxs2 ++ vargs ++ [start, segment]
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do
@@ -864,7 +866,7 @@ instance SMTNameKindOf NameType where
           NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
-          NT_KDF _ _ -> return $ SAtom "KDFkey"
+          NT_KDF -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
           NT_Nonce l -> do
               let v = lengthConstant l 

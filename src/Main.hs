@@ -11,6 +11,7 @@ import Prettyprinter
 import TypingBase
 import System.FilePath
 import CmdArgs
+import Pretty
 import System.Directory
 import System.Process
 import System.CPUTime
@@ -41,6 +42,9 @@ main = do
               putStrLn $ "parse error: " ++ show err 
               exitFailure
             Right ast -> do
+                when (args^.fOnlyParse) $ do
+                    mapM_ (putStrLn . show . owlpretty) ast
+                    exitSuccess
                 do
                     res <- typeCheckDecls (set fFileContents s args) ast
                     case res of
