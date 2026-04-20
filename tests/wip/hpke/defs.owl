@@ -136,7 +136,6 @@ nametype hpke_corr_key_t =
 //                    info=export_kdf_info())          [kdf L_sched_export]
 // =====================================================================
 
-
 kdf_scope HPKE_KDF {
     // Receiver's static key
     name skR : DH @ receiver
@@ -183,12 +182,12 @@ kdf_scope HPKE_KDF {
 
     // TODO: if I omit the info argument from the ODH declaration, the below parses, but shouldn't: 
     // I think the parser is not using the same mechanism for variable binding as elsewhere in the repo.
-    /*
-    odh L_kem<i> where (info == AuthEncap_honest_info<session i>()) : 0x,
-        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
-        AuthEncap_honest_info<session i>()
-        -> strict kdfkey
-    */
+    // /*
+    // odh L_kem<i> where (info == AuthEncap_honest_info<session i>()) : 0x,
+    //     hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
+    //     AuthEncap_honest_info<session i>()
+    //     -> strict kdfkey
+    // */
 
 
     odh L_kem<i> : 0x,
@@ -229,12 +228,12 @@ kdf_scope HPKE_KDF {
 
     // TODO: Below: Should work
 
-    /* 
+    
     func sched_key_base_nonce<i>() = 
         gkdf<nonce |counter|;0>(get(KDF<L_kem<i>; kdfkey; 0>),
                                 dh_secret_kdf_ikm(get(psk)),
                                 base_nonce_kdf_info())
-                                */
+                                
 
     // L_sched_key: key_schedule → encryption key (correct case)
     kdf L_sched_key<i> : KDF<L_kem<i>;kdfkey;0>, 
@@ -245,10 +244,11 @@ kdf_scope HPKE_KDF {
                           nonce send_counter
 
                         // TODO: Should work. Says "Unknown KDF group rule"
-                        //  pattern i. xor(i, get(KDF<L_sched_nonce<i>; nonce |counter|; 0>))
-                        
-                          
-                            // sched_key_base_nonce<i>()) 
+                        // Pratap: Resolved. Now it fails with "Pattern injectivity failed" seemingly because
+                        // it doesn't know that length(get(KDF<L_sched_nonce<i>; nonce |counter|; 0>)) == |counter|.
+                        // This also didn't work in the old version. Need to explicitly encode this in SMT
+                          //pattern y. xor(y, get(KDF<L_sched_nonce<i>; nonce |counter|; 0>))
+                          pattern y. xor(y, sched_key_base_nonce<idx i>())
 
     // L_sched_export: key_schedule → export key (correct case)
     kdf L_sched_export<i> : KDF<L_kem<i>;kdfkey;0>, 
