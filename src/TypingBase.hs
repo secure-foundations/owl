@@ -1509,7 +1509,7 @@ normResolvedPath p = normModulePath p
 
 normalizePath :: Path -> Check' senv Path
 normalizePath (PRes p) = PRes <$> normResolvedPath p
-normalizePath _ = error "normalizePath: unresolved path"
+normalizePath p = error $ "normalizePath: unresolved path: " ++ show p
 
 getModDefFVs :: ModDef -> [Name ResolvedPath]
 getModDefFVs = toListOf fv

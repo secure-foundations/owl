@@ -444,6 +444,11 @@ resolveTy e = do
                   THexConst a -> return $ THexConst a
 
 
+resolveKDFScopeRuleRef :: KDFScopeRuleRef -> Resolve KDFScopeRuleRef
+resolveKDFScopeRuleRef ref = do
+    args' <- mapM resolveAExpr (ref^.ksrrArgs)
+    return $ ref & ksrrArgs .~ args'
+
 resolveNameExp :: NameExp -> Resolve NameExp
 resolveNameExp ne = 
     case ne^.val of
@@ -451,7 +456,9 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName nks j ib ref -> return ne
+        KDFName nks j ib ref -> do
+            ref' <- resolveKDFScopeRuleRef ref
+            return $ Spanned (ne^.spanOf) $ KDFName nks j ib ref'
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -594,7 +601,9 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF {} -> return cop
+      CKDF refs nks j -> do
+          refs' <- mapM resolveKDFScopeRuleRef refs
+          return $ CKDF refs' nks j
       CAEnc -> return CAEnc
       CEncStAEAD p is xpat -> do
           (x, pat) <- unbind xpat
