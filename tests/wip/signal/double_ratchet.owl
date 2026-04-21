@@ -266,7 +266,7 @@ def alice_recv_round_2(
       // assume(ra2 != get(r1));
       assume(get(KDF<LR1;kdfkey||enckey;0>) == gkdf<kdfkey || enckey; 0>(get(r1), dh_combine(dhpk(get(ae2)), get(be2)), 0x));
       kdf_inj_lemma(ra2_ghost, gkdf<kdfkey || enckey; 0>(get(r1), dh_combine(dhpk(get(ae2)), get(be2)), 0x));
-      disjoint_not_eq_lemma(ra2_ghost, get(r1));
+      // disjoint_not_eq_lemma(ra2_ghost, get(r1));
       debug "===============================";
       debug printTyOf(ra2);
       debug printTyOf(ss_ae3_be2);
