@@ -3110,6 +3110,12 @@ classifyInfo e = InfoPublic e
 
 classifyRuleBody :: KDFScopeRuleBodyDecl -> Check KDFScopeRuleBody
 classifyRuleBody bd = do
+    -- Check that salt/ikm/info/where are well-formed
+    _ <- inferAExpr (_ksrbdSalt bd)
+    _ <- inferAExpr (_ksrbdIkm bd)
+    _ <- inferAExpr (_ksrbdInfo bd)
+    checkProp (_ksrbdWhere bd)
+
     ikmE' <- resolveANF (_ksrbdIkm bd) >>= normalizeAExpr
     ikmAtoms <-
         case ikmE'^.val of
