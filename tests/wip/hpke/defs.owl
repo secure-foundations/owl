@@ -182,12 +182,13 @@ kdf_scope HPKE_KDF {
 
     // TODO: if I omit the info argument from the ODH declaration, the below parses, but shouldn't: 
     // I think the parser is not using the same mechanism for variable binding as elsewhere in the repo.
-    // /*
-    // odh L_kem<i> where (info == AuthEncap_honest_info<session i>()) : 0x,
-    //     hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
-    //     AuthEncap_honest_info<session i>()
-    //     -> strict kdfkey
-    // */
+    // Pratap: Resolved by explicitly checking the salt/ikm/info/where when processing the rule decl.
+    /*
+    odh L_kem<i> where (info == AuthEncap_honest_info<session i>()) : 0x,
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
+        AuthEncap_honest_info<session i>()
+        -> strict kdfkey
+    */
 
 
     odh L_kem<i> : 0x,
@@ -227,6 +228,7 @@ kdf_scope HPKE_KDF {
         -> public nonce |counter|
 
     // TODO: Below: Should work
+    // Pratap: Resolved.
 
     
     func sched_key_base_nonce<i>() = 
