@@ -104,6 +104,7 @@ setupNameEnvRO = do
                      SAtom ("%kdf_" ++ cleanSMTIdent lbl),
                      SApp paramSorts, nameSort]
     mkKDFLengthAxioms kdfRules
+    mkKDFValueOfAxioms kdfRules
     mkKDFDisjointness kdfRules fdfs
     -- Axioms relevant for each def
     forM_ fdfs $ \fd -> do
@@ -229,6 +230,42 @@ mkKDFLengthAxioms kdfRules =
                 (guard `sImpl` lenEq)
                 [term]
                 ("kdf_length_" ++ cleanSMTIdent lbl)
+
+-- For each kdf rule, emit an axiom relating ValueOf(%kdf_<lbl>(...)) to the
+-- ghost KDF(salt, ikm, info, start, segment) call.
+mkKDFValueOfAxioms :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
+                   -> Sym ()
+mkKDFValueOfAxioms kdfRules =
+    forM_ kdfRules $ \(lbl, bRule) -> do
+        (((is1, is2), dvars), body) <- liftCheck $ unbind bRule
+        ctr <- getFreshCtr
+        let idxVars  = map (\i -> (SAtom (cleanSMTIdent $ show i), indexSort)) (is1 ++ is2)
+        let bitsVars = map (\v -> (SAtom (cleanSMTIdent $ show v), bitstringSort)) dvars
+        let sVar   = SAtom ("kdf_s_"   ++ cleanSMTIdent lbl ++ "_" ++ show ctr)
+        let segVar = SAtom ("kdf_seg_" ++ cleanSMTIdent lbl ++ "_" ++ show ctr)
+        let intVars = [(sVar, SAtom "Int"), (segVar, SAtom "Int")]
+        let allVars = idxVars ++ bitsVars ++ intVars
+        let kdfTerm = sApp $ SAtom ("%kdf_" ++ cleanSMTIdent lbl) : map fst allVars
+        let lhs = SApp [SAtom "ValueOf", kdfTerm]
+        let saltAE = saltExprToAExpr (_ksrbSalt body)
+        let ikmAE  = ikmAtomsToAExpr (_ksrbIkm body)
+        let infoAE = infoExprToAExpr (_ksrbInfo body)
+        let whereP = _ksrbWhere body
+        withSMTIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
+            withSMTVars dvars $ do
+                vSalt <- interpretAExp saltAE
+                vIkm  <- interpretAExp ikmAE
+                vInfo <- interpretAExp infoAE
+                let rhs = SApp [SAtom "KDF", vSalt, vIkm, vInfo, sVar, segVar]
+                let bodyEq = SApp [SAtom "=", SAtom "TRUE",
+                                   SApp [SAtom "eq", lhs, rhs]]
+                let qid = "kdf_valueof_" ++ cleanSMTIdent lbl
+                axBody <- case whereP ^. val of
+                    PTrue -> return bodyEq
+                    _ -> do
+                        vWhere <- interpretProp whereP
+                        return $ vWhere `sImpl` bodyEq
+                emitAssertion $ sForall allVars axBody [lhs] qid
 
 mkKDFDisjointness :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
                   -> [SMTNameDef]

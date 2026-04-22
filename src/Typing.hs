@@ -2937,7 +2937,8 @@ crhInjLemma x y =
       _ -> return pTrue
 
 kdfInjLemma :: AExpr -> AExpr -> Check Prop
-kdfInjLemma x y = 
+kdfInjLemma x y = do
+    -- liftIO $ putStrLn ("Trying kdfInjLemma on " ++ show ( x) ++ " and " ++ show ( y))
     case (x^.val, y^.val) of
       (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | j < length nks && j' < length nks' && (nks !! j == nks' !! j') -> do
           let p1 = pImpl (pEq x y) (pAnd (pAnd (pEq a a') (pEq b b')) (pEq c c'))
@@ -3054,20 +3055,6 @@ checkExprEqual actual expected = do
       then return True
       else fmap (== Just True) $ decideProp (mkSpanned $ PEq actual' expected')
 
-atomToAExpr :: IKMAtom -> AExpr
-atomToAExpr (IKMPublicExpr e)      = e
-atomToAExpr (IKMKdfKeyName ne)     = mkSpanned $ AEGet ne
-atomToAExpr (IKM_DH_SS ne1 ne2) =
-    mkSpanned $ AEApp (topLevelPath "dh_combine") []
-        [ mkSpanned $ AEApp (topLevelPath "dhpk") [] [mkSpanned $ AEGet ne1]
-        , mkSpanned $ AEGet ne2 ]
-
-ikmAtomsToAExpr :: [IKMAtom] -> AExpr
-ikmAtomsToAExpr [atom] = atomToAExpr atom
-ikmAtomsToAExpr atoms  =
-    foldr1 (\a b -> mkSpanned $ AEApp (topLevelPath "concat") [] [a, b])
-           (map atomToAExpr atoms)
-
 checkSaltMatch :: SaltExpr -> AExpr -> Ty -> Check Bool
 checkSaltMatch (SaltPublicExpr expectedE) actualE _ =
     checkExprEqual actualE expectedE
@@ -3081,13 +3068,6 @@ checkIKMMatch atoms ikmE =
 checkInfoMatch :: InfoExpr -> AExpr -> Check Bool
 checkInfoMatch (InfoPublic expectedE) actualE =
     checkExprEqual actualE expectedE
-
-saltExprToAExpr :: SaltExpr -> AExpr
-saltExprToAExpr (SaltPublicExpr e) = e
-saltExprToAExpr (SaltName ne)      = mkSpanned $ AEGet ne
-
-infoExprToAExpr :: InfoExpr -> AExpr
-infoExprToAExpr (InfoPublic e) = e
 
 -- Classification helpers for kdf_scope rule bodies (decl-form AExpr fields).
 classifySalt :: AExpr -> SaltExpr
@@ -3241,11 +3221,16 @@ handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement 
 
         -- Step 1: For each rule, check via SMT whether it can possibly match
         let allRules = _ksdRules scopeDef
-        cannotMatchAll <- forM allRules $ \(_, bRule) -> do
+        allMatchResults <- forM allRules $ \(_, bRule) -> do
             pmatch <- buildRuleMatchProp saltE ikmE infoE bRule
             decideProp pmatch
-        assert "Inconclusive: cannot match this KDF call with a rule or prove that it doesn't match any of the rules" $ any (\x -> x == Just True) cannotMatchAll || all (\x -> x == Just False) cannotMatchAll
-        if all (\x -> x == Just False) cannotMatchAll
+        let inconclusiveRules = [ ruleName | ((ruleName, _), Nothing) <- zip allRules allMatchResults ]
+        assert
+            ("Inconclusive: cannot match this KDF call with a rule or prove that it doesn't match any of the rules" ++
+             if null inconclusiveRules then ""
+             else ", inconclusive rules: " ++ L.intercalate ", " inconclusiveRules) $
+            any (\x -> x == Just True) allMatchResults || all (\x -> x == Just False) allMatchResults
+        if all (\x -> x == Just False) allMatchResults
           then 
             -- Out-of-bounds case: the KDF call provably doesn't match any rule in the scope, so it should be public
             return $ kdfRefinement (tData advLbl advLbl)

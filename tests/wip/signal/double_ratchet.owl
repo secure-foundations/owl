@@ -261,16 +261,14 @@ def alice_recv_round_2(
       false_elim in
       // Pre-bind the round-3 DH shared secret so it can be passed to LR2_bad(s3)
       let ss_ae3_be2 = dh_combine<name be2, name ae3>(gbe2, get(ae3)) in
-      // TODO: the below assumes are required to typecheck. These should follow from KDF injectivity, but don't currently
-      // assume(ra2 != get(KDF<LR1;kdfkey||enckey;0>));
-      // assume(ra2 != get(r1));
-      assume(get(KDF<LR1;kdfkey||enckey;0>) == gkdf<kdfkey || enckey; 0>(get(r1), dh_combine(dhpk(get(ae2)), get(be2)), 0x));
-      kdf_inj_lemma(ra2_ghost, gkdf<kdfkey || enckey; 0>(get(r1), dh_combine(dhpk(get(ae2)), get(be2)), 0x));
-      // disjoint_not_eq_lemma(ra2_ghost, get(r1));
       debug "===============================";
       debug printTyOf(ra2);
       debug printTyOf(ss_ae3_be2);
       debug "===============================";
+      // TODO: the below assume is required to typecheck. These should follow from KDF injectivity, but don't currently
+      assume (ra2 != get(r1));
+      kdf_inj_lemma(ra2_ghost, gkdf<kdfkey || enckey; 0>(get(r1), dh_combine(dhpk(get(ae2)), get(be2)), 0x));
+      // disjoint_not_eq_lemma(ra2_ghost, get(r1));
       let ra3 = kdf<LR2, LR2_bad_rk(ra2), LR2_bad_dh(ss_ae3_be2); kdfkey || enckey; 0>(ra2, ss_ae3_be2, 0x) in
       let ca3 = kdf<LR2, LR2_bad_rk(ra2), LR2_bad_dh(ss_ae3_be2); kdfkey || enckey; 1>(ra2, ss_ae3_be2, 0x) in
       let x3 = st_aead_enc<N_c_alice>(ca3, get(ma3), dhpk(get(ae3)) ++ dhpk(get(long_skA))) in

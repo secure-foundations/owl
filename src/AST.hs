@@ -343,6 +343,27 @@ data KDFScopeRuleBody = KDFScopeRuleBody {
     _ksrbOutput :: KDFOutputSpec
 } deriving (Show, Generic, Typeable)
 
+atomToAExpr :: IKMAtom -> AExpr
+atomToAExpr (IKMPublicExpr e)      = e
+atomToAExpr (IKMKdfKeyName ne)     = mkSpanned $ AEGet ne
+atomToAExpr (IKM_DH_SS ne1 ne2) =
+    mkSpanned $ AEApp (topLevelPath "dh_combine") []
+        [ mkSpanned $ AEApp (topLevelPath "dhpk") [] [mkSpanned $ AEGet ne1]
+        , mkSpanned $ AEGet ne2 ]
+
+ikmAtomsToAExpr :: [IKMAtom] -> AExpr
+ikmAtomsToAExpr [atom] = atomToAExpr atom
+ikmAtomsToAExpr atoms  =
+    foldr1 (\a b -> mkSpanned $ AEApp (topLevelPath "concat") [] [a, b])
+           (map atomToAExpr atoms)
+
+saltExprToAExpr :: SaltExpr -> AExpr
+saltExprToAExpr (SaltPublicExpr e) = e
+saltExprToAExpr (SaltName ne)      = mkSpanned $ AEGet ne
+
+infoExprToAExpr :: InfoExpr -> AExpr
+infoExprToAExpr (InfoPublic e) = e
+
 data KDFScopeRuleX = KDFScopeRule {
     _ksrIsODH :: Bool,
     _ksrLabel :: String,
