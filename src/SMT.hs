@@ -247,9 +247,9 @@ mkKDFValueOfAxioms kdfRules =
         let allVars = idxVars ++ bitsVars ++ intVars
         let kdfTerm = sApp $ SAtom ("%kdf_" ++ cleanSMTIdent lbl) : map fst allVars
         let lhs = SApp [SAtom "ValueOf", kdfTerm]
-        let saltAE = saltExprToAExpr (_ksrbSalt body)
-        let ikmAE  = ikmAtomsToAExpr (_ksrbIkm body)
-        let infoAE = infoExprToAExpr (_ksrbInfo body)
+        let saltAE = _ksrbSalt body
+        let ikmAE  = _ksrbIkm body
+        let infoAE = _ksrbInfo body
         let whereP = _ksrbWhere body
         withSMTIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
             withSMTVars dvars $ do

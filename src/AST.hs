@@ -317,52 +317,16 @@ data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
 
 -- New kdf_scope AST types
 
-data IKMAtom
-    = IKMPublicExpr AExpr          -- hex const, dhpk(N), public func(...)
-    | IKMKdfKeyName NameExp        -- named kdfkey name from this group
-    | IKM_DH_SS NameExp NameExp -- dh_ss(A, B)
-    deriving (Show, Generic, Typeable)
-
-data SaltExpr
-    = SaltName NameExp         -- any named salt: simple kdfkey or KDF<label;nks;j> ref
-    | SaltPublicExpr AExpr     -- hex const or public func
-    deriving (Show, Generic, Typeable)
-
-data InfoExpr
-    = InfoPublic AExpr  -- concrete public value
-    deriving (Show, Generic, Typeable)
-
 data KDFOutputSpec = KDFOutputSpec [(KDFStrictness, NameType)]
     deriving (Show, Generic, Typeable)
 
 data KDFScopeRuleBody = KDFScopeRuleBody {
     _ksrbWhere  :: Prop,        -- PTrue when no where clause
-    _ksrbSalt   :: SaltExpr,
-    _ksrbIkm    :: [IKMAtom],
-    _ksrbInfo   :: InfoExpr,
+    _ksrbSalt   :: AExpr,
+    _ksrbIkm    :: AExpr,
+    _ksrbInfo   :: AExpr,
     _ksrbOutput :: KDFOutputSpec
 } deriving (Show, Generic, Typeable)
-
-atomToAExpr :: IKMAtom -> AExpr
-atomToAExpr (IKMPublicExpr e)      = e
-atomToAExpr (IKMKdfKeyName ne)     = mkSpanned $ AEGet ne
-atomToAExpr (IKM_DH_SS ne1 ne2) =
-    mkSpanned $ AEApp (topLevelPath "dh_combine") []
-        [ mkSpanned $ AEApp (topLevelPath "dhpk") [] [mkSpanned $ AEGet ne1]
-        , mkSpanned $ AEGet ne2 ]
-
-ikmAtomsToAExpr :: [IKMAtom] -> AExpr
-ikmAtomsToAExpr [atom] = atomToAExpr atom
-ikmAtomsToAExpr atoms  =
-    foldr1 (\a b -> mkSpanned $ AEApp (topLevelPath "concat") [] [a, b])
-           (map atomToAExpr atoms)
-
-saltExprToAExpr :: SaltExpr -> AExpr
-saltExprToAExpr (SaltPublicExpr e) = e
-saltExprToAExpr (SaltName ne)      = mkSpanned $ AEGet ne
-
-infoExprToAExpr :: InfoExpr -> AExpr
-infoExprToAExpr (InfoPublic e) = e
 
 data KDFScopeRuleX = KDFScopeRule {
     _ksrIsODH :: Bool,
@@ -371,25 +335,6 @@ data KDFScopeRuleX = KDFScopeRule {
 } deriving (Show, Generic, Typeable)
 
 type KDFScopeRule = Spanned KDFScopeRuleX
-
--- Surface-syntax form of a kdf_scope rule (parser output).
--- The salt/ikm/info are raw AExprs; the typechecker classifies them into
--- SaltExpr/[IKMAtom]/InfoExpr during DeclKDFScope processing.
-data KDFScopeRuleBodyDecl = KDFScopeRuleBodyDecl {
-    _ksrbdWhere  :: Prop,
-    _ksrbdSalt   :: AExpr,
-    _ksrbdIkm    :: AExpr,
-    _ksrbdInfo   :: AExpr,
-    _ksrbdOutput :: KDFOutputSpec
-} deriving (Show, Generic, Typeable)
-
-data KDFScopeRuleDeclX = KDFScopeRuleDecl {
-    _ksrdIsODH :: Bool,
-    _ksrdLabel :: String,
-    _ksrdBody  :: Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBodyDecl
-} deriving (Show, Generic, Typeable)
-
-type KDFScopeRuleDecl = Spanned KDFScopeRuleDeclX
 
 data KDFScopeRuleRef = KDFScopeRuleRef {
     _ksrrLabel :: String,
@@ -421,7 +366,7 @@ data DeclX =
     | DeclLocality String (Either Int Path)
     | DeclModule String IsModuleType ModuleExp (Maybe ModuleExp)
     | DeclKDFScope String [Decl]
-    | DeclKDFRule KDFScopeRuleDeclX
+    | DeclKDFRule KDFScopeRuleX
     deriving (Show, Generic, Typeable)
 
 type Decl = Spanned DeclX
@@ -565,8 +510,6 @@ data FuncParam =
 
 makeLenses ''KDFScopeRuleBody
 makeLenses ''KDFScopeRuleX
-makeLenses ''KDFScopeRuleBodyDecl
-makeLenses ''KDFScopeRuleDeclX
 makeLenses ''KDFScopeRuleRef
 
 -- LocallyNameless instances
@@ -627,21 +570,6 @@ instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
 instance Subst ResolvedPath NameExpX
 
-instance Alpha IKMAtom
-instance Subst Idx IKMAtom
-instance Subst AExpr IKMAtom
-instance Subst ResolvedPath IKMAtom
-
-instance Alpha SaltExpr
-instance Subst Idx SaltExpr
-instance Subst AExpr SaltExpr
-instance Subst ResolvedPath SaltExpr
-
-instance Alpha InfoExpr
-instance Subst Idx InfoExpr
-instance Subst AExpr InfoExpr
-instance Subst ResolvedPath InfoExpr
-
 instance Alpha KDFOutputSpec
 instance Subst Idx KDFOutputSpec
 instance Subst AExpr KDFOutputSpec
@@ -656,16 +584,6 @@ instance Alpha KDFScopeRuleX
 instance Subst Idx KDFScopeRuleX
 instance Subst AExpr KDFScopeRuleX
 instance Subst ResolvedPath KDFScopeRuleX
-
-instance Alpha KDFScopeRuleBodyDecl
-instance Subst Idx KDFScopeRuleBodyDecl
-instance Subst AExpr KDFScopeRuleBodyDecl
-instance Subst ResolvedPath KDFScopeRuleBodyDecl
-
-instance Alpha KDFScopeRuleDeclX
-instance Subst Idx KDFScopeRuleDeclX
-instance Subst AExpr KDFScopeRuleDeclX
-instance Subst ResolvedPath KDFScopeRuleDeclX
 
 instance Alpha KDFScopeRuleRef
 instance Subst Idx KDFScopeRuleRef

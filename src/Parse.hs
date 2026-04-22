@@ -835,8 +835,8 @@ parseKDFRule = parseSpanned $ do
     info <- parseAExpr
     symbol "->"
     out <- parseKDFOutputSpec
-    let body = KDFScopeRuleBodyDecl wh salt ikm info out
-    return $ DeclKDFRule $ KDFScopeRuleDecl isODH lbl $ bind (idxs, args) body
+    let body = KDFScopeRuleBody wh salt ikm info out
+    return $ DeclKDFRule $ KDFScopeRule isODH lbl $ bind (idxs, args) body
 
 parseKDFScope :: Parser Decl
 parseKDFScope = parseSpanned $ do
