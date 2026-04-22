@@ -264,7 +264,10 @@ instance OwlPretty (TypeError) where
     owlpretty (ErrWrongCases s a expected actual) = 
         owlpretty "Wrong cases for " <> owlpretty s <> owlpretty " with "  <> owlpretty a  <> owlpretty " expected " <> owlpretty (map fst expected) <> owlpretty " but got " <> owlpretty (map fst actual)
     owlpretty (ErrAssertionFailed fn p) =
-        owlpretty "Assertion failed: " <> owlpretty p <> owlpretty " from " <> owlpretty fn
+        owlpretty "Assertion failed: " <> owlpretty p <> 
+            case fn of 
+                Just fn -> owlpretty " from " <> owlpretty fn
+                Nothing -> owlpretty "" 
     owlpretty (ErrUnknownName s) =  
         owlpretty "Unknown name: " <> owlpretty s
     owlpretty (ErrUnknownFunc s) =  

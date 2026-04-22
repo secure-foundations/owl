@@ -103,6 +103,7 @@ setupNameEnvRO = do
         emit $ SApp [SAtom "declare-fun",
                      SAtom ("%kdf_" ++ cleanSMTIdent lbl),
                      SApp paramSorts, nameSort]
+    mkKDFLengthAxioms kdfRules
     mkKDFDisjointness kdfRules fdfs
     -- Axioms relevant for each def
     forM_ fdfs $ \fd -> do
@@ -212,6 +213,22 @@ withKDFRuleVars (lbl, bRule) k = do
     let allVars = idxVars ++ bitsVars ++ intVars
     let term = sApp $ SAtom ("%kdf_" ++ cleanSMTIdent lbl) : map fst allVars
     k allVars term
+
+mkKDFLengthAxioms :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
+                  -> Sym ()
+mkKDFLengthAxioms kdfRules =
+    forM_ kdfRules $ \rule@(lbl, _) ->
+        withKDFRuleVars rule $ \allVars term -> do
+            let sVar   = fst $ allVars !! (length allVars - 2)
+            let segVar = fst $ allVars !! (length allVars - 1)
+            let geZero v = SApp [SAtom ">=", v, SAtom "0"]
+            let guard = sAnd [geZero sVar, geZero segVar]
+            let lenEq = sEq (sLength (SApp [SAtom "ValueOf", term]))
+                            (SApp [SAtom "I2B", segVar])
+            emitAssertion $ sForall allVars
+                (guard `sImpl` lenEq)
+                [term]
+                ("kdf_length_" ++ cleanSMTIdent lbl)
 
 mkKDFDisjointness :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
                   -> [SMTNameDef]
