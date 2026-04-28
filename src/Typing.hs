@@ -3169,7 +3169,7 @@ unconcatIKMWithTypes ikmE = do
 
 handleKDFNoMatch :: [KDFScopeRuleRef] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty)
                  -> (Ty -> Ty) -> Check Ty
-handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement = do
+handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement = pushRoutine "handleKDFNoMatch" $ do
     -- Fast path: all-public
     bSalt <- tyFlowsTo saltT advLbl
     bIkm  <- tyFlowsTo ikmT  advLbl
@@ -3307,7 +3307,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           let kdfRefinement t = tRefined t ".res" $
                 pAnd (pEq (aeLength (aeVar ".res")) outLen) kdfProp
           case resultsWithHints of
-            [] -> handleKDFNoMatch hints (saltE', saltT) (ikmE', ikmT) (infoE', infoT) kdfRefinement
+            [] -> local (set tcScope $ TcGhost False) $ handleKDFNoMatch hints (saltE', saltT) (ikmE', ikmT) (infoE', infoT) kdfRefinement
             [(_, t)] -> return $ kdfRefinement t
             matched ->
                 typeError ("Ambiguous KDF call: multiple hints matched: " ++
