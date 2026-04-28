@@ -2983,12 +2983,18 @@ checkHintOutputsCompatible hints = do
                       show (owlpretty (NameKindRow nks')))
                      (firstNks == nks')
 
+anyM :: [AExpr] -> (AExpr -> Check Bool) -> Check Bool
+anyM as p = do
+    bs <- mapM p as
+    return $ or bs
+
 -- Try a single KDFScopeRuleRef hint against salt/ikm/info.
 -- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
 tryKDFRuleHint :: KDFScopeRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> [NameKind] -> Int -> Check (Maybe Ty)
 tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRoutine ("tryKDFRuleHint(" ++ show (owlpretty hint) ++ ")") $ do
     let actuals = _ksrrArgs hint
-    mBody <- lookupKDFScopeRule (_ksrrLabel hint) (_ksrrIdxs hint) actuals
+    mBody <- local (set tcScope $ TcGhost False) $ lookupKDFScopeRule (_ksrrLabel hint) (_ksrrIdxs hint) actuals
+
     case mBody of
       Nothing -> return Nothing
       Just body -> do
@@ -3020,30 +3026,49 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRouti
                   infoPub <- tyFlowsTo infoT advLbl
                   assert "KDF info argument must be public" infoPub
                   -- (2-4) check actual publicness of salt and ikm; classify inline
+
+                  -- Check whether the salt and IKM are public
                   saltPub <- tyFlowsTo saltT advLbl
-                  ikmPub  <- tyFlowsTo ikmT advLbl
-                  let saltHasKey = case (_ksrbSalt body)^.val of
-                                     AEGet _ -> True
-                                     _       -> False
-                  ikmAtoms <- unconcatIKM (_ksrbIkm body)
-                  let isDhSS a = case a^.val of
-                                   AEApp (PRes (PDot PTop "dh_combine")) _ [x, y]
-                                     | AEApp (PRes (PDot PTop "dhpk")) _ [xx] <- x^.val
-                                     , AEGet _ <- xx^.val
-                                     , AEGet _ <- y^.val -> True
-                                   _ -> False
-                      isKdfKeyName a = case a^.val of { AEGet _ -> True; _ -> False }
-                  let ikmHasKey = any (\a -> isKdfKeyName a || isDhSS a) ikmAtoms
-                  let secretFlowAx = case strictness of
-                                        KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
-                                        KDFPub      -> pFlow (nameLbl ne) advLbl
-                                        KDFUnstrict -> pTrue
-                  if saltPub && ikmPub
-                  then return $ Just $ tData advLbl advLbl
-                  else if (not saltPub && saltHasKey) || (not ikmPub && ikmHasKey)
-                  then return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
-                           bind (s2n ".res") secretFlowAx
-                  else typeError "KDF ill-typed but not fully public: unable to determine output type"
+                  ikmE' <- resolveANF ikmE >>= normalizeAExpr
+                  ikmAtoms <- unconcat ikmE'
+
+                  ikmPub  <- allM ikmAtoms $ \a -> do 
+                    case a^.val of 
+                        AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> do 
+                            b1 <- flowsTo (nameLbl x) advLbl
+                            b2 <- flowsTo (nameLbl y) advLbl
+                            return $ b1 || b2
+                        _ -> do 
+                            t <- inferAExpr a >>= normalizeTy
+                            res <- tyFlowsTo t advLbl
+                            logTypecheck $ owlpretty "ikm atom: " <> owlpretty a <> owlpretty " with type " <> owlpretty t <> owlpretty " flows to advLbl: " <> owlpretty res
+                            return res
+                    
+                  -- If so, just return Data<adv>
+                  if saltPub && ikmPub then return $ Just $ tData advLbl advLbl
+                  else do 
+                    -- Otherwise, check whether the salt and IKM are secret.
+                    -- Here, we use the matched hint body rather than the given arguments (which we have already checked are equal)
+                    saltIsSecret <- case (_ksrbSalt body)^.val of 
+                                    AEGet ne -> not <$> flowsTo (nameLbl ne) advLbl
+                                    _ -> return False
+                    ikmAtoms <- unconcatIKM (_ksrbIkm body)
+                    ikmIsSecret <- anyM ikmAtoms $ \a ->  do 
+                            case a^.val of 
+                                AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> do 
+                                        b1 <- flowsTo (nameLbl x) advLbl
+                                        b2 <- flowsTo (nameLbl y) advLbl
+                                        return $ (not b1) && (not b2)
+                                AEGet ne -> not <$> flowsTo (nameLbl ne) advLbl
+                                _ -> return False
+                    let secretFlowAx = case strictness of
+                                            KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
+                                            KDFPub      -> pFlow (nameLbl ne) advLbl
+                                            KDFUnstrict -> pTrue
+                    if saltIsSecret || ikmIsSecret then 
+                        return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
+                            bind (s2n ".res") secretFlowAx
+                    else typeError "KDF ill-typed but not fully public: unable to determine output type"
 
 checkWhereClause :: Prop -> Check Bool
 checkWhereClause p = fmap (== Just True) (decideProp p)
@@ -3276,7 +3301,7 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           ikmE' <- resolveANF ikmE
           infoE' <- resolveANF infoE
           checkHintOutputsCompatible hints
-          resultsWithHints <- catMaybes <$> mapM (\h -> fmap (\t -> (h, t)) <$> tryKDFRuleHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
+          resultsWithHints <- local (set tcScope $ TcGhost False) $ catMaybes <$> mapM (\h -> fmap (\t -> (h, t)) <$> tryKDFRuleHint h (saltE', saltT) (ikmE', ikmT) (infoE', infoT) nks j) hints
           let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF saltE' ikmE' infoE' nks j
           let outLen = nameKindLength $ nks !! j
           let kdfRefinement t = tRefined t ".res" $
@@ -3622,8 +3647,8 @@ typeError' msg = do
       _ -> liftPutDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
     writeSMTCache
     -- Uncomment for debugging
-    -- rs <- view tcRoutineStack
-    -- logTypecheck $ owlpretty "Routines: " <> (mconcat $ L.intersperse (owlpretty ", ") $ map owlpretty rs)
+    rs <- view tcRoutineStack
+    logTypecheck $ owlpretty "Routines: " <> (mconcat $ L.intersperse (owlpretty ", ") $ map owlpretty rs)
     -- inds <- view inScopeIndices
     -- logTypecheck $ owlpretty "Indices: " <> owlprettyIndices inds
     Check $ lift $ throwError e

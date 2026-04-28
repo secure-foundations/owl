@@ -26,10 +26,11 @@ corr [D] ==> [n2]
 def alice_main() @ alice : Option Unit =
     input x in
     guard is_group_elem(x) in
+    pcase (x == dhpk(get(A))) in
+    let x : if x == dhpk(get(A)) then dhpk(A) else y:Data<adv>{y == x} = x in
     let ss = dh_combine(x, get(B)) in
     corr_case B in
     corr_case A in
-    pcase (x == dhpk(get(A))) in
     debug printTyOf(ss);
     let k = kdf<L1; enckey; 0>(0x, ss, 0x) in
     debug printTyOf(k);

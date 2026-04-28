@@ -23,7 +23,9 @@ def main() @ alice : Option Unit =
     guard is_group_elem(pk_of_A) in
     guard is_group_elem(pk_of_C) in
     pcase (pk_of_A == dhpk(get(A))) in
+    let pk_of_A : if pk_of_A == dhpk(get(A)) then dhpk(A) else x:Data<adv>{x == pk_of_A} = pk_of_A in
     pcase (pk_of_C == dhpk(get(C))) in
+    let pk_of_C : if pk_of_C == dhpk(get(C)) then dhpk(C) else x:Data<adv>{x == pk_of_C} = pk_of_C in
     let k = kdf<L;enckey;0>(0x, dh_combine(pk_of_A, get(B)) ++ dh_combine(pk_of_C, get(D)), 0x) in
     let c = aenc(k, 0x) in
     debug printTyOf(k);

@@ -45,6 +45,9 @@ def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Opt
     // (correct, if eph == dhpk(skE<i>) and info is honest) or L_kem_corr<i>
     // (wrong info for session i).
     let info = lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context) in
+    corr_case skS in 
+    corr_case skE<i> in 
+    assume (sec(skR));
     let shared_secret = kdf<L_kem<i>, L_kem_corr<i>(info); kdfkey; 0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh),
         info) in
@@ -55,8 +58,23 @@ def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Opt
         // This calls out to collision-resistance of the KDF
         kdf_inj_lemma(shared_secret_ghost, AuthEncap_shared_secret<session j>())
     };
+    let shared_secret' : if eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) then
+                SecName(KDF<L_kem<i>; kdfkey; 0>)
+            else if sec(skR) /\ sec(skS) then
+                SecName(KDF<L_kem_corr<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(eph))); kdfkey; 0>)
+            else
+                (x:Data<adv> ||kdfkey|| {
+                    x == AuthDecap_shared_secret(eph)
+                    }) 
+    = shared_secret in
+
     let res = AuthDecapResult<session i>(eph, shared_secret, ()) in
     let pres = pack<i>(res) in
+    assert (length(shared_secret) == |kdfkey|);
+    assert (shared_secret == AuthDecap_shared_secret(eph));
+    assert (eph == dhpk(get(skE<i>)) ==> shared_secret == AuthEncap_shared_secret<session i>());
+    assert (eph != dhpk(get(skE<i>)) ==> (forall j:idx. shared_secret != AuthEncap_shared_secret<session j>()));
+    assert (is_group_elem(eph) /\ ((eph == dhpk(get(skE<i>)) \/ (forall j:idx. eph != dhpk(get(skE<j>))))));
     Some(pres)
 
 /* 

@@ -930,7 +930,7 @@ lenConstOfUniformName ne = do
                     _ -> typeError $ "Name not uniform: " ++ show (owlpretty ne)
 
 normalizeAExpr :: AExpr -> Check' senv AExpr
-normalizeAExpr ae = pushRoutine "normalizeAExpr" $ withSpan (ae^.spanOf) $ 
+normalizeAExpr ae = pushRoutine ("normalizeAExpr " ++ show (owlpretty ae)) $ withSpan (ae^.spanOf) $ 
     case ae^.val of
       AEVar _ _ -> return ae
       AEHex _ -> return ae
@@ -1120,6 +1120,7 @@ getStructParams ps =
 getFunDefParams :: [FuncParam] -> Check' senv ([Idx], [Idx])
 getFunDefParams [] = return ([], [])
 getFunDefParams (p:ps) =
+    pushRoutine ("getFunDefParams " ++ show (owlpretty p)) $ do
     case p of
       ParamIdx i oann -> do
           t <- inferIdx i
@@ -1143,9 +1144,10 @@ extractFunDef :: Bind (([IdxVar], [IdxVar]), [DataVar]) AExpr -> [FuncParam] -> 
 extractFunDef b ps as = do
     (is, ps) <- getFunDefParams ps
     (((ixs, pxs), xs), a) <- unbind b
-    assert ("Wrong index arity for fun def") $ (length ixs, length pxs) == (length is, length ps)
-    assert ("Wrong arity for fun def") $ length xs == length as
-    return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs as) a
+    pushRoutine ("extractFunDef " ++ show (owlpretty ((ixs, pxs), xs), a)) $ do
+        assert ("Wrong index arity for fun def") $ (length ixs, length pxs) == (length is, length ps)
+        assert ("Wrong arity for fun def") $ length xs == length as
+        return $ substs (zip ixs is) $ substs (zip pxs ps) $ substs (zip xs as) a
 
 extractAAD :: NameExp -> AExpr -> Check' senv Prop
 extractAAD ne a = do
@@ -1334,7 +1336,7 @@ owlprettyContext e =
 --              _ -> return False
 
 normalizeNameExp :: NameExp -> Check' senv NameExp
-normalizeNameExp ne = 
+normalizeNameExp ne = pushRoutine "normalizeNameExp" $
     case ne^.val of
       NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
           md <- openModule p

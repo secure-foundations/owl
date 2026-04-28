@@ -51,7 +51,7 @@ corr [k] ==> [alice2]
 corr adv ==> [kk]
 
 def alice_main() @ alice : Unit = 
-    // corr_case k in
+    corr_case k in
     let ek = kdf<L1_enc;enckey;0>(get(k), 0x, 0x01) in 
     // assert (corr(k) ==> corr(KDF<k;0>(0x, 0x01)[0]));
     let c = aenc(ek, get(alice1)) in 

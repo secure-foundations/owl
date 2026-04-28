@@ -124,10 +124,10 @@ def PDIS_actual(gb : Ghost,
         | None => ()
         | Some g_pow_c =>
             if !is_group_elem(g_pow_c) then () else {
+                pcase (g_pow_c == dhpk(get(c))) in
+                let g_pow_c : if g_pow_c == dhpk(get(c)) then dhpk(c) else x:Data<adv>{x == g_pow_c} = g_pow_c in
                 let ss  = dh_combine(g_pow_c, get(b1)) in
-                pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
-                corr_case b1 in 
-                corr_case c in
+                corr_case c in 
                 let k = kdf<l2; enckey; 0>(0x, ss, 0x02) in
                 
                 // request PFA to sign
@@ -175,8 +175,9 @@ def SDIS_actual () @ SDIS
                 | _comm_with_sdis g_pow_b1 =>
                     if !is_group_elem(g_pow_b1) then ()
                     else {
+                        pcase (g_pow_b1 == dhpk(get(b1))) in
+                        let g_pow_b1 : if g_pow_b1 == dhpk(get(b1)) then dhpk(b1) else x:Data<adv>{x == g_pow_b1} = g_pow_b1 in
                         let ss   = dh_combine(g_pow_b1, get(c)) in
-                        pcase (ss == dh_combine(dhpk(get(b1)), get(c))) in
                         corr_case c in 
                         corr_case b1 in 
                         let k    = kdf<l2; enckey; 0>(0x, ss, 0x02) in
@@ -219,6 +220,7 @@ def PFA_KE () @ PFA
                     // TODO: can we avoid the explicit subtyping somehow
                     // let g_pow_b' : if (g_pow_b == dhpk(get(b))) then dhpk(b) else (x:Data<adv> ||group||{is_group_elem(x) /\ x == g_pow_b}) = g_pow_b in
                     pcase (g_pow_b == dhpk(get(b))) in
+                    let g_pow_b : if g_pow_b == dhpk(get(b)) then dhpk(b) else x:Data<adv>{x == g_pow_b} = g_pow_b in
                     let ss     = dh_combine<name b, name a>(g_pow_b, get(a)) in
                     // pcase (ss == dh_combine(dhpk(get(a)), get(b))) in
                     let k11 = kdf<l1; enckey; 0>(0x, ss, 0x01) in
@@ -252,6 +254,7 @@ def PDIS_KE () @ PDIS
                     if !is_group_elem(g_pow_a) then () else {
                         // let g_pow_a' : if (g_pow_a == dhpk(get(a))) then dhpk(a) else (x:Data<adv> ||group||{is_group_elem(x) /\ x == g_pow_a}) = g_pow_a in
                         pcase (g_pow_a == dhpk(get(a))) in
+                        let g_pow_a : if g_pow_a == dhpk(get(a)) then dhpk(a) else x:Data<adv>{x == g_pow_a} = g_pow_a in
                         let ss   = dh_combine<name a, name b>(g_pow_a, get(b)) in
                         let k11 = kdf<l1; enckey; 0>(0x, ss, 0x01) in
                         let _ = output 0x to endpoint(SDIS) in // TODO: The hash stuff
