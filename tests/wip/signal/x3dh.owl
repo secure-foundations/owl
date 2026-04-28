@@ -10,6 +10,10 @@ name ma1 : nonce @ alice // Alice's first message
 name ma2 : nonce @ alice // Alice's second message (currently unused)
 name mb2 : nonce @ bob   // Bob's first ratchet message
 
+def event_alice_send_msg1 @ alice 
+def event_bob_recv_msg1 @ bob
+
+
 kdf_scope X3DH {
 
     // Alice's DH keys
@@ -49,7 +53,9 @@ kdf_scope X3DH {
     // TODO: AEAD encryption in Signal contains a KDF inside of the encryption to
     // produce the IV. See https://signal.org/docs/specifications/doubleratchet/#recommended-cryptographic-algorithms
     nametype ma1_enc(dh) = st_aead Name(ma1) //(if dh == correct_amaster_arg() then Name(ma1) else (x:Name(ma1){False}))
-          aad x. (x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2))))
+          aad x. 
+            ((x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(ae2)))) 
+              /\ happened(event_alice_send_msg1(get(ma1), dh)))
           nonce N_c
 
     // nametype ma1_enc = st_aead Name(ma1)
@@ -74,9 +80,9 @@ kdf_scope X3DH {
     // Chain rule: split amaster (output of L1..L4) into ratchet key + AEAD key.
     // Index 0 gives kdfkey (used as rb1/ra1), index 1 gives ma1_enc (used as cb1/ca1).
     // kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc
-    // kdf LR1_bad(s2,s3,s4) where 
+    // kdf LR1_bad(s2++s3++s4) where 
     //     (s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s3 != dh_combine(dhpk(get(bs)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1)))
-    //   : 0x, KDF<L1_bad(s2,s3,s4);kdfkey;0>, 0x -> strict kdfkey || strict ma1_corr
+    //   : 0x, KDF<L1_bad(s2++s3++s4);kdfkey;0>, 0x -> strict kdfkey || strict ma1_corr
 
     // Version that unifies ma1_enc and ma1_corr:
     kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey || strict ma1_enc(correct_amaster_arg())
@@ -159,6 +165,10 @@ corr [long_skB] /\ [bs] /\ [bo] ==> [be2]
 corr [long_skA] /\ [ae1] ==> [mb2]
 corr [long_skB] /\ [bs] /\ [bo] ==> [mb2]
 
+// ---------- EVENTS -----------------------------------------------------------
+def event_alice_send_msg1(msg: Ghost, dh: Ghost) @ alice : Unit = ()
+def event_bob_recv_msg1(msg: Ghost, dh: Ghost) @ bob : Unit = ()
+
 
 // ---------- ALICE'S SIDE -----------------------------------------------------
 
@@ -220,16 +230,18 @@ def alice_x3dh () @ alice
           assert (b3 != dhpk(get(long_skB)) ==> s2 != dh_combine(dhpk(get(long_skB)), get(ae1)));
           assert (b1 != dhpk(get(bo)) ==> s4 != dh_combine(dhpk(get(bo)), get(ae1)));
 
-          let amaster = kdf<L1,L1_bad(s2,s3,s4); kdfkey; 0>(0x, dh, 0x) in
+          let amaster = kdf<L1,L1_bad(s2++s3++s4); kdfkey; 0>(0x, dh, 0x) in
           // // assume (!(exists s2':bv. exists s4':bv. ((s2 != dh_combine(dhpk(get(long_skB)), get(ae1)) \/ s4 != dh_combine(dhpk(get(bo)), get(ae1))) /\ (amaster == dh_combine(dhpk(get(bs)), get(long_skA)) ++ s2' ++ dh_combine(dhpk(get(bs)), get(ae1)) ++ s4')))); // TODO: this should be provable
           // assert((b3 != dhpk(get(long_skB)) \/ b1 != dhpk(get(bo))) ==> amaster != get(KDF<L1;kdfkey;0>));
           // Chain: split amaster into ratchet key (ra1) and AEAD key (ca1)
-          let ra1 = kdf<LR1,LR1_bad(s2,s3,s4); kdfkey || enckey; 0>(0x, amaster, 0x) in
-          let ca1 = kdf<LR1,LR1_bad(s2,s3,s4); kdfkey || enckey; 1>(0x, amaster, 0x) in
+          // TODO: info should be 0x not 0x01
+          let ra1 = kdf<LR1,LR1_bad(s2++s3++s4); kdfkey || enckey; 0>(0x, amaster, 0x) in
+          let ca1 = kdf<LR1,LR1_bad(s2++s3++s4); kdfkey || enckey; 1>(0x, amaster, 0x) in
 
           pcase sec(ma1) in
           false_elim in
           let gae2 = dhpk(get(ae2)) in
+          call event_alice_send_msg1(get(ma1), dh);
           let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA)) ++ gae2) in
           let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1, gae2) in
           let _ = output a1 to endpoint(bob) in
@@ -313,10 +325,11 @@ def bob_x3dh () @ bob
         // pcase (dh == correct_bmaster_arg()) in
         false_elim in
 
-        let bmaster = kdf<L1,L1_bad(s2,s3,s4); kdfkey; 0>(0x, dh, 0x) in
+        let bmaster = kdf<L1,L1_bad(s2++s3++s4); kdfkey; 0>(0x, dh, 0x) in
         // Chain: split bmaster into ratchet key (rb1) and AEAD key (cb1)
-        let rb1 = kdf<LR1,LR1_bad(s2,s3,s4); kdfkey || enckey; 0>(0x, bmaster, 0x) in
-        let cb1 = kdf<LR1,LR1_bad(s2,s3,s4); kdfkey || enckey; 1>(0x, bmaster, 0x) in
+        // TODO: info should be 0x not 0x01
+        let rb1 = kdf<LR1,LR1_bad(s2++s3++s4); kdfkey || enckey; 0>(0x, bmaster, 0x) in
+        let cb1 = kdf<LR1,LR1_bad(s2++s3++s4); kdfkey || enckey; 1>(0x, bmaster, 0x) in
 
         let n_c = get_counter N_c_bob in
         corr_case long_skA in
@@ -333,6 +346,13 @@ def bob_x3dh () @ bob
             corr_case be2 in
             false_elim in
             
+            // AUTH QUERY: if we derived the correct keys and at least one party is
+            // uncompromised, then we know that Alice must have generated the same 
+            // DH input value and thus the same pre-master secret and first ratchet key.
+            assert(bob_good[dh] ==> happened(event_alice_send_msg1(ma1, dh)));
+            call event_bob_recv_msg1(ma1, dh);
+
+
             // Double ratchet first step (inlined from bob_double_ratchet_send):
             // rb2 = rk_1 || enckey_1 = KDF(salt=rb1, ikm=DH(ae2_pub, be2), info=0x)
             let gae2: if (a4 == dhpk(get(ae2))) then dhpk(ae2) else (x:Data<adv>||group||{is_group_elem(x) /\ x == a4}) = a4 in
