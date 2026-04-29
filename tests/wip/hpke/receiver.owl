@@ -30,8 +30,6 @@ struct AuthDecapResult<i> {
 def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Option (exists i.AuthDecapResult<session i>) =
     // Ensure the ephemeral key is a valid group element
     guard is_group_elem(eph) in
-    guard (! (eq(eph, pkS))) in 
-    guard (! (eq(eph, pkR))) in 
     // Is the ephemeral key actually an ephemeral key?
     pcase (exists i:idx. eph == dhpk(get(skE<i>))) in
     // Let i be the index of the ephemeral key (if it is one)
