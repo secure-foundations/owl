@@ -2881,7 +2881,7 @@ unconcatIKM a = do
      AEApp (PRes (PDot PTop "concat")) [] [x, y] -> 
          liftM2 (++) (unconcatIKM x) (unconcatIKM y)
      AEGet _ -> return [a']
-    --  AEVar{} -> return [a']
+     AEVar{} -> return [a']
      AEApp (PRes (PDot PTop "dh_combine")) _ _ -> return [a']
      AEApp (PRes (PDot PTop "dhpk")) _ _ -> return [a']
      AEHex _ -> return [a']
