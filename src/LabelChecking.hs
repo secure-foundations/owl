@@ -48,9 +48,18 @@ removeGhost l =
       LTop -> return l
 
 nameDefFlows :: NameExp -> NameType -> Sym SExp
-nameDefFlows n nt = do
+nameDefFlows = nameDefFlows' Nothing
+
+nameDefFlows' :: Maybe String -> NameExp -> NameType -> Sym SExp
+nameDefFlows' rec_nt n nt = do
     case nt^.val of 
-      NT_App p is as -> (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows n
+      NT_App p@(PRes (PDot _ name)) is as ->
+        case rec_nt of
+            -- For recursive name types
+            -- TODO: is this right?
+            Just name' | name == name' -> return sTrue
+            _ ->
+                (liftCheck $ resolveNameTypeApp p is as) >>= nameDefFlows' (Just name) n
       NT_Nonce _ -> return sTrue
       NT_DH -> return sTrue
       NT_Enc t -> do

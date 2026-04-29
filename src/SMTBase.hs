@@ -635,6 +635,9 @@ symIndex idx@(IVar ispan iname v) = do
           indices <- view $ inScopeIndices
           liftIO $ putStrLn $ "Unknown index: " ++ show (unignore iname)
           liftCheck $ typeError (show $ owlpretty "SMT ERROR: unknown index " <> owlpretty iname <> owlpretty " under inScopeIndices " <> (list $ map (owlpretty . fst) indices) <> owlpretty " and iEnv " <> (list $ map (owlpretty . fst) $ M.toList iEnv))
+symIndex succ@(ISucc pos i) = do
+    iv <- symIndex i
+    return $ SApp [SAtom "IndexSucc", iv]
 
 data SMTNameDef = 
     SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))

@@ -188,6 +188,8 @@ data Env senv = Env {
     -- These below must only be modified by the trusted functions, since memoization
     -- depends on them
     _inScopeIndices ::  Map IdxVar (Ignore String, IdxType),
+    _curNameDef :: Maybe (String, Bind ([IdxVar], [IdxVar]) NameDef),
+    _curNameTypeDef :: Maybe (String, Bind (([IdxVar], [IdxVar]), [DataVar]) NameType),
     _tyContext :: Map DataVar (Ignore String, (Maybe AExpr), Ty),
     _pathCondition :: [Prop],
     _expectedTy :: Maybe Ty,
@@ -529,6 +531,13 @@ inferIdx (IVar pos iname i) = do
                     typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
                 _ -> return t
           Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) 
+inferIdx (ISucc pos i) = do
+    t <- inferIdx i
+    case t of
+        IdxSession -> return t
+        IdxPId -> typeError $ "Successor can only be applied to session or ghost indices: " ++ show (owlpretty i)
+        IdxGhost -> return t
+inferIdx (IZero _) = return IdxSession
 
 checkIdx :: Idx -> Check' senv ()
 checkIdx i = do
@@ -536,7 +545,7 @@ checkIdx i = do
     return ()
 
 checkIdxSession :: Idx -> Check' senv ()
-checkIdxSession i@(IVar pos _ _) = do
+checkIdxSession i = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -544,7 +553,7 @@ checkIdxSession i@(IVar pos _ _) = do
        TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check' senv ()
-checkIdxPId i@(IVar pos _ _) = do
+checkIdxPId i = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -677,13 +686,20 @@ inODHProp salt ikm info = return pFalse
 --                return $ substs (zip xs as) p
 --            _ -> typeError $ "Not an RO name: " ++ n
 
--- Resolves all App nodes
-normalizeNameType :: NameType -> Check' senv NameType
-normalizeNameType nt = pushRoutine "normalizeNameType" $  
+-- Resolves all App nodes (except for recursive name types)
+-- TODO: assuming no mutually recursive name types yet
+normalizeNameType' :: Maybe String -> NameType -> Check' senv NameType
+normalizeNameType' rec_nt nt = pushRoutine "normalizeNameType" $  
     case nt^.val of
-      NT_App p is as -> resolveNameTypeApp p is as >>= normalizeNameType
-      NT_KDF -> return nt  -- bare kdfkey, no cases to normalize
+      NT_App p@(PRes (PDot _ n)) is as ->
+        case rec_nt of
+          Just n' | n == n' -> return nt -- Recursive name types are unfolded at most once
+          _ -> resolveNameTypeApp p is as >>= normalizeNameType' (Just n)
+      NT_KDF -> return nt  -- bare kdfkey marker; no cases to normalize
       _ -> return nt
+
+normalizeNameType :: NameType -> Check' senv NameType
+normalizeNameType = normalizeNameType' Nothing
 
 pushRoutine :: MonadReader (Env senv) m => String -> m a -> m a
 pushRoutine s k = do
@@ -692,32 +708,46 @@ pushRoutine s k = do
         local (over tcRoutineStack $ (s:)) k
     else k
 
+-- Returns (is_recursive, definition)
+lookupNameDef :: Path -> Check' senv (Bool, Bind ([IdxVar], [IdxVar]) NameDef)
+lookupNameDef pth@(PRes (PDot p n)) = do
+    md <- openModule p
+    case lookup n (md^.nameDefs) of
+      Just b -> return (False, b)
+      Nothing -> do
+        cur_def <- view curNameDef
+        case cur_def of
+            Just (n', b) | n == n' -> return (True, b)
+            _ -> typeError $ show $ ErrUnknownName pth
+
 getNameInfo :: NameExp -> Check' senv (Maybe (NameType, Maybe (ResolvedPath, [Locality])))
 getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $ withSpan (ne^.spanOf) $ do
-    res <- case ne^.val of 
+    res <- case ne^.val of
              NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
-                 md <- openModule p
                  tc <- view tcScope
                  forM_ vs1 checkIdxSession
                  forM_ vs2 checkIdxPId
-                 case lookup n (md^.nameDefs)  of
-                   Nothing -> typeError $ show $ ErrUnknownName pth
-                   Just b_nd -> do
-                       ((is, ps), nd') <- unbind b_nd
-                       assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
-                       let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
-                       case nd of
-                         AbbrevNameDef bne2 -> do
-                             (xs, ne2) <- unbind bne2
-                             assert ("Wrong arity for name abbreviation") $ length as == length xs
-                             _ <- mapM inferAExpr as
-                             getNameInfo $ substs (zip xs as) ne2
-                         AbstractName -> do
-                             assert ("Value parameters not allowed for abstract names") $ length as == 0
-                             return Nothing
-                         BaseDef (nt, lcls) -> do
-                             assert ("Value parameters not allowed for base names") $ length as == 0
-                             return $ Just (nt, Just (PDot p n, lcls)) 
+                 (is_rec, b_nd) <- lookupNameDef pth
+                 -- If recursive, require at least one strictly-increasing session index
+                 assert ("Recursive name uses should have at least one strictly increasing index: " ++ show (owlpretty ne)) $
+                     not is_rec || any (\i -> case i of
+                             ISucc _ _ -> True
+                             _ -> False) vs1
+                 ((is, ps), nd') <- unbind b_nd
+                 assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
+                 let nd = substs (zip is vs1) $ substs (zip ps vs2) nd'
+                 case nd of
+                   AbbrevNameDef bne2 -> do
+                       (xs, ne2) <- unbind bne2
+                       assert ("Wrong arity for name abbreviation") $ length as == length xs
+                       _ <- mapM inferAExpr as
+                       getNameInfo $ substs (zip xs as) ne2
+                   AbstractName -> do
+                       assert ("Value parameters not allowed for abstract names") $ length as == 0
+                       return Nothing
+                   BaseDef (nt, lcls) -> do
+                       assert ("Value parameters not allowed for base names") $ length as == 0
+                       return $ Just (nt, Just (PDot p n, lcls))
              KDFName nks j ib ref -> do
                  mBody <- lookupKDFScopeRule (_ksrrLabel ref) (_ksrrIdxs ref) (_ksrrArgs ref)
                  case mBody of
@@ -1338,21 +1368,17 @@ owlprettyContext e =
 normalizeNameExp :: NameExp -> Check' senv NameExp
 normalizeNameExp ne = pushRoutine "normalizeNameExp" $
     case ne^.val of
-      NameConst (vs1, vs2) pth@(PRes (PDot p n)) as -> do
-          md <- openModule p
-          case lookup n (md^.nameDefs) of
-            Nothing -> typeError $ show $ ErrUnknownName pth
-            Just b_nd -> do 
-                       ((is, ps), nd') <- unbind b_nd
-                       let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
-                       case nd of
-                         AbbrevNameDef bne2 -> do
-                             (xs, ne2) <- unbind bne2
-                             assert ("Wrong arity") $ length xs == length as
-                             normalizeNameExp $ substs (zip xs as) ne2
-                         _ -> return ne
+      NameConst (vs1, vs2) pth as -> do
+          (_, b_nd) <- lookupNameDef pth
+          ((is, ps), nd') <- unbind b_nd
+          let nd = substs (zip is vs1) $ substs (zip ps vs2) nd'
+          case nd of
+              AbbrevNameDef bne2 -> do
+                  (xs, ne2) <- unbind bne2
+                  assert ("Wrong arity") $ length xs == length as
+                  normalizeNameExp $ substs (zip xs as) ne2
+              _ -> return ne
       KDFName nks j ib ref -> return ne
-      _ -> error ("Not normalizing name exp: " ++ show (owlpretty ne))
 
 -- Traversing modules to collect global info
 

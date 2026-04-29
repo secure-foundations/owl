@@ -1,0 +1,3 @@
+locality alice
+
+name k<i> : enckey Name(k<i>) @ alice
