@@ -3061,16 +3061,16 @@ buildRuleMatchProp actualSalt actualIkm actualInfo bRule = do
                       _     -> pAnd (_ksrbWhere body) matchProp
     return $ mkExistsIdx (is1 ++ is2) $ mkExistsBv dvars withWhere
 
-nameExpInScope :: [String] -> NameExp -> Bool
-nameExpInScope entryNames ne =
+nameExpInScope :: KDFScopeDef -> NameExp -> Bool
+nameExpInScope scopeDef ne =
     case ne^.val of
-      NameConst _ (PRes (PDot _ s)) _ -> s `elem` entryNames
-      -- TODO: add in KDF name possibility here
-      _ -> False
+      NameConst _ (PRes (PDot _ s)) _ -> s `elem` _ksdEntryNames scopeDef
+      KDFName _ _ _ hint -> member (_ksrrLabel hint) (_ksdRules scopeDef)
+      _ -> False -- unresolved name expressions
 
 -- returns (isLSBE, isPublic)
-checkDHCombineLSBE :: [String] -> AExpr -> AExpr -> Check (Bool, Bool)
-checkDHCombineLSBE entryNames x y = do
+checkDHCombineLSBE :: KDFScopeDef -> AExpr -> AExpr -> Check (Bool, Bool)
+checkDHCombineLSBE scopeDef x y = do
     tx <- inferAExpr x >>= normalizeTy
     ty' <- inferAExpr y >>= normalizeTy
     let mPkName = case (stripRefinements tx)^.val of
@@ -3078,7 +3078,7 @@ checkDHCombineLSBE entryNames x y = do
                     _ -> extractDHPKFromType tx
         mSkName = extractNameFromType ty'
     let nameInScope mNe = case mNe of
-            Just ne -> nameExpInScope entryNames ne 
+            Just ne -> nameExpInScope scopeDef ne
             Nothing -> False
     let namePublic mNe = case mNe of
             Just ne -> flowsTo (nameLbl ne) advLbl
@@ -3092,16 +3092,16 @@ checkDHCombineLSBE entryNames x y = do
     return (isLSBE, isPub)
 
 -- returns (isLSBE, isPublic)
-fallbackFromType :: [String] -> AExpr -> Check (Bool, Bool)
-fallbackFromType entryNames a = do
+fallbackFromType :: KDFScopeDef -> AExpr -> Check (Bool, Bool)
+fallbackFromType scopeDef a = do
     t <- inferAExpr a >>= normalizeTy
     case (stripRefinements t)^.val of
-      TName ne | nameExpInScope entryNames ne -> do
+      TName ne | nameExpInScope scopeDef ne -> do
         pub <- flowsTo (nameLbl ne) advLbl
         return (True, pub)
       TSS ne1 ne2 -> do
-          let ne1InScope = nameExpInScope entryNames ne1
-              ne2InScope = nameExpInScope entryNames ne2
+          let ne1InScope = nameExpInScope scopeDef ne1
+              ne2InScope = nameExpInScope scopeDef ne2
           ne1Public <- flowsTo (nameLbl ne1) advLbl
           ne2Public <- flowsTo (nameLbl ne2) advLbl
           let ssPublic = ne1Public || ne2Public -- if either side is public, the shared secret is public
@@ -3114,15 +3114,15 @@ fallbackFromType entryNames a = do
         pub <- tyFlowsTo t advLbl
         return (False, pub)
 
-classifyComponent :: [String] -> AExpr -> Ty -> Check (Bool, Bool)
-classifyComponent entryNames expr ty = do
+classifyComponent :: KDFScopeDef -> AExpr -> Ty -> Check (Bool, Bool)
+classifyComponent scopeDef expr ty = do
     a <- resolveANF expr >>= normalizeAExpr
     (lsbe, pub) <- case a^.val of
-      AEGet ne | nameExpInScope entryNames ne -> do
+      AEGet ne | nameExpInScope scopeDef ne -> do
         tyPub <- tyFlowsTo ty advLbl
         return (True, tyPub)
-      AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> checkDHCombineLSBE entryNames x y
-      _ -> fallbackFromType entryNames a
+      AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] -> checkDHCombineLSBE scopeDef x y
+      _ -> fallbackFromType scopeDef a
     return (lsbe, pub)
 
 unconcatWithTypes :: AExpr -> Check [(AExpr, Ty)]
@@ -3165,12 +3165,11 @@ handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement 
         else do
         -- Step 2+3: Check scope-binding via salt + IKM components
         assert "KDF info argument must be public" bInfo
-        let entryNames = _ksdEntryNames scopeDef
         ikmComponentsWithTypes <- unconcatWithTypes ikmE
         let allComponents = (saltE, saltT) : ikmComponentsWithTypes
 
         results <- forM allComponents $ \(comp, compT) ->
-            classifyComponent entryNames comp compT
+            classifyComponent scopeDef comp compT
 
         let hasLSBE = any fst results
 
