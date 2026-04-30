@@ -3065,6 +3065,7 @@ nameExpInScope :: [String] -> NameExp -> Bool
 nameExpInScope entryNames ne =
     case ne^.val of
       NameConst _ (PRes (PDot _ s)) _ -> s `elem` entryNames
+      -- TODO: add in KDF name possibility here
       _ -> False
 
 -- returns (isLSBE, isPublic)
