@@ -17,6 +17,7 @@ import Unbound.Generics.LocallyNameless
 import AST
 import Numeric
 import Data.Char (ord)
+import Data.List (findIndex)
 import Pretty
 
 type Parser = ParsecT String () IO 
@@ -31,7 +32,7 @@ owlStyle   = P.LanguageDef
                 , P.identLetter    = alphaNum <|> oneOf "_'?"
                 , P.opStart        = oneOf ":!#$%&*+./<=>?@\\^|-~"
                 , P.opLetter       = oneOf ":!#$%&*+./<=>?@\\^|-~"
-                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf", "kdf_scope", "kdfkey", "odh", "kdf", "where", "nametype", "public", "dh_ss", "succ"]
+                , P.reservedNames  = ["adv",  "ghost", "Ghost", "bool", "Option", "name", "Name",  "SecName", "PubName", "st_aead",  "mackey", "sec", "st_aead_enc", "st_aead_dec", "let", "DH", "nonce", "if", "then", "else", "enum", "Data", "sigkey", "type", "Unit", "Lemma", "random_oracle", "return", "corr", "RO", "debug", "assert",  "assume", "admit", "ensures", "true", "false", "True", "False", "call", "static", "corr_case", "false_elim", "union_case", "exists", "get",  "getpk", "getvk", "pack", "def", "Union", "pkekey", "pke_sk", "pke_pk", "label", "aexp", "type", "idx", "table", "lookup", "write", "unpack", "to", "include", "maclen",  "begin", "end", "module", "aenc", "adec", "pkenc", "pkdec", "mac", "mac_vrfy", "sign", "vrfy", "prf",  "PRF", "forall", "bv", "pcase", "choose_idx", "choose_bv", "crh_lemma", "ro", "is_constant_lemma", "strict", "aad", "Const", "proof", "gkdf", "kdf_scope", "kdfkey", "odh", "kdf", "rec_odh", "rec_kdf", "where", "nametype", "public", "dh_ss", "succ"]
                 , P.reservedOpNames= ["(", ")", "->", ":", "=", "==", "!", "<=", "!<=", "!=", "*", "|-", "+x"]
                 , P.caseSensitive  = True
                 }
@@ -808,7 +809,7 @@ parseKDFOutputSpec = do
         let strictness = case ostrict of
                            Nothing -> KDFUnstrict
                            Just v -> v
-        return (strictness, nt)) `sepBy1` (symbol "||")
+        return (strictness, nt)) `sepBy1` (try (symbol "||"))
     return $ KDFOutputSpec nts
 
 parseKDFRuleFormals :: Parser [DataVar]
@@ -821,21 +822,71 @@ parseKDFRuleFormals =
 
 parseKDFRule :: Parser Decl
 parseKDFRule = parseSpanned $ do
-    isODH <- alt (reserved "odh" >> return True) (reserved "kdf" >> return False)
+    (isODH, isRec) <- choice
+        [ try (reserved "rec_kdf" >> return (False, True))
+        , try (reserved "rec_odh" >> return (True,  True))
+        , reserved "kdf" >> return (False, False)
+        , reserved "odh" >> return (True,  False)
+        ]
+    recIdx <- if isRec then do
+                  symbol "<"
+                  i <- identifier
+                  symbol ">"
+                  return (Just i)
+              else return Nothing
     lbl <- identifier
     idxs <- parseIdxParamBinds
+    recPos <- case recIdx of
+      Nothing -> return 0
+      Just ri ->
+          case findIndex (\i -> name2String i == ri) (fst idxs) of
+            Just pos -> return pos
+            Nothing  -> fail "rec_kdf<i>/rec_odh<i> must declare <i> as a session-index parameter"
     args <- parseKDFRuleFormals
     let ruleParams = map name2String args
     wh <- option (mkSpanned PTrue) (reserved "where" >> parseProp)
-    symbol ":"
-    salt <- parseRuleBodyAExpr ruleParams
-    symbol ","
-    ikm <- parseRuleBodyAExpr ruleParams
-    symbol ","
-    info <- parseAExpr
-    symbol "->"
-    out <- parseKDFOutputSpec
-    let body = KDFScopeRuleBody wh salt ikm info out
+    form <- case recIdx of
+      Nothing -> do
+          symbol ":"
+          salt <- parseRuleBodyAExpr ruleParams
+          symbol ","
+          ikm <- parseRuleBodyAExpr ruleParams
+          symbol ","
+          info <- parseAExpr
+          symbol "->"
+          out <- parseKDFOutputSpec
+          return $ NonRec (KDFCaseBody salt ikm info out)
+      Just _ -> do
+          -- Zero case: | 0 : salt, ikm, info -> out
+          symbol "|"
+          symbol "0"
+          symbol ":"
+          salt0 <- parseRuleBodyAExpr ruleParams
+          symbol ","
+          ikm0 <- parseRuleBodyAExpr ruleParams
+          symbol ","
+          info0 <- parseAExpr
+          symbol "->"
+          out0 <- parseKDFOutputSpec
+          let zeroCase = KDFCaseBody salt0 ikm0 info0 out0
+          -- Succ case: | succ(i') : salt, ikm, info -> out
+          symbol "|"
+          reserved "succ"
+          symbol "("
+          predName <- identifier
+          symbol ")"
+          symbol ":"
+          salt1 <- parseRuleBodyAExpr ruleParams
+          symbol ","
+          ikm1 <- parseRuleBodyAExpr ruleParams
+          symbol ","
+          info1 <- parseAExpr
+          symbol "->"
+          out1 <- parseKDFOutputSpec
+          let predVar  = s2n predName :: IdxVar
+              succCase = KDFCaseBody salt1 ikm1 info1 out1
+          return $ RecIdx recPos zeroCase (bind predVar succCase)
+    let body = KDFScopeRuleBody wh form
     return $ DeclKDFRule $ KDFScopeRule isODH lbl $ bind (idxs, args) body
 
 parseKDFScope :: Parser Decl

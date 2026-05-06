@@ -1,5 +1,0 @@
-locality alice
-
-// succ(...) is not allowed in the binding position of a name declaration;
-// only plain index variables are valid there.
-name k<succ(i)> : nonce

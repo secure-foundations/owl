@@ -1,0 +1,6 @@
+// Currently parse errors aren't marked as failures in the test harness
+locality alice
+
+// succ(...) is not allowed in the binding position of a name declaration;
+// only plain index variables are valid there
+name k<succ(i)> : nonce

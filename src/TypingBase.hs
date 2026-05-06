@@ -753,7 +753,20 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                  case mBody of
                    Nothing -> typeError $ "Unknown KDF group rule in name type: " ++ _ksrrLabel ref
                    Just body -> do
-                     let KDFOutputSpec outputs = _ksrbOutput body
+                     cb <- case _ksrbForm body of
+                             NonRec c -> return c
+                             RecIdx recPos zeroCb succBind -> do
+                                 let (vs1, _) = _ksrrIdxs ref
+                                 assert ("Internal: recursion-index slot " ++ show recPos ++
+                                         " out of range for rule " ++ _ksrrLabel ref ++
+                                         " (have " ++ show (length vs1) ++ " session indices)")
+                                        (recPos < length vs1)
+                                 case vs1 !! recPos of
+                                     ISucc _ predIdx -> do
+                                         (i', succCb) <- unbind succBind
+                                         return $ subst i' predIdx succCb
+                                     _ -> return zeroCb
+                     let KDFOutputSpec outputs = _kcbOutput cb
                      unless (unignore ib) $ do
                          assert ("KDF name kinds length mismatch for rule " ++ _ksrrLabel ref ++
                                  ": annotation has " ++ show (length nks) ++

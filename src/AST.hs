@@ -322,12 +322,24 @@ data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
 data KDFOutputSpec = KDFOutputSpec [(KDFStrictness, NameType)]
     deriving (Show, Generic, Typeable)
 
+data KDFCaseBody = KDFCaseBody {
+    _kcbSalt   :: AExpr,
+    _kcbIkm    :: AExpr,
+    _kcbInfo   :: AExpr,
+    _kcbOutput :: KDFOutputSpec
+} deriving (Show, Generic, Typeable)
+
+-- NonRec: plain kdf/odh rule body
+-- RecIdx recPos zeroCase succCase: the recursive form; recPos is the index of the
+-- recursion index in is1, succCase binds the predecessor IdxVar
+data KDFRuleForm
+    = NonRec KDFCaseBody
+    | RecIdx Int KDFCaseBody (Bind IdxVar KDFCaseBody)
+    deriving (Show, Generic, Typeable)
+
 data KDFScopeRuleBody = KDFScopeRuleBody {
-    _ksrbWhere  :: Prop,        -- PTrue when no where clause
-    _ksrbSalt   :: AExpr,
-    _ksrbIkm    :: AExpr,
-    _ksrbInfo   :: AExpr,
-    _ksrbOutput :: KDFOutputSpec
+    _ksrbWhere :: Prop,         -- PTrue when no where clause
+    _ksrbForm  :: KDFRuleForm
 } deriving (Show, Generic, Typeable)
 
 data KDFScopeRuleX = KDFScopeRule {
@@ -510,6 +522,7 @@ data FuncParam =
       deriving (Show, Generic, Typeable)
 
 
+makeLenses ''KDFCaseBody
 makeLenses ''KDFScopeRuleBody
 makeLenses ''KDFScopeRuleX
 makeLenses ''KDFScopeRuleRef
@@ -577,6 +590,16 @@ instance Alpha KDFOutputSpec
 instance Subst Idx KDFOutputSpec
 instance Subst AExpr KDFOutputSpec
 instance Subst ResolvedPath KDFOutputSpec
+
+instance Alpha KDFCaseBody
+instance Subst Idx KDFCaseBody
+instance Subst AExpr KDFCaseBody
+instance Subst ResolvedPath KDFCaseBody
+
+instance Alpha KDFRuleForm
+instance Subst Idx KDFRuleForm
+instance Subst AExpr KDFRuleForm
+instance Subst ResolvedPath KDFRuleForm
 
 instance Alpha KDFScopeRuleBody
 instance Subst Idx KDFScopeRuleBody

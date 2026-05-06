@@ -197,16 +197,33 @@ instance OwlPretty KDFOutputSpec where
         hsep $ intersperse (owlpretty " ||") $
         map (\(str, nt) -> owlpretty str <+> owlpretty nt) nts
 
+ppCaseBody :: KDFCaseBody -> OwlDoc
+ppCaseBody cb =
+    owlpretty (_kcbSalt cb) <> owlpretty ", " <>
+    owlpretty (_kcbIkm cb)  <> owlpretty ", " <>
+    owlpretty (_kcbInfo cb) <> owlpretty " -> " <>
+    owlpretty (_kcbOutput cb)
+
 instance OwlPretty KDFScopeRuleBody where
-    owlpretty (KDFScopeRuleBody _ salt ikm info out) =
-        owlpretty salt <> owlpretty ", " <> owlpretty ikm <> owlpretty ", " <> owlpretty info
-        <> owlpretty " -> " <> owlpretty out
+    owlpretty (KDFScopeRuleBody _ form) = case form of
+        NonRec body -> ppCaseBody body
+        RecIdx _ zeroBody succBind ->
+            let (i', succBody) = unsafeUnbind succBind
+            in owlpretty "| 0 : "            <> ppCaseBody zeroBody <> owlpretty "\n" <>
+               owlpretty "| succ(" <> owlpretty i' <> owlpretty ") : " <> ppCaseBody succBody
 
 instance OwlPretty KDFScopeRuleX where
     owlpretty rule =
-        let kw     = if _ksrIsODH rule then owlpretty "odh" else owlpretty "kdf"
-            lbl    = owlpretty (_ksrLabel rule)
+        let kwBase = if _ksrIsODH rule then "odh" else "kdf"
             ((idxs, fargs), body) = unsafeUnbind (_ksrBody rule)
+            isRec = case _ksrbForm body of { RecIdx {} -> True; _ -> False }
+            kw    = owlpretty $ if isRec then "rec_" ++ kwBase else kwBase
+            -- For recursive rules, show the recursion index as <i>
+            prec  = case _ksrbForm body of
+                      RecIdx recPos _ _ | recPos < length (fst idxs) ->
+                          owlpretty "<" <> owlpretty (fst idxs !! recPos) <> owlpretty ">"
+                      _ -> mempty
+            lbl    = owlpretty (_ksrLabel rule)
             pidxs  = owlprettyIdxBindsPair idxs
             pfargs | null fargs = mempty
                    | otherwise  = owlpretty "(" <>
@@ -216,7 +233,7 @@ instance OwlPretty KDFScopeRuleX where
                          Spanned _ PTrue -> mempty
                          p               -> owlpretty " where " <> owlpretty p
         in
-        kw <+> lbl <> pidxs <> pfargs <> wh <> owlpretty " : " <> owlpretty body
+        kw <> prec <+> lbl <> pidxs <> pfargs <> wh <> owlpretty " :\n" <> owlpretty body
 
 owlprettyIdxBindsPair :: ([IdxVar], [IdxVar]) -> OwlDoc
 owlprettyIdxBindsPair ([], []) = mempty

@@ -247,25 +247,37 @@ mkKDFValueOfAxioms kdfRules =
         let allVars = idxVars ++ bitsVars ++ intVars
         let kdfTerm = sApp $ SAtom ("%kdf_" ++ cleanSMTIdent lbl) : map fst allVars
         let lhs = SApp [SAtom "ValueOf", kdfTerm]
-        let saltAE = _ksrbSalt body
-        let ikmAE  = _ksrbIkm body
-        let infoAE = _ksrbInfo body
         let whereP = _ksrbWhere body
+            qid   = "kdf_valueof_" ++ cleanSMTIdent lbl
         withSMTIndices (map (\i -> (i, IdxSession)) is1 ++ map (\i -> (i, IdxPId)) is2) $ do
             withSMTVars dvars $ do
-                vSalt <- interpretAExp saltAE
-                vIkm  <- interpretAExp ikmAE
-                vInfo <- interpretAExp infoAE
-                let rhs = SApp [SAtom "KDF", vSalt, vIkm, vInfo, sVar, segVar]
-                let bodyEq = SApp [SAtom "=", SAtom "TRUE",
-                                   SApp [SAtom "eq", lhs, rhs]]
-                let qid = "kdf_valueof_" ++ cleanSMTIdent lbl
-                axBody <- case whereP ^. val of
-                    PTrue -> return bodyEq
-                    _ -> do
-                        vWhere <- interpretProp whereP
-                        return $ vWhere `sImpl` bodyEq
-                emitAssertion $ sForall allVars axBody [lhs] qid
+                let emitCaseAxiom qidSuffix extraVars mGuard cb = do
+                        vSalt <- interpretAExp (_kcbSalt cb)
+                        vIkm  <- interpretAExp (_kcbIkm cb)
+                        vInfo <- interpretAExp (_kcbInfo cb)
+                        let rhs    = SApp [SAtom "KDF", vSalt, vIkm, vInfo, sVar, segVar]
+                            bodyEq = SApp [SAtom "=", SAtom "TRUE",
+                                           SApp [SAtom "eq", lhs, rhs]]
+                            withGuard ax = maybe ax (`sImpl` ax) mGuard
+                        axBody <- case whereP^.val of
+                            PTrue -> return $ withGuard bodyEq
+                            _     -> do vWhere <- interpretProp whereP
+                                        return $ withGuard (vWhere `sImpl` bodyEq)
+                        emitAssertion $ sForall (allVars ++ extraVars) axBody [lhs] (qid ++ qidSuffix)
+                case _ksrbForm body of
+                    NonRec cb -> emitCaseAxiom "" [] Nothing cb
+                    RecIdx recPos zeroCb succBind -> do
+                        let recIdxSmt = if recPos < length idxVars
+                                        then fst (idxVars !! recPos)
+                                        else SAtom "IndexZero"
+                            zeroGuard = SApp [SAtom "=", recIdxSmt, SAtom "IndexZero"]
+                        emitCaseAxiom "_zero" [] (Just zeroGuard) zeroCb
+                        (i', succCb) <- liftCheck $ unbind succBind
+                        let predVarSmt = SAtom (cleanSMTIdent $ show i')
+                            succGuard  = SApp [SAtom "=", recIdxSmt,
+                                               SApp [SAtom "IndexSucc", predVarSmt]]
+                        withSMTIndices [(i', IdxSession)] $
+                            emitCaseAxiom "_succ" [(predVarSmt, indexSort)] (Just succGuard) succCb
 
 mkKDFDisjointness :: [(String, Bind (([IdxVar], [IdxVar]), [DataVar]) KDFScopeRuleBody)]
                   -> [SMTNameDef]

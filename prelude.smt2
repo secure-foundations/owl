@@ -501,6 +501,8 @@
 (declare-sort Index)
 (declare-fun Happened (String (List Index) (List Bits)) Bool)
 (declare-fun IndexSucc (Index) Index)
+(declare-const IndexZero Index)
+(assert (forall ((x Index)) (not (= (IndexSucc x) IndexZero))))
 
 ;; Builtin function axioms
 (assert (distinct TRUE FALSE UNIT))

@@ -340,17 +340,24 @@ declPathUpdates d p = case d^.val of
 resolveKDFRuleX :: Ignore Position -> KDFScopeRuleX -> Resolve KDFScopeRuleX
 resolveKDFRuleX _pos rule = do
     ((idxs, dvars), body) <- unbind (_ksrBody rule)
-    wh'   <- resolveProp (_ksrbWhere body)
-    salt' <- resolveAExpr (_ksrbSalt body)
-    ikm'  <- resolveAExpr (_ksrbIkm body)
-    info' <- resolveAExpr (_ksrbInfo body)
-    let KDFOutputSpec outputs = _ksrbOutput body
-    outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt))
-                     outputs
-    let body' = body { _ksrbWhere = wh', _ksrbSalt = salt', _ksrbIkm = ikm'
-                     , _ksrbInfo = info', _ksrbOutput = KDFOutputSpec outputs'
-                     }
+    wh'    <- resolveProp (_ksrbWhere body)
+    form'  <- resolveRuleForm (_ksrbForm body)
+    let body' = KDFScopeRuleBody wh' form'
     return $ rule { _ksrBody = bind (idxs, dvars) body' }
+  where
+    resolveCaseBody cb = do
+        salt' <- resolveAExpr (_kcbSalt cb)
+        ikm'  <- resolveAExpr (_kcbIkm cb)
+        info' <- resolveAExpr (_kcbInfo cb)
+        let KDFOutputSpec outputs = _kcbOutput cb
+        outputs' <- mapM (\(str, nt) -> fmap (\nt' -> (str, nt')) (resolveNameType nt)) outputs
+        return $ KDFCaseBody salt' ikm' info' (KDFOutputSpec outputs')
+    resolveRuleForm (NonRec cb) = NonRec <$> resolveCaseBody cb
+    resolveRuleForm (RecIdx recPos zeroCb succBind) = do
+        zeroCb' <- resolveCaseBody zeroCb
+        (i', succCb) <- unbind succBind
+        succCb' <- resolveCaseBody succCb
+        return $ RecIdx recPos zeroCb' (bind i' succCb')
 
 resolveModuleExp :: Ignore Position -> ModuleExp -> Resolve ModuleExp
 resolveModuleExp pos me = 

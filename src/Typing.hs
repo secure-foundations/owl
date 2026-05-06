@@ -1154,53 +1154,124 @@ validateKDFScopeRule
     -> KDFScopeRuleX
     -> Check ()
 validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames rule = do
-    let lbl   = _ksrLabel rule
-        isODH = _ksrIsODH rule
+    let lbl = _ksrLabel rule
     (((is1, is2), dvars), body) <- unbind (_ksrBody rule)
-    ikmAtoms <-
-        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                     map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
-        withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
-            _ <- inferAExpr (_ksrbSalt body)
-            _ <- inferAExpr (_ksrbIkm body)
-            _ <- inferAExpr (_ksrbInfo body)
-            checkProp (_ksrbWhere body)
-            ikmE' <- resolveANF (_ksrbIkm body) >>= normalizeAExpr
-            case ikmE'^.val of
-              AEVar{} -> return [ikmE']
-              _       -> unconcatIKM ikmE'
+    let wh = _ksrbWhere body
+    let withOuterCtx :: Check a -> Check a
+        withOuterCtx k =
+            withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
+                         map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+            withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) k
+    case _ksrbForm body of
+      NonRec cb -> do
+          ikmAtoms <- withOuterCtx $ do
+              _ <- inferAExpr (_kcbSalt cb)
+              _ <- inferAExpr (_kcbIkm cb)
+              _ <- inferAExpr (_kcbInfo cb)
+              checkProp wh
+              ikmE' <- resolveANF (_kcbIkm cb) >>= normalizeAExpr
+              case ikmE'^.val of { AEVar{} -> return [ikmE']; _ -> unconcatIKM ikmE' }
+          assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                  "': salt or IKM must contain a kdfkey from the group, or " ++
+                  "IKM must contain dh_combine where both arguments are local DH keys from the group") $
+              saltHasGroupKdfKeyCheck kdfKeyEntryNames (_kcbSalt cb) ||
+              ikmHasGroupKdfKeyCheck  kdfKeyEntryNames ikmAtoms      ||
+              ikmHasLocalDHCheck      dhEntryNames     ikmAtoms
+          let lhs = (_kcbSalt cb, _kcbIkm cb, _kcbInfo cb)
+              freeIdxVars  = toListOf fv lhs :: [IdxVar]
+              freeDataVars = toListOf fv lhs :: [DataVar]
+          forM_ (is1 ++ is2) $ \i ->
+              assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                      "': index parameter '" ++ show i ++ "' does not appear in salt/IKM/info") $
+                  i `elem` freeIdxVars
+          forM_ dvars $ \d ->
+              assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                      "': data parameter '" ++ show d ++ "' does not appear in salt/IKM/info") $
+                  d `elem` freeDataVars
+          let KDFOutputSpec outputs = _kcbOutput cb
+          withOuterCtx $ forM_ outputs $ \(_, nt) -> checkNameType nt >> nameTypeUniform nt
 
-    let saltHasGroupKdfKey = saltHasGroupKdfKeyCheck kdfKeyEntryNames (_ksrbSalt body)
-    let ikmHasGroupKdfKey  = ikmHasGroupKdfKeyCheck  kdfKeyEntryNames ikmAtoms
-    let ikmHasLocalDH      = ikmHasLocalDHCheck      dhEntryNames     ikmAtoms
-    assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
-            "': salt or IKM must contain a kdfkey from the group, or " ++
-            "IKM must contain dh_combine where both arguments are local DH keys from the group") $
-        saltHasGroupKdfKey || ikmHasGroupKdfKey || ikmHasLocalDH
-
-    -- Conditions 2 & 3: each parameter must appear free in (salt, ikm, info)
-    let lhs = (_ksrbSalt body, _ksrbIkm body, _ksrbInfo body)
-    let freeIdxVars  = toListOf fv lhs :: [IdxVar]
-    let freeDataVars = toListOf fv lhs :: [DataVar]
-    forM_ (is1 ++ is2) $ \i ->
-        assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
-                "': index parameter '" ++ show i ++ "' does not appear in salt/IKM/info") $
-            i `elem` freeIdxVars
-    forM_ dvars $ \d ->
-        assert ("kdf_scope rule '" ++ lbl ++ "' in group '" ++ groupName ++
-                "': data parameter '" ++ show d ++ "' does not appear in salt/IKM/info") $
-            d `elem` freeDataVars
-
-    -- Validate output name types
-    let KDFOutputSpec outputs = _ksrbOutput body
-    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
-                 map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
-        withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $
-            forM_ outputs $ \(_, nt) -> do
-                checkNameType nt
-                nameTypeUniform nt
-
-    return ()
+      RecIdx recPos zeroCb succBind -> do
+          (i', succCb) <- unbind succBind
+          let withSuccCtx :: Check a -> Check a
+              withSuccCtx k =
+                  withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) (is1 ++ [i']) ++
+                               map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
+                  withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) k
+          -- Validate expressions in each case
+          ikmAtomsZero <- withOuterCtx $ do
+              _ <- inferAExpr (_kcbSalt zeroCb)
+              _ <- inferAExpr (_kcbIkm zeroCb)
+              _ <- inferAExpr (_kcbInfo zeroCb)
+              checkProp wh
+              ikmE' <- resolveANF (_kcbIkm zeroCb) >>= normalizeAExpr
+              case ikmE'^.val of { AEVar{} -> return [ikmE']; _ -> unconcatIKM ikmE' }
+          ikmAtomsSucc <- withSuccCtx $ do
+              _ <- inferAExpr (_kcbSalt succCb)
+              _ <- inferAExpr (_kcbIkm succCb)
+              _ <- inferAExpr (_kcbInfo succCb)
+              ikmE' <- resolveANF (_kcbIkm succCb) >>= normalizeAExpr
+              case ikmE'^.val of { AEVar{} -> return [ikmE']; _ -> unconcatIKM ikmE' }
+          -- Any self-reference in the succ case must use i' at the recursion-index slot.
+          -- A self-reference with a different index at that slot is a non-productive cycle.
+          let isIllegalSelfRef e = case e^.val of
+                  AEGet (Spanned _ (KDFName _ _ _ ref))
+                    | _ksrrLabel ref == lbl ->
+                        let sessIdxs = fst (_ksrrIdxs ref)
+                        in recPos >= length sessIdxs ||
+                           not (aeq (sessIdxs !! recPos) (mkIVar i'))
+                  _ -> False
+          assert ("rec_kdf/rec_odh rule '" ++ lbl ++
+                  "': self-reference in succ case must use predecessor index at position " ++
+                  show recPos ++ " (not current or future)") $
+              not (isIllegalSelfRef (_kcbSalt succCb)) &&
+              not (any isIllegalSelfRef ikmAtomsSucc)
+          let caseOk salt ikmAtoms =
+                  saltHasGroupKdfKeyCheck kdfKeyEntryNames salt  ||
+                  ikmHasGroupKdfKeyCheck  kdfKeyEntryNames ikmAtoms ||
+                  ikmHasLocalDHCheck      dhEntryNames     ikmAtoms
+          assert ("kdf_scope rec rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                  "': zero case salt or IKM must contain a kdfkey from the group, or " ++
+                  "IKM must contain dh_combine where both arguments are local DH keys from the group") $
+              caseOk (_kcbSalt zeroCb) ikmAtomsZero
+          assert ("kdf_scope rec rule '" ++ lbl ++ "' in group '" ++ groupName ++
+                  "': succ case salt or IKM must contain a kdfkey from the group, or " ++
+                  "IKM must contain dh_combine where both arguments are local DH keys from the group") $
+              caseOk (_kcbSalt succCb) ikmAtomsSucc
+          -- Free-var check: non-recursion is1 entries, is2, and dvars must appear in succ case body
+          let nonRecIs1 = [ v | (pos, v) <- zip [0..] is1, pos /= recPos ]
+              succLhs = (_kcbSalt succCb, _kcbIkm succCb, _kcbInfo succCb)
+              succFreeIdx  = toListOf fv succLhs :: [IdxVar]
+              succFreeData = toListOf fv succLhs :: [DataVar]
+          forM_ nonRecIs1 $ \i ->
+              assert ("kdf_scope rec rule '" ++ lbl ++ "': session index '" ++
+                      show i ++ "' does not appear in succ case salt/IKM/info") $
+                  i `elem` succFreeIdx
+          forM_ is2 $ \i ->
+              assert ("kdf_scope rec rule '" ++ lbl ++ "': PId index '" ++
+                      show i ++ "' does not appear in succ case salt/IKM/info") $
+                  i `elem` succFreeIdx
+          forM_ dvars $ \d ->
+              assert ("kdf_scope rec rule '" ++ lbl ++ "': data parameter '" ++
+                      show d ++ "' does not appear in succ case salt/IKM/info") $
+                  d `elem` succFreeData
+          -- Validate outputs for each case
+          let KDFOutputSpec zeroOutputs = _kcbOutput zeroCb
+              KDFOutputSpec succOutputs = _kcbOutput succCb
+          withOuterCtx $ forM_ zeroOutputs $ \(_, nt) -> checkNameType nt >> nameTypeUniform nt
+          withSuccCtx  $ forM_ succOutputs $ \(_, nt) -> checkNameType nt >> nameTypeUniform nt
+          -- Zero and succ cases must agree on the number, strictness, and kinds of outputs
+          assert ("kdf_scope rec rule '" ++ lbl ++ "': zero and succ cases must declare the same number of outputs") $
+              length zeroOutputs == length succOutputs
+          when (length zeroOutputs == length succOutputs) $ do
+              zeroNks <- local (set tcScope $ TcGhost False) $
+                  mapM (\(_, nt) -> getNameKind nt) zeroOutputs
+              succNks <- local (set tcScope $ TcGhost False) $
+                  mapM (\(_, nt) -> getNameKind nt) succOutputs
+              assert ("kdf_scope rec rule '" ++ lbl ++ "': zero and succ cases must have matching output strictness") $
+                  map fst zeroOutputs == map fst succOutputs
+              assert ("kdf_scope rec rule '" ++ lbl ++ "': zero and succ cases must have matching output name kinds") $
+                  zeroNks == succNks
   where
     saltHasGroupKdfKeyCheck keyNames salt = case salt^.val of
         AEGet ne -> isGroupKdfKey keyNames ne
@@ -1240,35 +1311,90 @@ ensureSelfDisjoint
 ensureSelfDisjoint groupName lbl bnd = do
     (((is1a, is2a), dvarsA), bodyA) <- unbind bnd
     (((is1b, is2b), dvarsB), bodyB) <- unbind bnd
-    when (not (null is1a && null is2a && null dvarsA)) $
-        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) (is1a ++ is1b) ++
-                     map (\i -> (i, (ignore $ show i, IdxPId    ))) (is2a ++ is2b)) $
-            withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) (dvarsA ++ dvarsB)) $ do
-                let mSalt = saltEqProp (_ksrbSalt bodyA) (_ksrbSalt bodyB)
-                let pInfo = pEq (_ksrbInfo bodyA) (_ksrbInfo bodyB)
-                let mIkm  = ikmEqProp (_ksrbIkm bodyA) (_ksrbIkm bodyB)
-                case (mSalt, mIkm) of
-                    (Just pSalt, Just pIkm) -> do
-                        let pSame   = pAnd pSalt (pAnd pIkm pInfo)
-                        let pWhere  = pAnd (_ksrbWhere bodyA) (_ksrbWhere bodyB)
-                        let idxDiffs =
-                                [ pNot (mkSpanned (PEqIdx (mkIVar iA) (mkIVar iB)))
-                                | (iA, iB) <- zip (is1a ++ is2a) (is1b ++ is2b) ]
-                        let dvarDiffs =
-                                [ pNot (pEq (aeVar' dA) (aeVar' dB))
-                                | (dA, dB) <- zip dvarsA dvarsB ]
-                        let diffs = idxDiffs ++ dvarDiffs
-                        case diffs of
-                            [] -> return ()
-                            (d0:ds) -> do
-                                let pDiff    = foldl pOr d0 ds
-                                let pOverlap = pAnd pSame (pAnd pWhere pDiff)
-                                (_, b) <- SMT.smtTypingQuery "kdf_rule_self_disjoint" $
-                                              SMT.symAssert (pNot pOverlap)
-                                assert ("KDF rule self-disjointness in group '" ++ groupName ++
-                                        "': rule '" ++ lbl ++
-                                        "' overlaps with itself under distinct parameter choices") b
-                    _ -> return ()
+    let wh = _ksrbWhere bodyA
+    case (_ksrbForm bodyA, _ksrbForm bodyB) of
+      (NonRec cbA, NonRec cbB) ->
+          when (not (null is1a && null is2a && null dvarsA)) $
+              withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) (is1a ++ is1b) ++
+                           map (\i -> (i, (ignore $ show i, IdxPId    ))) (is2a ++ is2b)) $
+                  withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) (dvarsA ++ dvarsB)) $
+                      checkSelfDisjointCase groupName lbl wh wh
+                          (_kcbSalt cbA) (_kcbIkm cbA) (_kcbInfo cbA)
+                          (_kcbSalt cbB) (_kcbIkm cbB) (_kcbInfo cbB)
+                          (zip (is1a ++ is2a) (is1b ++ is2b)) (zip dvarsA dvarsB)
+      (RecIdx _ _ succBindA, RecIdx _ _ succBindB) -> do
+          -- Check succ-vs-succ: the two predecessor indices must differ → outputs must differ
+          (i'a, succCbA) <- unbind succBindA
+          (i'b, succCbB) <- unbind succBindB
+          withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) ([i'a, i'b] ++ is1a ++ is1b) ++
+                       map (\i -> (i, (ignore $ show i, IdxPId    ))) (is2a ++ is2b)) $
+              withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) (dvarsA ++ dvarsB)) $
+                  checkSelfDisjointCase groupName lbl wh wh
+                      (_kcbSalt succCbA) (_kcbIkm succCbA) (_kcbInfo succCbA)
+                      (_kcbSalt succCbB) (_kcbIkm succCbB) (_kcbInfo succCbB)
+                      ((i'a, i'b) : zip (is2a) (is2b)) (zip dvarsA dvarsB)
+      _ -> return ()
+
+checkSelfDisjointCase :: String -> String -> Prop -> Prop
+                      -> AExpr -> AExpr -> AExpr
+                      -> AExpr -> AExpr -> AExpr
+                      -> [(IdxVar, IdxVar)] -> [(DataVar, DataVar)]
+                      -> Check ()
+checkSelfDisjointCase groupName lbl whA whB saltA ikmA infoA saltB ikmB infoB idxPairs dvarPairs = do
+    let mSalt = saltEqProp saltA saltB
+        pInfo = pEq infoA infoB
+        mIkm  = ikmEqProp ikmA ikmB
+    case (mSalt, mIkm) of
+        (Just pSalt, Just pIkm) -> do
+            let pSame   = pAnd pSalt (pAnd pIkm pInfo)
+                pWhere  = pAnd whA whB
+                idxDiffs  = [ pNot (mkSpanned (PEqIdx (mkIVar iA) (mkIVar iB)))
+                             | (iA, iB) <- idxPairs ]
+                dvarDiffs = [ pNot (pEq (aeVar' dA) (aeVar' dB))
+                             | (dA, dB) <- dvarPairs ]
+                diffs = idxDiffs ++ dvarDiffs
+            case diffs of
+                [] -> return ()
+                (d0:ds) -> do
+                    let pDiff    = foldl pOr d0 ds
+                        pOverlap = pAnd pSame (pAnd pWhere pDiff)
+                    (_, b) <- SMT.smtTypingQuery "kdf_rule_self_disjoint" $
+                                  SMT.symAssert (pNot pOverlap)
+                    assert ("KDF rule self-disjointness in group '" ++ groupName ++
+                            "': rule '" ++ lbl ++
+                            "' overlaps with itself under distinct parameter choices") b
+        _ -> return ()
+
+-- Check disjointness of a single case body against a single existing case body.
+-- The new case's outer context (is1_new, is2_new, dvars_new) is already in scope.
+-- The existing case's outer context (is1_ex, is2_ex, dvars_ex) is passed as lists
+-- and added here, along with any extra succ-case index.
+checkCasePairDisjoint :: String -> String -> String
+                      -> Prop            -- where clause (new body)
+                      -> AExpr -> AExpr -> AExpr   -- new case salt/ikm/info
+                      -> [IdxVar] -> [IdxVar] -> [DataVar]  -- existing case outer ctx
+                      -> Maybe IdxVar    -- existing case extra succ index (or Nothing)
+                      -> Prop            -- existing where clause
+                      -> AExpr -> AExpr -> AExpr   -- existing case salt/ikm/info
+                      -> Check ()
+checkCasePairDisjoint groupName lbl lbl2 whNew saltN ikmN infoN
+                      is1Ex is2Ex dvarsEx mSuccEx whEx saltEx ikmEx infoEx = do
+    let extraEx = maybe [] (:[]) mSuccEx
+    withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) (extraEx ++ is1Ex) ++
+                 map (\i -> (i, (ignore $ show i, IdxPId    ))) is2Ex) $
+        withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) dvarsEx) $ do
+            let mSalt = saltEqProp saltN saltEx
+                pInfo = pEq infoN infoEx
+                mIkm  = ikmEqProp ikmN ikmEx
+            case (mSalt, mIkm) of
+                (Just pSalt, Just pIkm) -> do
+                    let pSame    = pAnd pSalt (pAnd pIkm pInfo)
+                        pOverlap = pAnd pSame (pAnd whNew whEx)
+                    (_, b) <- SMT.smtTypingQuery "kdf_rule_disjoint" $
+                                  SMT.symAssert (pNot pOverlap)
+                    assert ("KDF rule disjointness in group '" ++ groupName ++
+                            "': rule '" ++ lbl ++ "' overlaps with rule '" ++ lbl2 ++ "'") b
+                _ -> return ()
 
 ensureSIIDisjoint
     :: String
@@ -1278,22 +1404,40 @@ ensureSIIDisjoint
     -> Check ()
 ensureSIIDisjoint groupName lbl body existingRules =
     forM_ existingRules $ \(lbl2, bnd2) -> do
-        (((is2, ps2), dvars2), body2) <- unbind bnd2
-        withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is2 ++
-                     map (\i -> (i, (ignore $ show i, IdxPId    ))) ps2) $
-            withVars (map (\d -> (d, (ignore $ show d, Nothing, tGhost))) dvars2) $ do
-                let mSalt = saltEqProp (_ksrbSalt body) (_ksrbSalt body2)
-                let pInfo = pEq (_ksrbInfo body) (_ksrbInfo body2)
-                let mIkm  = ikmEqProp (_ksrbIkm body) (_ksrbIkm body2)
-                case (mSalt, mIkm) of
-                    (Just pSalt, Just pIkm) -> do
-                        let pSame    = pAnd pSalt (pAnd pIkm pInfo)
-                        let pOverlap = pAnd pSame (pAnd (_ksrbWhere body) (_ksrbWhere body2))
-                        (_, b) <- SMT.smtTypingQuery "kdf_rule_disjoint" $
-                                      SMT.symAssert (pNot pOverlap)
-                        assert ("KDF rule disjointness in group '" ++ groupName ++
-                                "': rule '" ++ lbl ++ "' overlaps with rule '" ++ lbl2 ++ "'") b
-                    _ -> return ()
+        (((is1Ex, is2Ex), dvarsEx), body2) <- unbind bnd2
+        let whNew = _ksrbWhere body
+            whEx  = _ksrbWhere body2
+        -- Get the new rule's case(s)
+        let checkNew saltN ikmN infoN mSuccNew =
+              case _ksrbForm body2 of
+                NonRec cbEx ->
+                    let check = checkCasePairDisjoint groupName lbl lbl2 whNew
+                                    saltN ikmN infoN
+                                    is1Ex is2Ex dvarsEx Nothing whEx
+                                    (_kcbSalt cbEx) (_kcbIkm cbEx) (_kcbInfo cbEx)
+                    in maybe check (\i' -> withIndices [(i', (ignore $ show i', IdxSession))] check) mSuccNew
+                RecIdx _ zeroCbEx succBindEx -> do
+                    let checkZero = checkCasePairDisjoint groupName lbl lbl2 whNew
+                                        saltN ikmN infoN
+                                        is1Ex is2Ex dvarsEx Nothing whEx
+                                        (_kcbSalt zeroCbEx) (_kcbIkm zeroCbEx) (_kcbInfo zeroCbEx)
+                    (i'ex, succCbEx) <- unbind succBindEx
+                    let checkSucc = checkCasePairDisjoint groupName lbl lbl2 whNew
+                                        saltN ikmN infoN
+                                        is1Ex is2Ex dvarsEx (Just i'ex) whEx
+                                        (_kcbSalt succCbEx) (_kcbIkm succCbEx) (_kcbInfo succCbEx)
+                    case mSuccNew of
+                        Nothing -> checkZero >> withIndices [(i'ex, (ignore $ show i'ex, IdxSession))] checkSucc
+                        Just i'new ->
+                            withIndices [(i'new, (ignore $ show i'new, IdxSession))] $
+                                checkZero >> withIndices [(i'ex, (ignore $ show i'ex, IdxSession))] checkSucc
+        case _ksrbForm body of
+            NonRec cbNew ->
+                checkNew (_kcbSalt cbNew) (_kcbIkm cbNew) (_kcbInfo cbNew) Nothing
+            RecIdx _ zeroCbNew succBindNew -> do
+                checkNew (_kcbSalt zeroCbNew) (_kcbIkm zeroCbNew) (_kcbInfo zeroCbNew) Nothing
+                (i'new, succCbNew) <- unbind succBindNew
+                checkNew (_kcbSalt succCbNew) (_kcbIkm succCbNew) (_kcbInfo succCbNew) (Just i'new)
 
 checkDecl :: Decl -> Check a -> Check a
 checkDecl d cont = withSpan (d^.spanOf) $ 
@@ -1488,27 +1632,42 @@ checkDecl d cont = withSpan (d^.spanOf) $
               let groupName        = _kssGroupName kss
                   kdfKeyEntryNames = _kssKdfKeyNames kss
                   dhEntryNames     = _kssDHNames kss
-              validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX
               let lbl      = _ksrLabel ruleX
                   bRule    = _ksrBody ruleX
                   newRules = insert lbl bRule (_kssRules kss)
+              let kssWithRule = kss { _kssRules = newRules }
               local (over (curMod . kdfScopes) $ insert groupName
-                         (KDFScopeDef newRules [] (_kssKdfKeyNames kss ++ _kssDHNames kss))) $ do
+                         (KDFScopeDef newRules [] (_kssKdfKeyNames kss ++ _kssDHNames kss))) $
+                local (set curKDFScope (Just kssWithRule)) $ do
+                  validateKDFScopeRule groupName kdfKeyEntryNames dhEntryNames ruleX
                   ensureSelfDisjoint groupName lbl bRule
                   (((is1, is2), dvars), body) <- unbind bRule
-                  ikmAtoms <-
+                  (zeroAtoms, succPairs) <-
                       withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) is1 ++
                                    map (\i -> (i, (ignore $ show i, IdxPId    ))) is2) $
                           withVars (map (\dv -> (dv, (ignore $ show dv, Nothing, tGhost))) dvars) $ do
                               ensureSIIDisjoint groupName lbl body (_kssRules kss)
-                              unconcat (_ksrbIkm body)
-                  let newOdhPairs =
-                          [ (lbl, bind ((is1, is2), dvars) (ne1, ne2))
-                          | atom <- ikmAtoms
+                              case _ksrbForm body of
+                                  NonRec cb -> do
+                                      atoms <- unconcat (_kcbIkm cb)
+                                      return (atoms, [])
+                                  RecIdx _ zeroCb succBind -> do
+                                      atomsZero <- unconcat (_kcbIkm zeroCb)
+                                      (i', succCb) <- unbind succBind
+                                      atomsSucc <- withIndices [(i', (ignore $ show i', IdxSession))] $
+                                                       unconcat (_kcbIkm succCb)
+                                      return (atomsZero, [(i', atomsSucc)])
+                  let dhPairsOf atoms =
+                          [ (ne1, ne2)
+                          | atom <- atoms
                           , AEApp (PRes (PDot PTop "dh_combine")) _ [x, y] <- [atom^.val]
                           , AEApp (PRes (PDot PTop "dhpk")) _ [xx] <- [x^.val]
                           , AEGet ne1 <- [xx^.val]
                           , AEGet ne2 <- [y^.val] ]
+                      newOdhPairs =
+                          [ (lbl, bind ((is1, is2), dvars) p) | p <- dhPairsOf zeroAtoms ] ++
+                          [ (lbl, bind ((is1 ++ [i'], is2), dvars) p)
+                          | (i', atomsSucc) <- succPairs, p <- dhPairsOf atomsSucc ]
                   local (over curKDFScope $ fmap $ \s -> s
                              { _kssRules    = newRules
                              , _kssOdhPairs = _kssOdhPairs s ++ newOdhPairs
@@ -2997,7 +3156,7 @@ checkHintOutputsCompatible hints = do
         case mBody of
           Nothing -> return Nothing
           Just body -> do
-              let KDFOutputSpec outputs = _ksrbOutput body
+              let outputs = bodyFirstOutputs body
               nks' <- local (set tcScope $ TcGhost False) $
                           mapM (\(_, outNt') -> getNameKind outNt') outputs
               return $ Just (_ksrrLabel h, nks')
@@ -3011,10 +3170,74 @@ checkHintOutputsCompatible hints = do
                       show (owlpretty (NameKindRow nks')))
                      (firstNks == nks')
 
+-- Extract the output list from the first (or only) case body of a rule
+-- the rule should be validated, so the base case and rec case will be compatible
+bodyFirstOutputs :: KDFScopeRuleBody -> [(KDFStrictness, NameType)]
+bodyFirstOutputs body = let KDFOutputSpec os = _kcbOutput cb in os
+  where cb = case _ksrbForm body of { NonRec c -> c; RecIdx _ c _ -> c }
+
 anyM :: [AExpr] -> (AExpr -> Check Bool) -> Check Bool
 anyM as p = do
     bs <- mapM p as
     return $ or bs
+
+-- Compute the output type for a matched case body.
+finishKDFHint :: KDFScopeRuleRef -> KDFCaseBody -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty)
+              -> [NameKind] -> Int -> Check (Maybe Ty)
+finishKDFHint hint cb (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = do
+    let KDFOutputSpec outputs = _kcbOutput cb
+    assert ("KDF name kinds length mismatch for rule " ++ _ksrrLabel hint ++
+            ": call has " ++ show (length nks) ++ " output(s), rule declares " ++
+            show (length outputs))
+           (length nks == length outputs)
+    expectedNks <- mapM (\(_, outNt') -> local (set tcScope $ TcGhost False) $ getNameKind outNt') outputs
+    assert ("KDF name kinds mismatch for rule " ++ _ksrrLabel hint ++
+            ": call has " ++ show (owlpretty (NameKindRow nks)) ++
+            ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
+           (nks == expectedNks)
+    if j >= length outputs then
+        typeError $ "KDF rule hint index " ++ show j ++ " out of bounds for rule " ++ _ksrrLabel hint
+    else do
+        let (strictness, _outNt) = outputs !! j
+            ne = mkSpanned $ KDFName nks j (ignore True) hint
+        infoPub <- tyFlowsTo infoT advLbl
+        assert "KDF info argument must be public" infoPub
+        saltPub <- tyFlowsTo saltT advLbl
+        ikmE' <- resolveANF ikmE >>= normalizeAExpr
+        ikmAtoms <- unconcat ikmE'
+        ikmPub <- allM ikmAtoms $ \a ->
+            case a^.val of
+              AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> do
+                  b1 <- flowsTo (nameLbl x) advLbl
+                  b2 <- flowsTo (nameLbl y) advLbl
+                  return $ b1 || b2
+              _ -> do
+                  t <- inferAExpr a >>= normalizeTy
+                  res <- tyFlowsTo t advLbl
+                  logTypecheck $ owlpretty "ikm atom: " <> owlpretty a <> owlpretty " with type " <> owlpretty t <> owlpretty " flows to advLbl: " <> owlpretty res
+                  return res
+        if saltPub && ikmPub then return $ Just $ tData advLbl advLbl
+        else do
+            saltIsSecret <- case (_kcbSalt cb)^.val of
+                              AEGet ne' -> not <$> flowsTo (nameLbl ne') advLbl
+                              _         -> return False
+            bodyIkmAtoms <- unconcatIKM (_kcbIkm cb)
+            ikmIsSecret <- anyM bodyIkmAtoms $ \a ->
+                case a^.val of
+                  AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> do
+                      b1 <- flowsTo (nameLbl x) advLbl
+                      b2 <- flowsTo (nameLbl y) advLbl
+                      return $ (not b1) && (not b2)
+                  AEGet ne' -> not <$> flowsTo (nameLbl ne') advLbl
+                  _         -> return False
+            let secretFlowAx = case strictness of
+                                  KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
+                                  KDFPub      -> pFlow (nameLbl ne) advLbl
+                                  KDFUnstrict -> pTrue
+            if saltIsSecret || ikmIsSecret then
+                return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
+                    bind (s2n ".res") secretFlowAx
+            else typeError "KDF ill-typed but not fully public: unable to determine output type"
 
 -- Try a single KDFScopeRuleRef hint against salt/ikm/info.
 -- Returns Just outputBaseTy if the hint matches, Nothing otherwise.
@@ -3022,81 +3245,40 @@ tryKDFRuleHint :: KDFScopeRuleRef -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -
 tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRoutine ("tryKDFRuleHint(" ++ show (owlpretty hint) ++ ")") $ do
     let actuals = _ksrrArgs hint
     mBody <- local (set tcScope $ TcGhost False) $ lookupKDFScopeRule (_ksrrLabel hint) (_ksrrIdxs hint) actuals
-
     case mBody of
       Nothing -> return Nothing
       Just body -> do
-          saltOk  <- checkExprEqual saltE (_ksrbSalt body)
-          ikmOk   <- checkExprEqual ikmE  (_ksrbIkm body)
-          infoOk  <- checkExprEqual infoE (_ksrbInfo body)
-          whereOk <- checkWhereClause (_ksrbWhere body)
-          if not (saltOk && ikmOk && infoOk && whereOk) then do
-            -- TODO: can/should we provide some kind of warning here?
-            return Nothing
-          else do
-              let KDFOutputSpec outputs = _ksrbOutput body
-              -- Validate that call-site name kinds match rule's declared output types
-              assert ("KDF name kinds length mismatch for rule " ++ _ksrrLabel hint ++
-                      ": call has " ++ show (length nks) ++ " output(s), rule declares " ++
-                      show (length outputs))
-                     (length nks == length outputs)
-              expectedNks <- mapM (\(_, outNt') -> local (set tcScope $ TcGhost False) $ getNameKind outNt') outputs
-              assert ("KDF name kinds mismatch for rule " ++ _ksrrLabel hint ++
-                      ": call has " ++ show (owlpretty (NameKindRow nks)) ++
-                      ", rule declares " ++ show (owlpretty (NameKindRow expectedNks)))
-                     (nks == expectedNks)
-              if j >= length outputs then
-                typeError $ "KDF rule hint index " ++ show j ++ " out of bounds for rule " ++ _ksrrLabel hint
-              else do
-                  let (strictness, outNt) = outputs !! j
-                  let ne = mkSpanned $ KDFName nks j (ignore True) hint
-                  -- (1) info must always be public
-                  infoPub <- tyFlowsTo infoT advLbl
-                  assert "KDF info argument must be public" infoPub
-                  -- (2-4) check actual publicness of salt and ikm; classify inline
-
-                  -- Check whether the salt and IKM are public
-                  saltPub <- tyFlowsTo saltT advLbl
-                  ikmE' <- resolveANF ikmE >>= normalizeAExpr
-                  ikmAtoms <- unconcat ikmE'
-
-                  ikmPub  <- allM ikmAtoms $ \a -> do 
-                    case a^.val of 
-                        AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> do 
-                            b1 <- flowsTo (nameLbl x) advLbl
-                            b2 <- flowsTo (nameLbl y) advLbl
-                            return $ b1 || b2
-                        _ -> do 
-                            t <- inferAExpr a >>= normalizeTy
-                            res <- tyFlowsTo t advLbl
-                            logTypecheck $ owlpretty "ikm atom: " <> owlpretty a <> owlpretty " with type " <> owlpretty t <> owlpretty " flows to advLbl: " <> owlpretty res
-                            return res
-                    
-                  -- If so, just return Data<adv>
-                  if saltPub && ikmPub then return $ Just $ tData advLbl advLbl
-                  else do 
-                    -- Otherwise, check whether the salt and IKM are secret.
-                    -- Here, we use the matched hint body rather than the given arguments (which we have already checked are equal)
-                    saltIsSecret <- case (_ksrbSalt body)^.val of 
-                                    AEGet ne -> not <$> flowsTo (nameLbl ne) advLbl
-                                    _ -> return False
-                    ikmAtoms <- unconcatIKM (_ksrbIkm body)
-                    ikmIsSecret <- anyM ikmAtoms $ \a ->  do 
-                            case a^.val of 
-                                AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> do 
-                                        b1 <- flowsTo (nameLbl x) advLbl
-                                        b2 <- flowsTo (nameLbl y) advLbl
-                                        return $ (not b1) && (not b2)
-                                AEGet ne -> not <$> flowsTo (nameLbl ne) advLbl
-                                _ -> return False
-                    let secretFlowAx = case strictness of
-                                            KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
-                                            KDFPub      -> pFlow (nameLbl ne) advLbl
-                                            KDFUnstrict -> pTrue
-                    if saltIsSecret || ikmIsSecret then 
-                        return $ Just $ mkSpanned $ TRefined (mkSpanned $ TName ne) ".res" $
-                            bind (s2n ".res") secretFlowAx
-                    else typeError "KDF ill-typed but not fully public: unable to determine output type"
+          let wh = _ksrbWhere body
+          mCb <- case _ksrbForm body of
+              NonRec cb -> do
+                  saltOk  <- checkExprEqual saltE (_kcbSalt cb)
+                  ikmOk   <- checkExprEqual ikmE  (_kcbIkm cb)
+                  infoOk  <- checkExprEqual infoE (_kcbInfo cb)
+                  whereOk <- checkWhereClause wh
+                  return $ if saltOk && ikmOk && infoOk && whereOk then Just cb else Nothing
+              RecIdx _ zeroCb succBind -> do
+                  let (vs1, _) = _ksrrIdxs hint
+                      mPred    = listToMaybe [v | ISucc _ v <- vs1]
+                  -- Try zero case: match on salt first as a quick discriminator
+                  zeroSaltOk <- checkExprEqual saltE (_kcbSalt zeroCb)
+                  if zeroSaltOk then do
+                      ikmOk   <- checkExprEqual ikmE  (_kcbIkm zeroCb)
+                      infoOk  <- checkExprEqual infoE (_kcbInfo zeroCb)
+                      whereOk <- checkWhereClause wh
+                      return $ if ikmOk && infoOk && whereOk then Just zeroCb else Nothing
+                  else case mPred of
+                      Nothing -> return Nothing
+                      Just predIdx -> do
+                          (i', succCb) <- unbind succBind
+                          let succCb' = subst i' predIdx succCb
+                          saltOk  <- checkExprEqual saltE (_kcbSalt succCb')
+                          ikmOk   <- checkExprEqual ikmE  (_kcbIkm succCb')
+                          infoOk  <- checkExprEqual infoE (_kcbInfo succCb')
+                          whereOk <- checkWhereClause wh
+                          return $ if saltOk && ikmOk && infoOk && whereOk then Just succCb' else Nothing
+          case mCb of
+            Nothing -> return Nothing
+            Just cb -> finishKDFHint hint cb (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j
 
 checkWhereClause :: Prop -> Check Bool
 checkWhereClause p = fmap (== Just True) (decideProp p)
@@ -3114,16 +3296,21 @@ buildRuleMatchProp :: AExpr -> AExpr -> AExpr
                    -> Check Prop
 buildRuleMatchProp actualSalt actualIkm actualInfo bRule = do
     (((is1, is2), dvars), body) <- unbind bRule
+    let wh = _ksrbWhere body
     let allEqProp aes =
             let eqs = map (\(ae1, ae2) -> if ae1 `aeq` ae2 then Nothing else Just (pEq ae1 ae2)) aes
-            in case catMaybes eqs of
-                [] -> pTrue
-                eqs' -> foldr1 pAnd eqs'
-    let matchProp = allEqProp [(actualSalt, _ksrbSalt body), (actualIkm, _ksrbIkm body), (actualInfo, _ksrbInfo body)]
-        withWhere = case (_ksrbWhere body)^.val of
-                      PTrue -> matchProp
-                      _     -> pAnd (_ksrbWhere body) matchProp
-    return $ mkExistsIdx (is1 ++ is2) $ mkExistsBv dvars withWhere
+            in case catMaybes eqs of { [] -> pTrue; eqs' -> foldr1 pAnd eqs' }
+    let matchCaseProp cb =
+            let matchProp = allEqProp [(actualSalt, _kcbSalt cb), (actualIkm, _kcbIkm cb), (actualInfo, _kcbInfo cb)]
+            in case wh^.val of { PTrue -> matchProp; _ -> pAnd wh matchProp }
+    case _ksrbForm body of
+        NonRec cb ->
+            return $ mkExistsIdx (is1 ++ is2) $ mkExistsBv dvars $ matchCaseProp cb
+        RecIdx _ zeroCb succBind -> do
+            (i', succCb) <- unbind succBind
+            let zeroProp = mkExistsIdx (is1 ++ is2) $ mkExistsBv dvars $ matchCaseProp zeroCb
+                succProp = mkExistsIdx (is1 ++ is2 ++ [i']) $ mkExistsBv dvars $ matchCaseProp succCb
+            return $ pOr zeroProp succProp
 
 nameExpInScope :: [String] -> NameExp -> Bool
 nameExpInScope entryNames ne =
