@@ -1,0 +1,13 @@
+locality alice
+
+kdf_scope KBad {
+    name k0 : kdfkey @ alice
+
+    // SHOULD FAIL: well-foundedness violation. The succ case salt references
+    // KDF<L_bad<succ(i')>; ...> instead of KDF<L_bad<i'>; ...>. The index
+    // succ(i') is not strictly smaller than the current step succ(i'), so
+    // this is not a valid structural recursion.
+    rec_kdf<i> L_bad<i>
+        | 0 : k0, 0x, 0x01 -> strict kdfkey
+        | succ(i') : KDF<L_bad<succ(i')>; kdfkey; 0>, 0x, 0x01 -> strict kdfkey
+}

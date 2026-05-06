@@ -1,0 +1,19 @@
+locality alice
+
+kdf_scope KChain {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> L_step<i>
+        | 0 : k0, 0x, 0x02 -> strict kdfkey
+        | succ(i') : KDF<L_step<i'>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}
+
+// SHOULD FAIL: the hint is L_step<succ(i)>, whose succ case requires salt K<i>
+// (the predecessor). But k_succ_i has type K<succ(i)>, which is the same index
+// as the hint target, not the required predecessor index. The indices don't line
+// up between the hint and the supplied salt argument.
+def bad_wrong_pred<i>(k_succ_i : SecName(KDF<L_step<succ(i)>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<succ(i)>; kdfkey; 0>) then SecName(KDF<L_step<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<succ(i)>; kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>; kdfkey; 0>(k_succ_i, 0x, 0x02) in
+    k

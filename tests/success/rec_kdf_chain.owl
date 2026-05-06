@@ -1,0 +1,64 @@
+locality alice
+
+kdf_scope KChain {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> L_step<i>
+        | 0 : k0, 0x, 0x02 -> strict kdfkey
+        | succ(i') : KDF<L_step<i'>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}
+
+def step_zero() @ alice
+    : if sec(k0) then SecName(KDF<L_step<0>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let k = kdf<L_step<0>; kdfkey; 0>(get(k0), 0x, 0x02) in
+    k
+
+def step_i<i>(k_prev : Name(KDF<L_step<i>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>; kdfkey; 0>) then Name(KDF<L_step<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>; kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>; kdfkey; 0>(k_prev, 0x, 0x02) in
+    k
+
+def three_steps<i>(k_i : SecName(KDF<L_step<i>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>; kdfkey; 0>) then SecName(KDF<L_step<succ(succ(succ(i)))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>; kdfkey; 0> in
+    let k_succ_i = kdf<L_step<succ(i)>; kdfkey; 0>(k_i, 0x, 0x02) in
+    let k_succ_succ_i = kdf<L_step<succ(succ(i))>; kdfkey; 0>(k_succ_i, 0x, 0x02) in
+    let k_succ_succ_succ_i = kdf<L_step<succ(succ(succ(i)))>; kdfkey; 0>(k_succ_succ_i, 0x, 0x02) in
+    // debug printTyContext;
+    k_succ_succ_succ_i
+
+def three_steps_from_zero() @ alice
+    : if sec(k0) then SecName(KDF<L_step<succ(succ(succ(0)))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let k_0 = kdf<L_step<0>; kdfkey; 0>(get(k0), 0x, 0x02) in
+    let k_succ_0 = kdf<L_step<succ(0)>; kdfkey; 0>(k_0, 0x, 0x02) in
+    let k_succ_succ_0 = kdf<L_step<succ(succ(0))>; kdfkey; 0>(k_succ_0, 0x, 0x02) in
+    let k_succ_succ_succ_0 = kdf<L_step<succ(succ(succ(0)))>; kdfkey; 0>(k_succ_succ_0, 0x, 0x02) in
+    // debug printTyContext;
+    k_succ_succ_succ_0
+
+def step_i'<i>(k_prev : if sec(KDF<L_step<i>; kdfkey; 0>) then Name(KDF<L_step<i>; kdfkey; 0>) else Data<adv> ||kdfkey||) @ alice
+    : if sec(KDF<L_step<i>; kdfkey; 0>) then Name(KDF<L_step<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>; kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>; kdfkey; 0>(k_prev, 0x, 0x02) in
+    k
+
+def three_steps_from_zero_subroutines() @ alice
+    requires (
+        // These effectively collapse the entire chain into a single flow label. 
+        // We probably don't want to have to do this in general, which might require
+        // an off-chain case. 
+           (corr(k0) ==> corr(KDF<L_step<0>; kdfkey; 0>))
+        /\ (corr(KDF<L_step<0>; kdfkey; 0>) ==> corr(k0))
+        /\ (forall i:idx. corr(KDF<L_step<i>; kdfkey; 0>) ==> corr(KDF<L_step<succ(i)>; kdfkey; 0>))
+        /\ (forall i:idx. corr(KDF<L_step<succ(i)>; kdfkey; 0>) ==> corr(KDF<L_step<i>; kdfkey; 0>))
+    ) : if sec(k0) then SecName(KDF<L_step<succ(succ(succ(0)))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let k_0 = call step_zero() in
+    let k_succ_0 = call step_i'<0>(k_0) in
+    let k_succ_succ_0 = call step_i'<succ(0)>(k_succ_0) in
+    let k_succ_succ_succ_0 = call step_i'<succ(succ(0))>(k_succ_succ_0) in
+    // debug printTyContext;
+    k_succ_succ_succ_0

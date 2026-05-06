@@ -1,0 +1,56 @@
+// Recursive KDF chain whose rule produces multiple outputs at each step:
+// the next chain key (output 0) and an encryption key whose plaintext type
+// is the step-indexed name n<i> (output 1).
+
+locality alice
+locality bob
+
+name n<i> : nonce @ alice
+
+kdf_scope KChain {
+    name k : kdfkey @ alice, bob
+
+    rec_kdf<i> L_step<i>
+        | 0        : k,                                         0x, 0x02
+            -> strict kdfkey
+            || strict enckey Name(n<0>)
+        | succ(i') : KDF<L_step<i'>; kdfkey || enckey; 0>,      0x, 0x02
+            -> strict kdfkey
+            || strict enckey Name(n<succ(i')>)
+}
+
+corr [k] ==> /\_i [n<i>]
+
+def alice_main() @ alice : Unit =
+    corr_case k in
+    let ek0 = kdf<L_step<0>; kdfkey || enckey; 1>(get(k), 0x, 0x02) in
+    let c0  = aenc(ek0, get(n<0>)) in
+    output c0 to endpoint(bob);
+    let k1  = kdf<L_step<0>; kdfkey || enckey; 0>(get(k), 0x, 0x02) in
+    let ek1 = kdf<L_step<succ(0)>; kdfkey || enckey; 1>(k1, 0x, 0x02) in
+    let c1  = aenc(ek1, get(n<succ(0)>)) in
+    output c1 to endpoint(bob);
+    ()
+
+def bob_main() @ bob : Unit =
+    corr_case k in
+    let ek0 = kdf<L_step<0>; kdfkey || enckey; 1>(get(k), 0x, 0x02) in
+    input c0 in
+    case adec(ek0, c0) {
+        | None => ()
+        | Some p0 => {
+            assert (sec(k) ==> p0 == get(n<0>));
+            let k1  = kdf<L_step<0>; kdfkey || enckey; 0>(get(k), 0x, 0x02) in
+            let ek1 = kdf<L_step<succ(0)>; kdfkey || enckey; 1>(k1, 0x, 0x02) in
+            input c1 in
+            case adec(ek1, c1) {
+                | None => ()
+                | Some p1 => {
+                    assert (sec(k) ==> p1 == get(n<succ(0)>));
+                    ()
+                }
+            }
+        }
+    }
+
+

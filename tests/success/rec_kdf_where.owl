@@ -1,0 +1,52 @@
+// Recursive KDF chain with a where clause on the data parameter.
+
+
+locality alice
+
+kdf_scope Chain {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> L_step<i>(ctx) where (ctx != 0x)
+        | 0      : k0,                                 0x, ctx -> strict kdfkey
+        | succ(i') : KDF<L_step<i'>(ctx); kdfkey; 0>, 0x, ctx -> strict kdfkey
+}
+
+
+def step_zero_v1() @ alice
+    : if sec(k0) then SecName(KDF<L_step<0>(0x01); kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let k = kdf<L_step<0>(0x01); kdfkey; 0>(get(k0), 0x, 0x01) in
+    k
+
+def step_succ_v1<i>(k_prev : Name(KDF<L_step<i>(0x01); kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>(0x01); kdfkey; 0>)
+      then Name(KDF<L_step<succ(i)>(0x01); kdfkey; 0>)
+      else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>(0x01); kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>(0x01); kdfkey; 0>(k_prev, 0x, 0x01) in
+    k
+
+
+def step_zero_v2() @ alice
+    : if sec(k0) then SecName(KDF<L_step<0>(0x02); kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let k = kdf<L_step<0>(0x02); kdfkey; 0>(get(k0), 0x, 0x02) in
+    k
+
+def step_succ_v2<i>(k_prev : Name(KDF<L_step<i>(0x02); kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>(0x02); kdfkey; 0>)
+      then Name(KDF<L_step<succ(i)>(0x02); kdfkey; 0>)
+      else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>(0x02); kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>(0x02); kdfkey; 0>(k_prev, 0x, 0x02) in
+    k
+
+
+def three_steps_v1() @ alice
+    : if sec(k0) then SecName(KDF<L_step<succ(succ(succ(0)))>(0x01); kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let k0_v1 = kdf<L_step<0>(0x01);                    kdfkey; 0>(get(k0), 0x, 0x01) in
+    let k1_v1 = kdf<L_step<succ(0)>(0x01);              kdfkey; 0>(k0_v1,   0x, 0x01) in
+    let k2_v1 = kdf<L_step<succ(succ(0))>(0x01);        kdfkey; 0>(k1_v1,   0x, 0x01) in
+    let k3_v1 = kdf<L_step<succ(succ(succ(0)))>(0x01);  kdfkey; 0>(k2_v1,   0x, 0x01) in
+    k3_v1

@@ -1,0 +1,73 @@
+locality alice
+
+kdf_scope ODHChain {
+    name A : DH @ alice
+    name B : DH @ alice
+
+    rec_odh<i> L_odh<i>
+        | 0 : 0x, dh_ss(A, B), 0x01 -> strict kdfkey
+        | succ(i') : KDF<L_odh<i'>; kdfkey; 0>, dh_ss(A, B), 0x01 -> strict kdfkey
+}
+
+// Derive the first key from the DH shared secret.
+def odh_step_zero() @ alice
+    : if sec(A) /\ sec(B) then SecName(KDF<L_odh<0>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case A in
+    corr_case B in
+    let ss = dh_combine(dhpk(get(A)), get(B)) in
+    let k = kdf<L_odh<0>; kdfkey; 0>(0x, ss, 0x01) in
+    k
+
+// Derive the next key given the previous one.
+def odh_step_i<i>(k_prev : Name(KDF<L_odh<i>; kdfkey; 0>)) @ alice
+    : if (sec(A) /\ sec(B)) \/ sec(KDF<L_odh<i>; kdfkey; 0>) 
+      then SecName(KDF<L_odh<succ(i)>; kdfkey; 0>)
+      else Data<adv> ||kdfkey|| =
+    corr_case A in
+    corr_case B in
+    corr_case KDF<L_odh<i>; kdfkey; 0> in
+    let ss = dh_combine(dhpk(get(A)), get(B)) in
+    let k = kdf<L_odh<succ(i)>; kdfkey; 0>(k_prev, ss, 0x01) in
+    k
+
+// Derive three steps in a row starting from step 0.
+def odh_three_steps_from_zero() @ alice
+    : if sec(A) /\ sec(B) then SecName(KDF<L_odh<succ(succ(succ(0)))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case A in
+    corr_case B in
+    let ss = dh_combine(dhpk(get(A)), get(B)) in
+    let k_0         = kdf<L_odh<0>;                   kdfkey; 0>(0x,       ss, 0x01) in
+    let k_succ_0    = kdf<L_odh<succ(0)>;             kdfkey; 0>(k_0,      ss, 0x01) in
+    let k_s_s_0     = kdf<L_odh<succ(succ(0))>;       kdfkey; 0>(k_succ_0, ss, 0x01) in
+    let k_s_s_s_0   = kdf<L_odh<succ(succ(succ(0)))>; kdfkey; 0>(k_s_s_0,  ss, 0x01) in
+    // debug printTyContext;
+    k_s_s_s_0
+
+
+def odh_step_i'<i>(k_prev : if  (sec(A) /\ sec(B)) \/ sec(KDF<L_odh<i>; kdfkey; 0>) then Name(KDF<L_odh<i>; kdfkey; 0>) else Data<adv> ||kdfkey||) @ alice
+    : if (sec(A) /\ sec(B)) \/ sec(KDF<L_odh<i>; kdfkey; 0>) then Name(KDF<L_odh<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case A in
+    corr_case B in
+    corr_case KDF<L_odh<i>; kdfkey; 0> in
+    let ss = dh_combine(dhpk(get(A)), get(B)) in
+    let k = kdf<L_odh<succ(i)>; kdfkey; 0>(k_prev, ss, 0x01) in
+    k
+
+def odh_three_steps_from_zero_subroutines() @ alice
+    requires (
+        // These effectively collapse the entire chain into a single flow label. 
+        // We probably don't want to have to do this in general, which might require
+        // an off-chain case. 
+           ((corr(A) \/ corr(B)) ==> corr(KDF<L_odh<0>; kdfkey; 0>))
+        /\ (corr(KDF<L_odh<0>; kdfkey; 0>) ==> (corr(A) /\ corr(B)))
+        /\ (forall i:idx. corr(KDF<L_odh<i>; kdfkey; 0>) ==> corr(KDF<L_odh<succ(i)>; kdfkey; 0>))
+        /\ (forall i:idx. corr(KDF<L_odh<succ(i)>; kdfkey; 0>) ==> corr(KDF<L_odh<i>; kdfkey; 0>))
+    ) : if sec(A) /\ sec(B) then SecName(KDF<L_odh<succ(succ(succ(0)))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case A in
+    corr_case B in
+    let k_0 = call odh_step_zero() in
+    let k_succ_0 = call odh_step_i'<0>(k_0) in
+    let k_succ_succ_0 = call odh_step_i'<succ(0)>(k_succ_0) in
+    let k_succ_succ_succ_0 = call odh_step_i'<succ(succ(0))>(k_succ_succ_0) in
+    // debug printTyContext;
+    k_succ_succ_succ_0

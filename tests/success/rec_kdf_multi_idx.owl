@@ -1,0 +1,47 @@
+locality alice : 1
+
+// j distinguishes independent chains (e.g. distinct message sessions); m identifies the party.
+name n<j@m> : nonce @ alice<m>
+
+kdf_scope KChain {
+    name k0<@m> : kdfkey @ alice<m>
+
+    // L_step<i,j@m>: i is the recursion index (the step counter); j is a non-recursion
+    // session index that gives each (j,m) pair its own independent chain.
+    rec_kdf<i> L_step<i,j@m>
+        | 0      : k0<@m>,                              0x, 0x02 -> strict kdfkey
+        | succ(i') : KDF<L_step<i',j@m>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}
+
+def step_zero<j@m>() @ alice<m>
+    : if sec(k0<@m>) then SecName(KDF<L_step<0,j@m>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0<@m> in
+    let k = kdf<L_step<0,j@m>; kdfkey; 0>(get(k0<@m>), 0x, 0x02) in
+    k
+
+def step_succ<i,j@m>(k_prev : Name(KDF<L_step<i,j@m>; kdfkey; 0>)) @ alice<m>
+    : if sec(KDF<L_step<i,j@m>; kdfkey; 0>) then Name(KDF<L_step<succ(i),j@m>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i,j@m>; kdfkey; 0> in
+    let k = kdf<L_step<succ(i),j@m>; kdfkey; 0>(k_prev, 0x, 0x02) in
+    k
+
+def three_steps<i,j@m>(k_i : SecName(KDF<L_step<i,j@m>; kdfkey; 0>)) @ alice<m>
+    : if sec(KDF<L_step<i,j@m>; kdfkey; 0>)
+      then SecName(KDF<L_step<succ(succ(succ(i))),j@m>; kdfkey; 0>)
+      else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i,j@m>; kdfkey; 0> in
+    let k1 = kdf<L_step<succ(i),j@m>;           kdfkey; 0>(k_i, 0x, 0x02) in
+    let k2 = kdf<L_step<succ(succ(i)),j@m>;     kdfkey; 0>(k1,  0x, 0x02) in
+    let k3 = kdf<L_step<succ(succ(succ(i))),j@m>; kdfkey; 0>(k2,  0x, 0x02) in
+    k3
+
+def three_steps_from_zero<j@m>() @ alice<m>
+    : if sec(k0<@m>)
+      then SecName(KDF<L_step<succ(succ(succ(0))),j@m>; kdfkey; 0>)
+      else Data<adv> ||kdfkey|| =
+    corr_case k0<@m> in
+    let k0_j = kdf<L_step<0,j@m>;                  kdfkey; 0>(get(k0<@m>), 0x, 0x02) in
+    let k1_j = kdf<L_step<succ(0),j@m>;            kdfkey; 0>(k0_j, 0x, 0x02) in
+    let k2_j = kdf<L_step<succ(succ(0)),j@m>;      kdfkey; 0>(k1_j, 0x, 0x02) in
+    let k3_j = kdf<L_step<succ(succ(succ(0))),j@m>; kdfkey; 0>(k2_j, 0x, 0x02) in
+    k3_j
