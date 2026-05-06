@@ -149,15 +149,15 @@ kdf_scope HPKE_KDF {
     // Pre-shared key between sender and receiver
     name psk : kdfkey // @ sender, receiver
 
-    func AuthEncap_kem_context<i>() =
-        dhpk(get(skE<i>))
+    func AuthEncap_kem_context(eph) =
+        eph
         ++
         dhpk(get(skR))
         ++
         dhpk(get(skS))
 
-    func AuthEncap_honest_info<i>() =
-        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context<session i>())
+    func AuthEncap_info(eph) =
+        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthEncap_kem_context(eph))
 
 
 
@@ -193,16 +193,18 @@ kdf_scope HPKE_KDF {
 
     odh L_kem<i> : 0x,
         hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR),
-        AuthEncap_honest_info<session i>()
+        AuthEncap_info(dhpk(get(skE<i>)))
         -> strict kdfkey
 
     // L_kem_corr<i>: KEM step, ephemeral skE<i> is present in ikm but
     // the info does NOT match the honest info for session i. Replaces the
     // `info != AuthEncap_honest_info<session i>()` branch of `odh se<i>`.
-    odh L_kem_corr<i>(info) where (info != AuthEncap_honest_info<session i>()) : 0x,
-        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_ss(skE<i>, skR) ++ dh_ss(skS, skR), 
+    /* 
+    odh L_kem_corr where (is_group_elem(dh) /\ (forall i:idx. dh != dhpk(get(skE<i>)))) : 0x,
+        hpke_v1() ++ kem_suite_id() ++ eae_prk() ++ dh_combine(dh, get(skR)) ++ dh_ss(skS, skR), 
         info
         -> strict kdfkey
+    */
 
     // -----------------------------------------------------------------
     // KDF rules for the key_schedule (steps 2–4)
@@ -250,7 +252,7 @@ kdf_scope HPKE_KDF {
                         // it doesn't know that length(get(KDF<L_sched_nonce<i>; nonce |counter|; 0>)) == |counter|.
                         // This also didn't work in the old version. Need to explicitly encode this in SMT
                           //pattern y. xor(y, get(KDF<L_sched_nonce<i>; nonce |counter|; 0>))
-                          pattern y. xor(y, sched_key_base_nonce<idx i>())
+                          pattern y. xor(y, sched_key_base_nonce<session i>())
 
     // L_sched_export: key_schedule → export key (correct case)
     kdf L_sched_export<i> : KDF<L_kem<i>;kdfkey;0>, 
@@ -261,20 +263,22 @@ kdf_scope HPKE_KDF {
     // Corrupted variants: when the shared_secret has type SS_corr_t
     // (produced by L_kem_corr<i> or L_kem_ss_corr instead of L_kem<i>).
     // These replace the old shared_secret_corr_t nametype's three branches.
-    kdf L_sched_nonce_corr<i>(info) : KDF<L_kem_corr<i>(info); kdfkey; 0>, 
+    /* 
+    kdf L_sched_nonce_corr(dh, info) : KDF<L_kem_corr(dh, info); kdfkey; 0>, 
          hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
          base_nonce_kdf_info()
         -> public nonce |counter|
 
-    kdf L_sched_key_corr<i>(info) : KDF<L_kem_corr<i>(info); kdfkey; 0>, 
+    kdf L_sched_key_corr(dh, info) : KDF<L_kem_corr(dh, info); kdfkey; 0>, 
          hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
          key_kdf_info()
         -> strict hpke_corr_key_t
 
-    kdf L_sched_export_corr<i>(info) : KDF<L_kem_corr<i>(info); kdfkey; 0>, 
+    kdf L_sched_export_corr(dh, info) : KDF<L_kem_corr(dh, info); kdfkey; 0>, 
          hpke_v1() ++ hpke_suite_id() ++ secret_string () ++ get(psk), 
          export_kdf_info()
         -> strict nonce
+        */
 
 } // end kdf_scope HPKE_KDF
 
@@ -308,7 +312,7 @@ func AuthEncap_dh<i>() =
 func AuthEncap_shared_secret<i>() =
     gkdf<kdfkey; 0>(0x, lbl_ikm(kem_suite_id(), eae_prk(), AuthEncap_dh<session i>()),
                        lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(),
-                       AuthEncap_kem_context<session i>()))
+                       AuthEncap_kem_context(dhpk(get(skE<i>)))))
 
 
 func AuthDecap_dh(eph) =

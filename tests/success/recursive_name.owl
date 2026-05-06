@@ -73,10 +73,7 @@ enum Maybe<i> {
 }
 
 def pasta4<i>(ticket : Maybe<session i>) @ alice
-    : if Just?(ticket) then
-        (if sec(KDF<L_chain<i>; kdfkey; 0>) then Ticket<session succ(i)> else Data<adv>)
-      else
-        (if sec(a) /\ sec(b) then Ticket<session 0> else Data<adv>)
+    : if Just?(ticket) then Ticket<session succ(i)> else Ticket<session 0>
     =
     case ticket {
         | Just t =>

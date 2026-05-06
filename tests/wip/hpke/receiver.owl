@@ -9,15 +9,12 @@ struct AuthDecapResult<i> {
     adr_shared_secret :
         if adr_eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) then
             SecName(KDF<L_kem<i>; kdfkey; 0>)
-        // Otherwise, if the static DH shared secret is actually secret, we
-        // get a "junk" secret that we can rule out later.
-        else if sec(skR) /\ sec(skS) then
-            SecName(KDF<L_kem_corr<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(adr_eph))); kdfkey; 0>)
-        // Otherwise, public
         else
             (x:Data<adv> ||kdfkey|| {
                 x == AuthDecap_shared_secret(adr_eph)
                 }),
+    // A lemma that says that the derived key is secret if the ephemeral key is correct and one of the two DH shared secrets are actually secret
+    adr_strict_lem : (x:Ghost{(adr_eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>)))) ==> sec(KDF<L_kem<i>; kdfkey; 0>)}),
     // A lemma that says that the shared secret is determined by the identity of
     // the ephemeral key
     adr_shared_secret_inj : (x:Ghost{
@@ -35,20 +32,16 @@ def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Opt
     guard is_group_elem(eph) in
     // Is the ephemeral key actually an ephemeral key?
     pcase (exists i:idx. eph == dhpk(get(skE<i>))) in
-    // If it's not, is it a static key of the sender?
-    pcase (eph == dhpk(get(skS))) when (! (exists i:idx. eph == dhpk(get(skE<i>)))) in
     // Let i be the index of the ephemeral key (if it is one)
     choose_idx i | eph == dhpk(get(skE<i>)) in
+    let eph : if eph == dhpk(get(skE<i>)) then dhpk(skE<i>) else x:Data<adv>{x == eph} = eph in
     let dh = dh_combine(eph, get(skR)) ++ dh_combine(pkS, get(skR))  in
     let kem_context = eph ++ pkR ++ pkS in
-    // Multi-label kdf call: the shared_secret could satisfy L_kem<i>
-    // (correct, if eph == dhpk(skE<i>) and info is honest) or L_kem_corr<i>
-    // (wrong info for session i).
     let info = lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), kem_context) in
     corr_case skS in 
     corr_case skE<i> in 
-    assume (sec(skR));
-    let shared_secret = kdf<L_kem<i>, L_kem_corr<i>(info); kdfkey; 0>(0x,
+    corr_case skR in 
+    let shared_secret = kdf<L_kem<i>; kdfkey; 0>(0x,
         lbl_ikm(kem_suite_id(), eae_prk(), dh),
         info) in
     let shared_secret_ghost = gkdf<kdfkey; 0>(0x,
@@ -58,84 +51,43 @@ def AuthDecap(pkS : dhpk(skS), pkR: dhpk(skR), eph : Data<adv>) @ receiver : Opt
         // This calls out to collision-resistance of the KDF
         kdf_inj_lemma(shared_secret_ghost, AuthEncap_shared_secret<session j>())
     };
-    let shared_secret' : if eph == dhpk(get(skE<i>)) /\ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))) then
-                SecName(KDF<L_kem<i>; kdfkey; 0>)
-            else if sec(skR) /\ sec(skS) then
-                SecName(KDF<L_kem_corr<i>(lbl_info(kem_suite_id(), kdfkey_len(), shared_secret_string(), AuthDecap_kem_context(eph))); kdfkey; 0>)
-            else
-                (x:Data<adv> ||kdfkey|| {
-                    x == AuthDecap_shared_secret(eph)
-                    }) 
-    = shared_secret in
-
-    let res = AuthDecapResult<session i>(eph, shared_secret, ()) in
+    let res = AuthDecapResult<session i>(eph, shared_secret, (), ()) in
     let pres = pack<i>(res) in
-    assert (length(shared_secret) == |kdfkey|);
-    assert (shared_secret == AuthDecap_shared_secret(eph));
-    assert (eph == dhpk(get(skE<i>)) ==> shared_secret == AuthEncap_shared_secret<session i>());
-    assert (eph != dhpk(get(skE<i>)) ==> (forall j:idx. shared_secret != AuthEncap_shared_secret<session j>()));
-    assert (is_group_elem(eph) /\ ((eph == dhpk(get(skE<i>)) \/ (forall j:idx. eph != dhpk(get(skE<j>))))));
     Some(pres)
 
-/* 
 
 // Context<ROLE> from the RFC, for the receiver
 struct ContextR<i> {
-        ctxtR_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(HPKE_KDF.skE<i>)) \/ (forall j:idx. x != dhpk(get(HPKE_KDF.skE<j>))))}),
-
-        // This confirmed boolean is similar to the boolean "tkr_recvd" from
-        // WireGuard. The receiver can't know it's actually talking to the
-        // sender until it's "confirmed", which it gets by doing a round-trip
-        // transport message
-        ctxtR_confirmed : Bool<adv>,
+        ctxtR_eph : (x:Ghost{is_group_elem(x) /\ (x == dhpk(get(skE<i>)) \/ (forall j:idx. x != dhpk(get(skE<j>))))}),
         ctxtR_ss : (x:Ghost{x == AuthDecap_shared_secret(ctxtR_eph)}),
-        // If the psk is secret, OR we have a truly secret DH shared secret
-        // (including that the ephemeral key is correct), then we get the right
-        // base_nonce. Otherwise public
         ctxtR_base :
-        if (sec(HPKE_KDF.psk) \/ (sec(HPKE_KDF.skR) /\ (sec(HPKE_KDF.skS) \/ (ctxtR_eph == dhpk(get(HPKE_KDF.skE<i>)) /\ sec(HPKE_KDF.skE<i>)))))
-            then PubName(KDF<HPKE_KDF.L_sched_nonce; nonce |counter|; 0>(ctxtR_ss,
-            dh_secret_kdf_ikm(get(HPKE_KDF.psk)), base_nonce_kdf_info()))
+        if ctxtR_eph == dhpk(get(skE<i>)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))))
+            then PubName(KDF<L_sched_nonce<i>; nonce |counter|; 0>)
             else Data<adv>,
-        // If the ephemeral key is correct, AND either the psk is secret, or a
-        // DH shared secret is actually secret, we get the correct, secret
-        // encryption key
         ctxtR_sk :
-        if ctxtR_eph == dhpk(get(HPKE_KDF.skE<i>)) /\ (sec(HPKE_KDF.psk) \/ (sec(HPKE_KDF.skR) /\ (sec(HPKE_KDF.skS) \/ sec(HPKE_KDF.skE<i>))))
-            then SecName(KDF<HPKE_KDF.L_sched_key; enckey; 0>(ctxtR_ss,
-            dh_secret_kdf_ikm(get(HPKE_KDF.psk)), key_kdf_info()))
+        if ctxtR_eph == dhpk(get(skE<i>)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))))
+            then SecName(KDF<L_sched_key<i>; enckey; 0>)
             else
-                // Otherwise, if we haven't confirmed, but the PSK is still
-                // secret, or the static DH shared secret is secret, then we get
-                // the "junk secret"
-                if (ctxtR_confirmed == false) /\ (sec(HPKE_KDF.psk) \/ (sec(HPKE_KDF.skR) /\ sec(HPKE_KDF.skS)))
-                    // ISSUE (I9): multi-label: the shared_secret could be SS_t or SS_corr_t
-                    then SecName(KDF<HPKE_KDF.L_sched_key_corr; enckey; 0>(ctxtR_ss, dh_secret_kdf_ikm(get(HPKE_KDF.psk)), key_kdf_info()))
-                else
-                    Data<adv>,
-        // Has a similar correctness guarantee to the base_nonce
+                Data<adv>, 
         ctxtR_export :
-        if (sec(HPKE_KDF.psk) \/ (sec(HPKE_KDF.skR) /\ (sec(HPKE_KDF.skS) \/ (ctxtR_eph == dhpk(get(HPKE_KDF.skE<i>)) /\ sec(HPKE_KDF.skE<i>)))))
-            then SecName(KDF<HPKE_KDF.L_sched_export; nonce; 0>(ctxtR_ss,
-            dh_secret_kdf_ikm(get(HPKE_KDF.psk)), export_kdf_info()))
+        if ctxtR_eph == dhpk(get(skE<i>)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))))
+            then SecName(KDF<L_sched_export<i>; nonce; 0>)
             else Data<adv>
 }
 
-def KeyScheduleR(adr : exists i. AuthDecapResult<session i>) @ receiver : exists i. ContextR<session i> =
+def KeyScheduleR(adr : exists i. AuthDecapResult<session i>, psk : Name(psk)) @ receiver : exists i. ContextR<session i> =
     unpack i, adr' = adr in
-    parse adr' as AuthDecapResult<session i>(eph, shared_secret, _) in
-    pcase (eph == dhpk(get(HPKE_KDF.skE<i>))) in
-    let base_nonce = kdf<HPKE_KDF.L_sched_nonce; nonce |counter|; 0>(shared_secret, dh_secret_kdf_ikm(get(HPKE_KDF.psk)), base_nonce_kdf_info()) in
-    assert (eph != dhpk(get(HPKE_KDF.skE<i>)) ==> shared_secret != AuthEncap_shared_secret<session i>());
-    assert (eph != dhpk(get(HPKE_KDF.skE<i>)) ==> (forall j:idx. shared_secret != AuthEncap_shared_secret<session j>()));
-    // ISSUE (I9): multi-label call — the shared_secret may have type SS_t (if
-    // eph == dhpk(skE<i>) and conditions hold) or SS_corr_t (otherwise).
-    // In the old syntax this was expressed as kdf<1;1,2;enckey;0>(...) with
-    // two case indices (1=hpke_key_t, 2=hpke_corr_key_t). The new tentative
-    // form lists both labels.
-    let sk = kdf<HPKE_KDF.L_sched_key, HPKE_KDF.L_sched_key_corr; enckey; 0>(shared_secret, dh_secret_kdf_ikm(get(HPKE_KDF.psk)), key_kdf_info()) in
-    let exp = kdf<HPKE_KDF.L_sched_export; nonce; 0>(shared_secret, dh_secret_kdf_ikm(get(HPKE_KDF.psk)), export_kdf_info()) in
-    let res : ContextR<session i> = ContextR<session i>(eph, false, shared_secret, base_nonce, sk, exp) in
+    parse adr' as AuthDecapResult<session i>(eph, shared_secret, _, _) in
+    pcase (eph == dhpk(get(skE<i>))) in
+    corr_case psk in 
+    corr_case skR in 
+    corr_case skS in 
+    corr_case skE<i> in 
+    corr_case KDF<L_kem<i>;kdfkey;0> in 
+    let base_nonce = kdf<L_sched_nonce<i>; nonce |counter|; 0>(shared_secret, dh_secret_kdf_ikm(psk), base_nonce_kdf_info()) in
+    let sk = kdf<L_sched_key<i>; enckey; 0>(shared_secret, dh_secret_kdf_ikm(psk), key_kdf_info()) in
+    let exp = kdf<L_sched_export<i>; nonce; 0>(shared_secret, dh_secret_kdf_ikm(psk), export_kdf_info()) in
+    let res : ContextR<session i> = ContextR<session i>(eph, shared_secret, base_nonce, sk, exp) in
     pack<i>(res)
 
 
@@ -149,37 +101,36 @@ enum OpenMsg {
 // the state we thread through for Open.
 struct OpenResult<i> {
     or_ctxt : ContextR<session i>,
-    or_pt : OpenMsg,
-    // If Open succeeds with a message, then we have confirmed the secret key
-    or_wf : (x:Ghost{SomeMsg?(or_pt) ==> ctxtR_confirmed<session i>(or_ctxt) == true})
+    or_pt : OpenMsg
 }
+
 
 def Open<j>(ctxtR : exists i. ContextR<session i>, ct_aad : Data<adv>, ct : Data<adv>) @ receiver : exists i. OpenResult<session i> =
     unpack i, ctxtR = ctxtR in
-    parse ctxtR as ContextR<session i>(eph, confirmed, ss, bn, sk, exp) in
+    parse ctxtR as ContextR<session i>(eph, ss, bn, sk, exp) in
     let ctr = get_counter recv_counter<j> in
     let iv = xor(bn, ctr) in
     inc_counter recv_counter<j>;
-    pcase (eph == dhpk(get(HPKE_KDF.skE<i>))) in
+    pcase (eph == dhpk(get(skE<i>))) in
     case st_aead_dec(sk, ct, ct_aad, iv) as Option Data<[channel_secret] /\ adv, |adv|> {
         | Some x =>
             false_elim in
-            let ctxtR' = ContextR<session i>(eph, true, ss, bn, sk, exp) in
-            assert (eph == dhpk(get(HPKE_KDF.skE<i>)) /\ (sec(HPKE_KDF.psk) \/ (sec(HPKE_KDF.skR) /\ (sec(HPKE_KDF.skS) \/ sec(HPKE_KDF.skE<i>))))) ==> happened(sent_message(x));
-            let res : OpenResult<session i> = OpenResult<session i>(ctxtR', SomeMsg(x), ()) in
+            let ctxtR' = ContextR<session i>(eph, ss, bn, sk, exp) in
+            assert (eph == dhpk(get(skE<i>)) /\ (sec(psk) \/ (sec(skR) /\ (sec(skS) \/ sec(skE<i>))))) ==> happened(sent_message(x));
+            let res : OpenResult<session i> = OpenResult<session i>(ctxtR', SomeMsg(x)) in
             pack<i>(res)
-        | None => let res = OpenResult<session i>(ctxtR, NoMsg(), ()) in pack<i>(res)
-        otherwise => let res = OpenResult<session i>(ctxtR, NoMsg(), ()) in pack<i>(res)
+        | None => let res = OpenResult<session i>(ctxtR, NoMsg()) in pack<i>(res)
+        otherwise => let res = OpenResult<session i>(ctxtR, NoMsg()) in pack<i>(res)
     }
 
 
-def SingleShotOpen<j>(pkS : dhpk(HPKE_KDF.skS), pkR : dhpk(HPKE_KDF.skR)) @ receiver : Option (exists i. OpenResult<session i>) =
+def SingleShotOpen<j>(pkS : dhpk(skS), pkR : dhpk(skR), psk : Name(psk)) @ receiver : Option (exists i. OpenResult<session i>) =
     input i in
     parse i as hpke_ciphertext(eph, ct) in {
         let oadr = call AuthDecap(pkS, pkR, eph) in
         case oadr {
             | Some adr => {
-                let ctxt = call KeyScheduleR(adr) in
+                let ctxt = call KeyScheduleR(adr, psk) in
                 let res = call Open<j>(ctxt, 0x, ct)  in
                 Some(res)
               }
@@ -187,5 +138,3 @@ def SingleShotOpen<j>(pkS : dhpk(HPKE_KDF.skS), pkR : dhpk(HPKE_KDF.skR)) @ rece
         }
     }
     otherwise None()
-
-*/

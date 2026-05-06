@@ -5,17 +5,17 @@ include "defs.owl"
 // Is eph an ephemeral key for the responder?
 predicate is_e_resp(eph) =
     exists m:idx,j:idx.
-        eph == dhpk(get(WG_KDF.E_resp<j@m>))
+        eph == dhpk(get(E_resp<j@m>))
 
 // Is eph a static key for the responder?
 predicate is_s_resp(eph) =
     exists m:idx.
-        eph == dhpk(get(WG_KDF.S_resp<@m>))
+        eph == dhpk(get(S_resp<@m>))
 
 predicate init_safe<i,n,m>() =
-    (sec(WG_KDF.S_resp<@m>) /\ sec(WG_KDF.E_init<i@n>))
+    (sec(S_resp<@m>) /\ sec(E_init<i@n>))
     \/
-    (sec(WG_KDF.S_resp<@m>) /\ sec(WG_KDF.S_init<@n>))
+    (sec(S_resp<@m>) /\ sec(S_init<@n>))
 
 def key_confirm_initiator_send<@n>(k : Ghost) @ Initiator<n> : Unit = ()
 def key_confirm_initiator_recv<@n>(k : Ghost) @ Initiator<n> : Unit = ()
@@ -23,41 +23,39 @@ def key_confirm_initiator_recv<@n>(k : Ghost) @ Initiator<n> : Unit = ()
 
 // Intermediate state for the initiator, after stage 1 (the first message)
 struct init_sent_state<i,n,m> {
-    iss_c2 : (x:Ghost{x == honest_c2<session i, pid n, pid m>()}),
     iss_psk : PSKMode<idx n,idx m>,
-    iss_static_ss : (x:Ghost{x == dh_combine(dhpk(get(WG_KDF.S_init<@n>)),
-    get(WG_KDF.S_resp<@m>))}),
-    ss_h4 : (x:Data<adv> ||crh|| {exists c:bv,ts:bv. x == crh(honest_H4_pre<session i, pid
-    n,pid m>(c, ts))}),
-    // KDF reference updated: KDF<WG_KDF.L2<@n,m>; kdfkey||enckey; 0>
+    iss_static_ss : (x:Ghost{x == dh_combine(dhpk(get(S_init<@n>)),
+    get(S_resp<@m>))}),
+    ss_h4 : (x:Data<adv> ||crh|| {exists c:bv,ts:bv. x == crh(honest_H4_pre<session i, pid n,pid m>(c, ts))}),
     iss_c3 : if init_safe<i,n,m>[] then
-        SecName(KDF<WG_KDF.L2<n,m>; kdfkey||enckey; 0>)
+        SecName(KDF<L2<i@n,m>; kdfkey||enckey; 0>)
         else
             (x:Data<adv>{x == honest_c3<session i, pid n, pid n, pid m>()})
 }
 
 def init_stage1<i@n,m>
-    (dhpk_S_resp : dhpk(WG_KDF.S_resp<@m>), dhpk_S_init :
-    dhpk(WG_KDF.S_init<@n>), ss_S_resp_S_init: shared_secret(WG_KDF.S_init<@n>, WG_KDF.S_resp<@m>),
+    (dhpk_S_resp : dhpk(S_resp<@m>), dhpk_S_init :
+    dhpk(S_init<@n>), ss_S_resp_S_init: shared_secret(S_init<@n>, S_resp<@m>),
     psk : PSKMode<idx n,idx m>) @
     Initiator<n> : init_sent_state<session i, pid n, pid m> =
     let C0 = crh(construction()) in
     let H0 = crh(C0 ++ identifier()) in
     let H1 = crh(H0 ++ dhpk_S_resp) in
-    let e_init = dhpk(get(WG_KDF.E_init<i@n>)) in
+    let e_init = dhpk(get(E_init<i@n>)) in
     // C1 is publicly computable; no kdf_scope rule needed, use unlabeled kdf
     let C1 = kdf<;kdfkey;0>(C0, e_init, 0x) in
     let H2 = crh(H1 ++ e_init) in
-    let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(WG_KDF.E_init<i@n>)) in
+    let ss_S_resp_E_init = dh_combine(dhpk_S_resp, get(E_init<i@n>)) in
     // Derive C2 and k0 via ODH L1 (E_init x S_resp)
-    let C2 = kdf<WG_KDF.L1<i@n,m>(C1); kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
-    let k0 = kdf<WG_KDF.L1<i@n,m>(C1); kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
+    let C2 = kdf<L1<i@n,m>; kdfkey||enckey; 0>(C1, ss_S_resp_E_init, 0x) in
+    let k0 = kdf<L1<i@n,m>; kdfkey||enckey; 1>(C1, ss_S_resp_E_init, 0x) in
     let msg1_static
         = st_aead_enc<aead_counter_msg1_C2<i@n>>(k0, dhpk_S_init, H2) in
     let H3 = crh(H2 ++ msg1_static) in
     // Derive C3 and k1 via ODH L2 (S_init x S_resp)
-    let c3 = kdf<WG_KDF.L2<n,m>; kdfkey || enckey; 0>(C2, ss_S_resp_S_init, 0x) in
-    let k1 = kdf<WG_KDF.L2<n,m>; kdfkey || enckey; 1>(C2, ss_S_resp_S_init, 0x) in
+    corr_case S_init<@n> in
+    let c3 = kdf<L2<i@n,m>; kdfkey || enckey; 0>(C2, ss_S_resp_S_init, 0x) in
+    let k1 = kdf<L2<i@n,m>; kdfkey || enckey; 1>(C2, ss_S_resp_S_init, 0x) in
     let timestamp = call timestamp_i<@n>() in
     let msg1_timestamp =
         st_aead_enc<aead_counter_msg1_C3<i@n>>(k1, timestamp, H3) in
@@ -72,33 +70,37 @@ def init_stage1<i@n,m>
     let msg1_mac2 = zeros_16() in
     let msg1_output = msg1(msg1_tag, msg1_sender, e_init, msg1_static, msg1_timestamp, msg1_mac1, msg1_mac2) in
     output msg1_output;
-    init_sent_state<session i, pid n, pid m>(C2, psk, ss_S_resp_S_init, h4, c3)
+    init_sent_state<session i, pid n, pid m>(psk, ss_S_resp_S_init, h4, c3)
 
 
 
 def init_stage2<i@n,m>
     (st : init_sent_state<session i, pid n, pid m>)
     @
-    Initiator<n> : Option transp_keys_init<session i, pid n, pid m> =
+    Initiator<n> : Option (exists j. transp_keys_init<session i, session j, pid n, pid m>) =
     set_option ":rlimit" "7000000" in  // Z3 settings
-    parse st as init_sent_state<session i, pid n, pid m>(c2, opsk, static_ss, h4, c3)
+    parse st as init_sent_state<session i, pid n, pid m>(opsk, static_ss, h4, c3)
     in
     input i in
-    parse i as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral,
-    msg2_empty_enc, msg2_mac1, msg2_mac2) in
+    parse i as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral, msg2_empty_enc, msg2_mac1, msg2_mac2) in
     {
         // This guard is a runtime check
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in
-        let e_init = get(WG_KDF.E_init<i@n>) in
+        let e_init = get(E_init<i@n>) in
+        pcase (exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m>))) in 
+        choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m>)) in 
+        let c4 = kdf<L3<j@n,m>; kdfkey; 0>(c3, msg2_ephemeral, 0x) in 
+        None()
+        /*
 
         // Is msg2_ephemeral an actual ephemeral key?
         pcase is_e_resp[msg2_ephemeral] in
             // If so, let m2, j be the indices for it
-            choose_idx m2 | exists j:idx. msg2_ephemeral == dhpk(get(WG_KDF.E_resp<j@m2>)) in
-            choose_idx j | msg2_ephemeral == dhpk(get(WG_KDF.E_resp<j@m2>)) in
+            choose_idx m2 | exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in
+            choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m2>)) in
         // Is m equal to m2 ?
-        pcase (m =idx m2) when (msg2_ephemeral == dhpk(get(WG_KDF.E_resp<j@m2>))) in
+        pcase (m =idx m2) when (msg2_ephemeral == dhpk(get(E_resp<j@m2>))) in
 
         // Otherwise, is it a static key?
         pcase is_s_resp[msg2_ephemeral]
@@ -269,6 +271,7 @@ def init_stage2<i@n,m>
                 }
             otherwise => None()
         }
+        */
     }
     otherwise None()
 

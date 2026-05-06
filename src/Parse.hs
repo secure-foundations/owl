@@ -284,12 +284,7 @@ parseTyTerm =
         symbol ")"
         p' <- getPosition
         let pos = ignore $ Position (sourceLine p, sourceColumn p) (sourceLine p', sourceColumn p') (sourceName p)
-        return $ case n^.val of
-          KDFName _ _ _ _ ->
-              -- kdf_scope form: secrecy is structural (TName is never a leaf type),
-              -- so skip the TRefined wrapper to avoid LName(KDFName) in SMT
-              Spanned pos $ TName n
-          _ -> Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
+        return $ Spanned pos $ TRefined (Spanned pos $ TName n) ("._") $ bind (s2n "._") $ pNot $ pFlow (nameLbl n) advLbl
     )
     <|>
     (do
