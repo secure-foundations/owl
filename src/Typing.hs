@@ -3132,6 +3132,10 @@ unconcatWithTypes ikmE = do
         t <- inferAExpr c >>= normalizeTy
         return (c, t)
 
+prettyInconclusiveKDFRules :: [(Prop, String)] -> OwlDoc
+prettyInconclusiveKDFRules inconclusiveRules = 
+    hsep $ map (\(p, ruleName) -> owlpretty "rule " <+> owlpretty ruleName <+> owlpretty ":" <+> owlpretty p <> line) inconclusiveRules
+
 handleKDFNoMatch :: [KDFScopeRuleRef] -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty)
                  -> (Ty -> Ty) -> Check Ty
 handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement = pushRoutine "handleKDFNoMatch" $ do
@@ -3151,14 +3155,15 @@ handleKDFNoMatch hints (saltE, saltT) (ikmE, ikmT) (infoE, infoT) kdfRefinement 
     let allRules = _ksdRules scopeDef
     allMatchResults <- forM allRules $ \(_, bRule) -> do
         pmatch <- buildRuleMatchProp saltE ikmE infoE bRule
-        decideProp pmatch
-    let inconclusiveRules = [ ruleName | ((ruleName, _), Nothing) <- zip allRules allMatchResults ]
+        res <- decideProp pmatch
+        return (pmatch, res)
+    let inconclusiveRules = [ (p, ruleName) | ((ruleName, _), (p, Nothing)) <- zip allRules allMatchResults ]
     assert
         ("Inconclusive: cannot match this KDF call with a rule or prove that it doesn't match any of the rules" ++
             if null inconclusiveRules then ""
-            else ", inconclusive rules: " ++ L.intercalate ", " inconclusiveRules) $
-        any (\x -> x == Just True) allMatchResults || all (\x -> x == Just False) allMatchResults
-    if all (\x -> x == Just False) allMatchResults
+            else ", inconclusive rules: " ++ (show $ line <> prettyInconclusiveKDFRules inconclusiveRules)) $
+        any (\(_, x) -> x == Just True) allMatchResults || all (\(_, x) -> x == Just False) allMatchResults
+    if all (\(_, x) -> x == Just False) allMatchResults
         then 
         -- Out-of-bounds case: the KDF call provably doesn't match any rule in the scope, so it should be public
         return $ kdfRefinement (tData advLbl advLbl)

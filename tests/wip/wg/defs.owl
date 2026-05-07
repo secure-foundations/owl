@@ -263,7 +263,7 @@ kdf_scope WG_KDF {
     // `kdf` not `odh` since the information-flow content derives from the kdfkey
     // C3 passed as salt
     // -----------------------------------------------------------------
-    kdf L3<j@n,m> : KDF<L2<j@n,m>;kdfkey||enckey;0>, dhpk(get(E_resp<j@m>)), 0x ->
+    kdf L3<i, j@n,m> : KDF<L2<i@n,m>;kdfkey||enckey;0>, dhpk(get(E_resp<j@m>)), 0x ->
         strict kdfkey || strict useless_enc
 
     // TODO: is the where clause on L3_corr correct?
@@ -274,7 +274,7 @@ kdf_scope WG_KDF {
     // Rule L4: Derive C5 via ODH (E_init x E_resp)
     // TODO: should it be index i or j on L3?
     // -----------------------------------------------------------------
-    odh L4<i,j@n,m> : KDF<L3<j@n,m>;kdfkey||enckey;0>, dh_ss(E_init<i@n>, E_resp<j@m>), 0x ->
+    odh L4<i,j@n,m> : KDF<L3<i, j@n,m>;kdfkey||enckey;0>, dh_ss(E_init<i@n>, E_resp<j@m>), 0x ->
         strict kdfkey
 
     // odh L4_corr<i,j@n,m> : C4_corr, dh_combine(E_init<i@n>, E_resp<j@m>), 0x ->

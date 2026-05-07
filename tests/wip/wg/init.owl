@@ -82,15 +82,46 @@ def init_stage2<i@n,m>
     parse st as init_sent_state<session i, pid n, pid m>(opsk, static_ss, h4, c3)
     in
     input i in
+    pcase #[assume true] 
+        init_safe<i,n,m>[]
+    in
     parse i as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral, msg2_empty_enc, msg2_mac1, msg2_mac2) in
     {
         // This guard is a runtime check
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in
         let e_init = get(E_init<i@n>) in
-        pcase (exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m>))) in 
+        pcase #[assume false] (exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m>))) in 
         choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m>)) in 
-        let c4 = kdf<L3<j@n,m>; kdfkey; 0>(c3, msg2_ephemeral, 0x) in 
+        assert (! (exists i':idx, j':idx, n':idx, m':idx. c3 == get(KDF<L2<i'@n, m'>; kdfkey||enckey; 0>) /\ msg2_ephemeral == dhpk(get(E_resp<j'@m'>))));
+
+        forall i':idx, n':idx {
+            kdf_inj_lemma(honest_c1<session i', pid n'>(), honest_c3<session i, pid n, pid n, pid m>())
+        };
+
+        let c4 = kdf<L3<i, j@n,m>; kdfkey || enckey; 0>(c3, msg2_ephemeral, 0x) in 
+        let h5 = crh(h4 ++ msg2_ephemeral) in
+        let ss = dh_combine(msg2_ephemeral, e_init) in
+        cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
+        forall i':idx, n':idx, m':idx {
+            let lem1 = kdf_inj_lemma(honest_c1<session i', pid n'>(), honest_c4<session i, session j, pid n, pid n, pid m>()) in 
+            let lem2 = kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), honest_c4<session i, session j, pid n, pid n, pid m>()) in 
+            let lem3 = kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), honest_c4<session i, session j, pid n, pid n, pid m>()) in 
+            lem1 &&& lem2 &&& lem3
+        };
+        kdf_inj_lemma(gkdf<kdfkey; 0>(c3, msg2_ephemeral, 0x), honest_c1<session i, pid n>());
+        kdf_inj_lemma(gkdf<kdfkey; 0>(c3, msg2_ephemeral, 0x), honest_c4<session
+        i, session j, pid n, pid n, pid m>());
+        kdf_inj_lemma(honest_c3<session i, pid n, pid n, pid m>(),
+            honest_c3<session i, pid n, pid n, pid m>());
+        forall n_pk:idx, i':idx {
+            let lem1 = kdf_inj_lemma(honest_c3<session i, pid n, pid n, pid m>(),
+                honest_c3<session i', pid n, pid n_pk, pid m>()) in 
+            let lem2 = kdf_inj_lemma(gkdf<kdfkey; 0>(c3, msg2_ephemeral, 0x), honest_c4<session
+                i', session j, pid n, pid n_pk, pid m>()) in 
+            lem1 &&& lem2
+        };
+        let c5 = kdf<L4<i,j@n,m>; kdfkey || enckey; 0>(c4, ss, 0x) in 
         None()
         /*
 
