@@ -448,13 +448,13 @@ predicate init_clean<i,n,m>(haspsk, eph) =
     (sec(S_init<@n>) \/ sec(E_init<i@n>))
     /\
     (
-    // The responder's static key is secret; OR
-    sec(S_resp<@m>)
-    \/
+    // // The responder's static key is secret; OR
+    // sec(S_resp<@m>)
+    // \/
     // The ephemeral key received by the initiator is a correct one, and it is
     // secret
     (exists j:idx. eph == dhpk(get(E_resp<j@m>)) /\
-     sec(E_resp<j@m>)
+     (sec(S_resp<@m>) \/ sec(E_resp<j@m>))
     )))
 
 // This is the return type of the initiator from the handshake. The important
