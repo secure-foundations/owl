@@ -3001,7 +3001,7 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRouti
                         _ -> do 
                             t <- inferAExpr a >>= normalizeTy
                             res <- tyFlowsTo t advLbl
-                            logTypecheck $ owlpretty "ikm atom: " <> owlpretty a <> owlpretty " with type " <> owlpretty t <> owlpretty " flows to advLbl: " <> owlpretty res
+                            -- logTypecheck $ owlpretty "ikm atom: " <> owlpretty a <> owlpretty " with type " <> owlpretty t <> owlpretty " flows to advLbl: " <> owlpretty res
                             return res
                     
                   -- If so, just return Data<adv>
@@ -3011,7 +3011,11 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRouti
                     -- Here, we use the matched hint body rather than the given arguments (which we have already checked are equal)
                     saltIsSecret <- case (_ksrbSalt body)^.val of 
                                     AEGet ne -> not <$> flowsTo (nameLbl ne) advLbl
-                                    _ -> return False
+                                    _ -> do 
+                                        t <- inferAExpr (_ksrbSalt body) >>= normalizeTy
+                                        case t^.val of 
+                                            TName ne -> not <$> flowsTo (nameLbl ne) advLbl
+                                            _ -> return False
                     ikmAtoms <- unconcat (_ksrbIkm body)
                     ikmIsSecret <- anyM ikmAtoms $ \a ->  do 
                             case a^.val of 
@@ -3020,7 +3024,11 @@ tryKDFRuleHint hint (saltE, saltT) (ikmE, ikmT) (infoE, infoT) nks j = pushRouti
                                         b2 <- flowsTo (nameLbl y) advLbl
                                         return $ (not b1) && (not b2)
                                 AEGet ne -> not <$> flowsTo (nameLbl ne) advLbl
-                                _ -> return False
+                                _ -> do 
+                                    t <- inferAExpr a >>= normalizeTy
+                                    case t^.val of 
+                                        TName ne -> not <$> flowsTo (nameLbl ne) advLbl
+                                        _ -> return False
                     let secretFlowAx = case strictness of
                                             KDFStrict   -> pNot $ pFlow (nameLbl ne) advLbl
                                             KDFPub      -> pFlow (nameLbl ne) advLbl
