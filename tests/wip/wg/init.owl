@@ -82,7 +82,7 @@ def init_stage2<i@n,m>
     parse st as init_sent_state<session i, pid n, pid m>(opsk, static_ss, h4, c3)
     in
     input i in
-    pcase #[assume false]
+    pcase #[assume true]
         init_safe<i,n,m>[]
     in
     parse i as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral, msg2_empty_enc, msg2_mac1, msg2_mac2) in
@@ -91,7 +91,7 @@ def init_stage2<i@n,m>
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in
         let e_init = get(E_init<i@n>) in
-        pcase (exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m>))) in 
+        pcase #[assume false] (exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m>))) in 
         choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m>)) in 
         assert ( 
             msg2_ephemeral != dhpk(get(E_resp<j@m>)) ==>
@@ -122,34 +122,34 @@ def init_stage2<i@n,m>
         // TODO: First actually do this manually and ensure that WG works 
         // Then, implement the thing
 
-        // L1
-        forall i':idx, n':idx {
-            kdf_inj_lemma(honest_c1<session i', pid n'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
-        // L2
-        forall i':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
-        // L3
-        forall i':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
-        // L4
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c4<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
-        // L5
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c5<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
-        // L6
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c6<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
-        // L7
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c7<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
-        };
+        // // L1
+        // forall i':idx, n':idx {
+        //     kdf_inj_lemma(honest_c1<session i', pid n'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
+        // // L2
+        // forall i':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
+        // // L3
+        // forall i':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
+        // // L4
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c4<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
+        // // L5
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c5<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
+        // // L6
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c6<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
+        // // L7
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c7<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey||enckey; 0>(c3, msg2_ephemeral, 0x))
+        // };
 
 
 
@@ -194,34 +194,34 @@ def init_stage2<i@n,m>
         corr_case E_resp<j@m> in
         let c5 = kdf<L4<i,j@n,m>; kdfkey; 0>(c4, ss, 0x) in 
 
-        // L1
-        forall i':idx, n':idx {
-            kdf_inj_lemma(honest_c1<session i', pid n'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
-        // L2
-        forall i':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
-        // L3
-        forall i':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
-        // L4
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c4<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
-        // L5
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c5<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
-        // L6
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c6<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
-        // L7
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c7<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
-        };
+        // // L1
+        // forall i':idx, n':idx {
+        //     kdf_inj_lemma(honest_c1<session i', pid n'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
+        // // L2
+        // forall i':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
+        // // L3
+        // forall i':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
+        // // L4
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c4<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
+        // // L5
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c5<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
+        // // L6
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c6<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
+        // // L7
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c7<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c4, ss, 0x))
+        // };
 
 
 
@@ -275,36 +275,37 @@ def init_stage2<i@n,m>
         corr_case S_init<@n> in
         let ss_msg2_eph_s_init = dh_combine(msg2_ephemeral, get(S_init<@n>)) in
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
+        corr_case KDF<L4<i,j@n,m>;kdfkey;0> when !init_safe<i,n,m>[] in
         let c6 = kdf<L5<i,j@n,m>; kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x) in
 
-        // L1
-        forall i':idx, n':idx {
-            kdf_inj_lemma(honest_c1<session i', pid n'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
-        // L2
-        forall i':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
-        // L3
-        forall i':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
-        // L4
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c4<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
-        // L5
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c5<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
-        // L6
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c6<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
-        // L7
-        forall i':idx, j':idx, n':idx, m':idx {
-            kdf_inj_lemma(honest_c7<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
-        };
+        // // L1
+        // forall i':idx, n':idx {
+        //     kdf_inj_lemma(honest_c1<session i', pid n'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
+        // // L2
+        // forall i':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c2<session i', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
+        // // L3
+        // forall i':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c3<session i', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
+        // // L4
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c4<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
+        // // L5
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c5<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
+        // // L6
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c6<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
+        // // L7
+        // forall i':idx, j':idx, n':idx, m':idx {
+        //     kdf_inj_lemma(honest_c7<session i', session j', pid n', pid n', pid m'>(), gkdf<kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x))
+        // };
 
 
 
@@ -325,11 +326,11 @@ def init_stage2<i@n,m>
                    | NoPSK => zeros_32()
         } in
         pcase HasPSK?(opsk) in
-        corr_case KDF<L5<i,j@n,m>;kdfkey;0> in
+        corr_case KDF<L5<i,j@n,m>;kdfkey;0> when !init_safe<i,n,m>[] in
         corr_case psk<@n,m> in
-        let c7 = kdf<L6<i,j@n,m>(psk); kdfkey || nonce || enckey; 0>(c6, psk, 0x) in
+        let c7  = kdf<L6<i,j@n,m>(psk); kdfkey || nonce || enckey; 0>(c6, psk, 0x) in
         let tau = kdf<L6<i,j@n,m>(psk); kdfkey || nonce || enckey; 1>(c6, psk, 0x) in
-        let k0 = kdf<L6<i,j@n,m>(psk); kdfkey || nonce || enckey; 2>(c6, psk, 0x) in
+        let k0  = kdf<L6<i,j@n,m>(psk); kdfkey || nonce || enckey; 2>(c6, psk, 0x) in
         let h6 = crh(h5 ++ tau) in
         case st_aead_dec(k0, msg2_empty_enc, h6, 0x)
         as Option (Data<adv>|0|) {

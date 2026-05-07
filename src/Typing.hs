@@ -2886,7 +2886,7 @@ crhInjLemma x y =
       _ -> return pTrue
 
 kdfInjLemma :: AExpr -> AExpr -> Check Prop
-kdfInjLemma x y = do
+kdfInjLemma x y = pushRoutine ("kdfInjLemma(" ++ show (owlpretty x) ++ ", " ++ show (owlpretty y) ++ ")") $ do
     -- liftIO $ putStrLn ("Trying kdfInjLemma on " ++ show ( x) ++ " and " ++ show ( y))
     case (x^.val, y^.val) of
       (AEKDF a b c nks j, AEKDF a' b' c' nks' j') | j < length nks && j' < length nks' && (nks !! j == nks' !! j') -> do
@@ -2899,6 +2899,45 @@ kdfInjLemma x y = do
           p2 <- kdfInjLemma b d
           return $ pAnd p1 p2
       _ -> return pTrue
+
+-- Build the conjunction of injectivity lemmas between this kdf call's gkdf
+-- (curKDF) and every kdfkey-producing output (ruleKDF) of every rule in the
+-- call's active scope. Returns pTrue when the call's output at index j is
+-- not a kdfkey, or when no scope is identifiable from the hints.
+kdfInjLemmasForScope ::
+     [NameKind] -> Int
+  -> AExpr -> AExpr -> AExpr
+  -> [KDFScopeRuleRef]
+  -> Check Prop
+kdfInjLemmasForScope nks j saltE ikmE infoE hints = pushRoutine ("kdfInjLemmasForScope") $
+  local (set tcScope $ TcGhost False) $ do
+    if j >= length nks || nks !! j /= NK_KDF
+      then return pTrue
+      else do
+        scopeResults <- mapM (findScopeForLabel . _ksrrLabel) hints
+        case catMaybes scopeResults of
+          [] -> return pTrue
+          ((sn, scopeDef) : _) -> do
+            let curKDF = mkSpanned $ AEKDF saltE ikmE infoE nks j
+            let allRules = _ksdRules scopeDef
+            ruleProps <- forM allRules $ \(rn, bRule) -> do
+              (((is1, is2), dvars), body) <- unbind bRule
+              let idxAssocs = [(i, (ignore $ show i, IdxSession)) | i <- is1]
+                           ++ [(i, (ignore $ show i, IdxPId)) | i <- is2]
+              let varAssocs = [(d, (ignore $ show d, Nothing, tData advLbl advLbl)) | d <- dvars]
+              withIndices idxAssocs $ withVars varAssocs $ do
+                let KDFOutputSpec outputs = _ksrbOutput body
+                ruleNks <- mapM (\(_, outNt) -> getNameKind outNt) outputs
+                outProps <- forM (zip [0..] ruleNks) $ \(i, outNk) ->
+                  if outNk /= NK_KDF
+                    then return pTrue
+                    else do
+                      let ruleKDF = mkSpanned $
+                            AEKDF (_ksrbSalt body) (_ksrbIkm body) (_ksrbInfo body) ruleNks i
+                      lemma <- kdfInjLemma curKDF ruleKDF
+                      return $ mkForallIdx (is1 ++ is2) $ mkForallBv dvars lemma
+                return $ foldr pAnd pTrue outProps
+            return $ foldr pAnd pTrue ruleProps
 
 patternPublicAndEquivalent :: Bind DataVar AExpr -> Bind DataVar AExpr -> Check (Bool, Bool)
 patternPublicAndEquivalent pat1 pat2 = do
@@ -3274,8 +3313,10 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
           checkHintOutputsCompatible hints
           let kdfProp = pEq (aeVar ".res") $ mkSpanned $ AEKDF saltE' ikmE' infoE' nks j
           let outLen = nameKindLength $ nks !! j
+          injLemmasProp <- kdfInjLemmasForScope nks j saltE' ikmE' infoE' hints
           let kdfRefinement t = tRefined t ".res" $
-                pAnd (pEq (aeLength (aeVar ".res")) outLen) kdfProp
+                pAnd (pEq (aeLength (aeVar ".res")) outLen)
+                     (pAnd kdfProp injLemmasProp)
 
           everythingPublic <- do 
                 b1 <- tyFlowsTo saltT advLbl
