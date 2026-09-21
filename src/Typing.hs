@@ -67,8 +67,9 @@ emptyEnv f = do
     m <- newIORef $ M.empty
     rs <- newIORef []
     memo <- mkMemoEntry 
+    gsetup <- newIORef Nothing
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
+        interpUserFunc r m [memo] gsetup mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -742,11 +743,7 @@ checkSubRefinement t1 r1 t2 r2 = snd <$> (SMT.smtTypingQuery "" $ SMT.subTypeChe
 isSubtype' :: Ty -> [(String, Bind DataVar Prop)] -> Ty -> [(String, Bind DataVar Prop)] -> Check Bool
 isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
     res <- withPushLog $ do
-      x <- freshVar
-      falseTy <- withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do 
-         (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
-         return b
-      if falseTy then return True else 
+      structural <-
           case (t1^.val, t2^.val) of
             (t1', t2') | t1' `aeq` t2' -> return True
             (_, TGhost) -> return True
@@ -822,6 +819,13 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
                 Just b2 -> return $ b1 && b2
             _ -> do
                 return False
+      -- If we can't prove that `t1` is a subtype of `t2`, we check for an inconsistent context using SMT.
+      -- This query appears to be very expensive, so we only do it if the subtyping check fails.
+      if structural then return True else do
+          x <- freshVar
+          withVars [(s2n x, (ignore $ show x, Nothing, t1))] $ do
+             (_, b) <- SMT.smtTypingQuery "false_elim" $ SMT.symAssert $ mkSpanned PFalse
+             return b
     let t2Leaf = isSubtypeLeaf t2 
     if res then if t2Leaf then checkSubRefinement t1 r1 t2 r2 else return True else return False
 
@@ -1835,23 +1839,36 @@ checkProp p =
 
 
 
+-- Handle trivial flows that can be checked without an SMT call.
+trivialFlow :: Label -> Label -> Bool
+trivialFlow l1 l2 =
+    l1 `aeq` l2 ||
+    (case l1^.val of
+       LZero -> True
+       LJoin a b -> trivialFlow a l2 && trivialFlow b l2
+       _ -> False) ||
+    (case l2^.val of
+       LJoin a b -> trivialFlow l1 a || trivialFlow l1 b
+       _ -> False)
+
 flowsTo :: Label -> Label -> Check Bool
 flowsTo l1' l2' = do
     l1 <- normalizeLabel l1'
     l2 <- normalizeLabel l2'
-    tyc <- view tyContext
-    (fn, b) <- SMT.checkFlows l1 l2
-    case b of
-      Just r -> do
-        return r
-      Nothing -> typeError $ show $ owlpretty "Inconclusive: " <> owlpretty l1 <+> owlpretty "<=" <+> owlpretty l2 
-      -- <> line <> owlpretty "Under context: " <> owlprettyTyContext tyc  <> owlpretty fn
+    if trivialFlow l1 l2 then return True else do
+        tyc <- view tyContext
+        (fn, b) <- SMT.checkFlows l1 l2
+        case b of
+          Just r -> do
+            return r
+          Nothing -> typeError $ show $ owlpretty "Inconclusive: " <> owlpretty l1 <+> owlpretty "<=" <+> owlpretty l2 
+          -- <> line <> owlpretty "Under context: " <> owlprettyTyContext tyc  <> owlpretty fn
 
 tryFlowsTo :: Label -> Label -> Check (Maybe Bool)
 tryFlowsTo l1' l2' = do
     l1 <- normalizeLabel l1'
     l2 <- normalizeLabel l2'
-    tryFlowsTo' (l1, l2)
+    if trivialFlow l1 l2 then return (Just True) else tryFlowsTo' (l1, l2)
 
 tryFlowsTo' = withMemoize (memotryFlowsTo') $ \(l1, l2) -> do
     (fn, b) <- SMT.checkFlows l1 l2

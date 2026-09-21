@@ -13,8 +13,9 @@ import Data.Time.Clock
 import Data.Maybe
 import Data.IORef
 import System.Process
-import qualified System.Process.Text as T
+import System.IO
 import System.Exit
+import Control.Exception (try, SomeException)
 import CmdArgs
 import Data.Default (Default, def)
 import System.Directory
@@ -43,6 +44,8 @@ import qualified Parse as P
 import qualified Text.Parsec as P
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Builder as TB
 
 
 data SExp = 
@@ -54,14 +57,23 @@ data SExp =
       | SNamed String
       | SOption String String
 
+-- Write the SExp to a String via a lazy TextBuilder, so rendering time is linear
+-- in the size of the SExp.
+buildSExp :: SExp -> TB.Builder
+buildSExp (SAtom t) = TB.fromString (map nlToSpace t)
+buildSExp (SApp xs) = TB.fromText (T.pack " (") <> mconcat (intersperse (TB.singleton ' ') (map buildSExp xs)) <> TB.singleton ')'
+buildSExp (SComment s) = TB.fromText (T.pack "; ") <> TB.fromText (T.map nlToSpace s)
+buildSExp (SPat s) = TB.fromText (T.pack " :pattern ") <> buildSExp s
+buildSExp (SQid s) = TB.fromText (T.pack " :qid ") <> TB.fromString (map nlToSpace s)
+buildSExp (SNamed s) = TB.fromText (T.pack " :named ") <> TB.fromString (map nlToSpace s)
+buildSExp (SOption x y) = TB.singleton ':' <> TB.fromString (map nlToSpace x) <> TB.singleton ' ' <> TB.fromString (map nlToSpace y)
+
+nlToSpace :: Char -> Char
+nlToSpace '\n' = ' '
+nlToSpace c = c
+
 renderSExp :: SExp -> T.Text
-renderSExp (SAtom t) = T.pack t
-renderSExp (SApp xs) = T.pack " (" <> mconcat (intersperse (T.pack " ") (map renderSExp xs)) <> T.pack ")"
-renderSExp (SComment s) = T.pack "; " <> s
-renderSExp (SPat s) = T.pack " :pattern " <> renderSExp s
-renderSExp (SQid s) = T.pack " :qid " <> T.pack s
-renderSExp (SNamed s) = T.pack " :named " <> T.pack s
-renderSExp (SOption x y) = T.pack ":" <> T.pack x <> T.pack " " <> T.pack y
+renderSExp = TL.toStrict . TB.toLazyText . buildSExp
 
 
 bitstringSort :: SExp
@@ -128,14 +140,18 @@ data SolverEnv = SolverEnv {
     _predInterps :: M.Map String SExp,
     _inODHInterp :: Maybe SExp,
     _smtLog :: [SExp],
-    _smtPreludeSetup :: T.Text,
+    -- The setup text is kept in pieces, which are never joined (see SMTQuery):
+    _smtPreludeText :: T.Text,  -- contents of prelude.smt2
+    _smtGlobalText :: T.Text,   -- module-level declarations and axioms (SMT.globalSMTSetup)
+    _smtGlobalKey :: ModuleFingerprint, -- fingerprint of the environment in smtGlobalText
+    _smtContextText :: T.Text,  -- declarations for the indices and variables of the typing context
     _trivialVC :: Bool,
     _freshSMTCtr :: Int
                  }
                                     
 type Check = Check' SolverEnv
 
-initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty Nothing [] mempty True 0
+initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty Nothing [] mempty mempty (0, 0, []) mempty True 0
 
 
 newtype Sym a = Sym {unSym :: ReaderT (Env SolverEnv) (StateT SolverEnv (ExceptT String IO)) a }
@@ -292,9 +308,25 @@ symInODHProp = do
 
 renderSMTLog :: [SExp] -> T.Text
 renderSMTLog exps = 
-    mconcat $ intersperse (T.pack "\n") $ map (T.map (\c -> if c == '\n' then ' ' else c)) $ map renderSExp $ reverse exps
+    TL.toStrict $ TB.toLazyText $ mconcat $ intersperse (TB.singleton '\n') $ map buildSExp $ reverse exps
 
-getSMTQuery :: SolverEnv -> Sym () -> Sym () -> Check (Maybe T.Text) -- Returns Nothing if trivially true
+-- A query is hashed and written piece by piece, so the large setup pieces,
+-- which are shared between many queries, are not copied around repeatedly.
+data SMTQuery = SMTQuery {
+    sqPrelude :: T.Text,
+    sqOptions :: T.Text,
+    sqGlobal :: T.Text,
+    sqContext :: T.Text,
+    sqQueryBody :: T.Text
+}
+
+smtQueryChunks :: SMTQuery -> [T.Text]
+smtQueryChunks q = [sqPrelude q, sqOptions q, sqGlobal q, sqContext q, sqQueryBody q <> T.pack "\n (check-sat)"]
+
+hPutSMTQuery :: Handle -> T.Text -> SMTQuery -> IO ()
+hPutSMTQuery h sep q = forM_ (smtQueryChunks q) $ \c -> T.hPutStr h c >> T.hPutStr h sep
+
+getSMTQuery :: SolverEnv -> Sym () -> Sym () -> Check (Maybe SMTQuery) -- Returns Nothing if trivially true
 getSMTQuery senv setup k = do
     env <- ask
     res <- liftIO $ runExceptT $ runStateT (runReaderT (unSym go) env) senv
@@ -302,46 +334,74 @@ getSMTQuery senv setup k = do
       Left _ -> Check $ lift $ throwError env
       Right (_, e) -> do
           if e^.trivialVC then return Nothing else do
-                let prelude = e^.smtPreludeSetup
-                let query = prelude <> (renderSMTLog $ (SApp [SAtom "check-sat"]) : e^.smtLog)
-                return $ Just query
+                opts <- view z3Options
+                let optsLog = map (\(k, v) -> SApp [SAtom "set-option", SAtom k, SAtom v]) (M.assocs opts)
+                return $ Just $ SMTQuery {
+                    sqPrelude = e^.smtPreludeText,
+                    sqOptions = renderSMTLog optsLog,
+                    sqGlobal = e^.smtGlobalText,
+                    sqContext = e^.smtContextText,
+                    sqQueryBody = renderSMTLog (e^.smtLog) }
     where
         go = do
             setup
             k
 
+-- A failed run returns z3's stdout, which is where z3 reports errors.
+runZ3 :: SMTQuery -> IO (Either String T.Text)
+runZ3 q =
+    withCreateProcess (proc "z3" ["-smt2", "-st", "-in"]) { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe } $
+        \mhin mhout mherr ph -> do
+            let (hin, hout, herr) = case (mhin, mhout, mherr) of
+                                      (Just a, Just b, Just c) -> (a, b, c)
+                                      _ -> error "runZ3: missing pipe"
+            forM_ [hin, hout, herr] $ \h -> hSetEncoding h utf8
+            -- Both pipes are drained while stdin is written so that z3 doesn't block.
+            outVar <- newEmptyMVar
+            errVar <- newEmptyMVar
+            _ <- forkIO $ (try (T.hGetContents hout) :: IO (Either SomeException T.Text)) >>= putMVar outVar
+            _ <- forkIO $ (try (T.hGetContents herr) :: IO (Either SomeException T.Text)) >>= putMVar errVar
+            hPutSMTQuery hin (T.pack "\n") q
+            hClose hin
+            out <- either (const T.empty) id <$> takeMVar outVar
+            _ <- takeMVar errVar
+            ec <- waitForProcess ph
+            return $ if ec == ExitSuccess then Right out else Left (T.unpack out)
+
 trimnl :: String -> String
 trimnl = reverse . dropWhile (=='\n') . reverse
 
-queryZ3 :: Bool -> String -> IORef (Map String P.Z3Result) -> IORef (M.Map Int Bool) -> T.Text -> IO (Either String (Bool, Maybe String))
+queryZ3 :: Bool -> String -> IORef (Map String P.Z3Result) -> IORef (M.Map Int Bool) -> SMTQuery -> IO (Either String (Bool, Maybe String))
 queryZ3 logsmt filepath z3results mp q = do
-    let hq = hash q 
+    let hq = hash (smtQueryChunks q)
     m <- readIORef mp
     case M.lookup hq m of
       Just res -> return $ Right (res, Nothing)
-      Nothing -> do 
+      Nothing -> do
           ofn  <- case logsmt of
                     False -> return Nothing
                     True -> do
                         b <- logSMT filepath q
                         return $ Just b
-          resp <- readProcessWithExitCode "z3" ["-smt2", "-st", "-in"] $ T.unpack q
+          resp <- runZ3 q
           case resp of
-            (ExitSuccess, s, _) -> do                           
+            Right sT -> do
+              let s = T.unpack sT
               pres <- P.runParserT P.parseZ3Result () "" $ s
               case pres of
                 Left err -> do
                     putStrLn $ "Z3 parse error on " ++ s
-                    putStrLn $ T.unpack q
+                    hPutSMTQuery stdout (T.pack "\n") q
                     return $ Left $ "Z3 ERROR: " ++ show err
                 Right z3result -> do
                     case ofn of
                       Nothing -> return ()
                       Just b -> modifyIORef z3results ((b, z3result) :)
-                    when (P._isUnsat z3result) $ do 
-                        atomicModifyIORef' mp $ \m -> (M.insert hq True m, ())
+                    -- During the run, cache both proved (unsat) and not proved (sat or unknown) results,
+                    -- but only the unsat results will be written to disk.
+                    atomicModifyIORef' mp $ \m -> (M.insert hq (P._isUnsat z3result) m, ())
                     return $ Right (P._isUnsat z3result, ofn)
-            (_, err, _) -> return (Left err)
+            Left err -> return (Left err)
 
 fromSMT :: SolverEnv -> String -> Sym () -> Sym () -> Check (Maybe String, Bool)
 fromSMT senv s setup k = pushRoutine ("fromSMT: " ++ s) $ do
@@ -372,35 +432,37 @@ raceSMT senv setup k1 k2 = do
           logsmt <- view $ envFlags . fLogSMT
           filepath <- view $ envFlags . fFilePath
           z3rs <- view z3Results
-          p1 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 logsmt filepath z3rs z3mp q1 
-              case resp of
-                  Right (True, fn) -> putMVar sem $ Just (fn, False)
-                  Right (False, _) -> putMVar sem Nothing
-                  Left err -> do
-                      b <- logSMT filepath q1
-                      error $ "Z3 error: " ++ err ++ " logged to " ++ b
-          p2 <- liftIO $ forkIO $ do 
-              resp <- queryZ3 logsmt filepath z3rs z3mp q2
-              case resp of
-                  Right (True, fn) -> putMVar sem $ Just (fn, True)
-                  Right (False, _) -> putMVar sem Nothing 
-                  Left err -> do
-                      b <- logSMT filepath q2 
-                      error $ "Z3 error: " ++ err ++ " logged to " ++ b
+          let side q which = do
+                  resp <- try (queryZ3 logsmt filepath z3rs z3mp q) :: IO (Either SomeException (Either String (Bool, Maybe String)))
+                  case resp of
+                      Right (Right (True, fn)) -> putMVar sem $ Right (Just (fn, which))
+                      Right (Right (False, _)) -> putMVar sem $ Right Nothing
+                      Right (Left err) -> do
+                          b <- logSMT filepath q
+                          putMVar sem $ Left $ "Z3 error: " ++ err ++ " logged to " ++ b
+                      Left exn -> void $ tryPutMVar sem $ Left $ "Z3 error: " ++ show exn
+          p1 <- liftIO $ forkIO $ side q1 False
+          p2 <- liftIO $ forkIO $ side q2 True
           o1 <- liftIO $ takeMVar sem
           case o1 of
-            Just (fn, b) -> do
+            Right (Just (fn, b)) -> do
                 liftIO $ killThread p1
                 liftIO $ killThread p2
-                return (fn, Just b)                        
-            Nothing -> do 
+                return (fn, Just b)
+            _ -> do
                 o2 <- liftIO $ takeMVar sem
                 liftIO $ killThread p1
                 liftIO $ killThread p2
-                case o2 of
-                  Nothing -> return (Nothing, Nothing)
-                  Just (fn, b) -> return (fn, Just b)
+                case (o1, o2) of
+                  (_, Right (Just (fn, b))) -> do
+                      -- o2's proof stands, but still log any error from o1.
+                      case o1 of
+                        Left err -> liftIO $ hPutStrLn stderr err
+                        _ -> return ()
+                      return (fn, Just b)
+                  (Left err, _) -> typeError err
+                  (_, Left err) -> typeError err
+                  _ -> return (Nothing, Nothing)
     return res
 
 
@@ -611,12 +673,14 @@ withSMTVarsTys xs k = do
 
 ---- Helpers for logging 
 
-logSMT :: String -> T.Text -> IO String
+logSMT :: String -> SMTQuery -> IO String
 logSMT filepath q = do
     let f = takeFileName filepath
     createDirectoryIfMissing False ".owl-log"
     fn <- findGoodFileName f
-    writeFile fn $ T.unpack q
+    withFile fn WriteMode $ \h -> do
+        hSetEncoding h utf8
+        hPutSMTQuery h (T.pack "\n; @@CHUNK@@\n") q
     return fn
         where
             findGoodFileName :: String -> IO String
