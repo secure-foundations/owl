@@ -771,6 +771,32 @@ symNameExp ne = do
     n <- getSymName ne
     return $ SApp [SAtom "ValueOf", n]
 
+-- The trigger of a user-written forall: the largest subterm of the body that
+-- applies an uninterpreted function and mentions the bound variable. Left to
+-- the solver, a fact like `forall i. .. a<succ(i)> .. b<i> ..` may be triggered
+-- by `b<i>` alone, and two such facts then produce new index terms forever.
+quantPattern :: String -> SExp -> [SExp]
+quantPattern x body = 
+    case L.sortOn (negate . size) (candidates body) of
+      [] -> []
+      (t : _) -> [t]
+    where
+        -- (`eq` is a function of the prelude, so an equation x == t(i) is triggered by itself)
+        interpreted = ["and", "or", "not", "implies", "=>", "=", "ite", "distinct", "!",
+                       "+", "-", "*", "<", "<=", ">", ">=", "true", "false", "let"]
+        candidates t = case t of
+            SApp (SAtom f : _) | f `elem` ["forall", "exists"] -> []
+            SApp (SAtom f : args) | not (f `elem` interpreted) && mentions t -> [t]
+            SApp ts -> concatMap candidates ts
+            _ -> []
+        mentions t = case t of
+            SAtom y -> y == x
+            SApp ts -> any mentions ts
+            _ -> False
+        size t = case t of
+            SApp ts -> 1 + sum (map size ts)
+            _ -> (1 :: Int)
+
 sForall :: [(SExp, SExp)] -> SExp -> [SExp] -> String -> SExp
 sForall vs bdy pats qid = 
     case vs of
@@ -864,21 +890,17 @@ interpretProp = withPropMemo $ \p -> do
       (PQuantBV q _ ip) -> do
           (x, p) <- liftCheck $ unbind ip
           v <- withSMTVars [x] $ interpretProp p 
-          canTrig <- liftCheck $ quantFree p
-          let trig = if canTrig then [v] else []
           let xname = cleanSMTIdent $ show x
           case q of
-            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v trig $ "forall_" ++ xname
-            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v trig $ "exists_" ++ xname
+            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v (quantPattern xname v) $ "forall_" ++ xname
+            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v [] $ "exists_" ++ xname
       (PQuantIdx q _ ip) -> do
           (i, p') <- liftCheck $ unbind ip
           v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
           let iname = cleanSMTIdent $ show i
-          canTrig <- liftCheck $ quantFree p
-          let trig = if canTrig then [v] else []
           case q of
-            Forall -> return $ sForall [(SAtom iname, indexSort)] v trig $ "forall_" ++ iname 
-            Exists -> return $ sExists [(SAtom iname, indexSort)] v trig $ "exists_" ++ iname
+            Forall -> return $ sForall [(SAtom iname, indexSort)] v (quantPattern iname v) $ "forall_" ++ iname 
+            Exists -> return $ sExists [(SAtom iname, indexSort)] v [] $ "exists_" ++ iname
       (PHonestPKEnc ne a) -> do
           vn <- getSymName ne
           a' <- interpretAExp a

@@ -132,10 +132,19 @@ smtLabelSetup = do
         withSMTIndices (map (\i -> (i, IdxGhost)) is) $ do
             withSMTVars xs $ do 
                 scc <- mkCorrConstraint cc
+                -- A quantified flow is triggered by its conclusion, when that mentions
+                -- every bound variable. Left to the solver, flows between indexed
+                -- families (n<i> to m<succ(i)>) can be instantiated forever.
+                pats <- case cc of
+                          CorrImpl _ l2 | all (`elem` (toListOf fv l2 :: [IdxVar])) is && all (`elem` (toListOf fv l2 :: [DataVar])) xs -> do
+                              ladv <- symLabel advLbl
+                              v2 <- symLabel l2
+                              return [sFlows v2 ladv]
+                          _ -> return []
                 emitAssertion $ sForall 
                     (map (\i -> (SAtom $ show i, indexSort)) is ++ map (\x -> (SAtom $ show x, bitstringSort)) xs)
                     scc
-                    []
+                    pats
                     ("advConstraint_" ++ show j)
 
 mkCorrConstraint :: CorrConstraint -> Sym SExp
