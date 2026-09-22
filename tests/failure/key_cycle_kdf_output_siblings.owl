@@ -1,0 +1,14 @@
+// Two sibling outputs that encrypt each other: a key cycle of length two.
+locality alice
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L : k, 0x, 0x01 -> strict enckey Name(KDF<L;enckey||enckey;1>) || strict enckey Name(KDF<L;enckey||enckey;0>)
+}
+def alice_main() @ alice : Unit =
+    corr_case k in
+    let e0 = kdf<L; enckey||enckey; 0>(get(k), 0x, 0x01) in
+    let e1 = kdf<L; enckey||enckey; 1>(get(k), 0x, 0x01) in
+    let c0 = aenc(e0, e1) in
+    let c1 = aenc(e1, e0) in
+    output c0; output c1;
+    ()

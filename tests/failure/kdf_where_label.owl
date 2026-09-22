@@ -1,0 +1,15 @@
+// A where clause may not mention labels. M1 and M2 have the same inputs and
+// are told apart by a label only, so KDF<M1> and KDF<M2> are one value. L3 and
+// L4, salted by them and keyed by k2, would pass the disjointness check as
+// derived names of different rules, although they have the same inputs.
+locality alice
+name secretmsg : nonce @ alice
+kdf_scope G {
+    name k : kdfkey @ alice
+    name k2 : kdfkey @ alice
+    kdf M1 where ([k] <= adv) : k, 0x, 0x01 -> kdfkey
+    kdf M2 where (!([k] <= adv)) : k, 0x, 0x01 -> kdfkey
+    kdf L3 : KDF<M1;kdfkey;0>, k2, 0x02 -> strict enckey Name(secretmsg)
+    kdf L4 : KDF<M2;kdfkey;0>, k2, 0x02 -> public enckey Name(secretmsg)
+}
+def alice_main() @ alice : Unit = ()

@@ -1,0 +1,26 @@
+// A secret kdfkey of the scope passed for a parameter in a key position makes
+// the instance applicable: with k corrupt and psk secret, L1(get(psk)) names a
+// secret key. The second call has the same inputs under another hint. It is
+// not a match, and not out of bounds either, since L1 cannot be refuted.
+locality alice
+
+name secretmsg : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    name psk : kdfkey @ alice
+    kdf L1(x) : k, x, 0x -> strict enckey Name(secretmsg)
+    kdf L2 : k, 0x, 0x01 -> strict enckey Name(secretmsg)
+}
+
+corr adv ==> [k]
+corr [psk] ==> [secretmsg]
+
+def alice_main() @ alice : Unit =
+    corr_case psk in
+    let r1 = kdf<L1(get(psk)); enckey; 0>(get(k), get(psk), 0x) in
+    let c = aenc(r1, get(secretmsg)) in
+    output c;
+    let r2 = kdf<L2; enckey; 0>(get(k), get(psk), 0x) in
+    output r2;
+    ()

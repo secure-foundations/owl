@@ -1,0 +1,13 @@
+// A rule may bind itself to its scope with k, but it may not also use a name
+// from outside the scope in a key position: the call would be keyed by a
+// secret that the scope's rules say nothing about.
+locality alice
+
+name outside : kdfkey @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L : k, outside, 0x -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit = ()

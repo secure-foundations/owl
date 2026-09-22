@@ -1,0 +1,84 @@
+locality alice
+
+name n<i> : nonce
+name k1<i> : enckey Name(n<succ(i)>)
+
+// TODO: do we want to allow this?
+name k2<i> : enckey Name(k2<succ(i)>)
+
+name data : nonce @ alice
+
+// rec3 chain: a recursive kdfkey chain that also exposes a nonce at each step.
+kdf_scope KRec3 {
+    name k3 : kdfkey @ alice
+
+    rec_kdf<i> L_step<i>
+        | 0        : k3,                          0x, 0x02
+        | succ(i') : KDF<L_step<i'>; kdfkey; 0>,  0x, 0x02 -> strict kdfkey
+
+    rec_kdf<i> L_nonce<i>
+        | 0        : k3,                          0x, 0x01
+        | succ(i') : KDF<L_step<i'>; kdfkey; 0>,  0x, 0x01 -> nonce
+}
+
+// rec4 chain: ODH-seeded recursive kdfkey chain plus a per-step encryption key.
+kdf_scope KRec4 {
+    name a : DH @ alice
+    name b : DH @ alice
+
+    odh L_seed_enc : 0x, dh_ss(a, b), 0x01 -> enckey Name(data)
+    odh L_seed_kdf : 0x, dh_ss(a, b), 0x02 -> strict kdfkey
+
+    rec_kdf<i> L_chain<i>
+        | 0        : KDF<L_seed_kdf; kdfkey; 0>,  0x, 0x02
+        | succ(i') : KDF<L_chain<i'>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}
+
+// Walk the rec3 chain four steps, then extract a nonce.
+def pasta() @ alice : Unit =
+    corr_case k3 in
+    let k = kdf<L_step<0>;                    kdfkey; 0>(get(k3), 0x, 0x02) in
+    let k = kdf<L_step<succ(0)>;              kdfkey; 0>(k,       0x, 0x02) in
+    let k = kdf<L_step<succ(succ(0))>;        kdfkey; 0>(k,       0x, 0x02) in
+    let k = kdf<L_step<succ(succ(succ(0)))>;  kdfkey; 0>(k,       0x, 0x02) in
+    let _ = kdf<L_nonce<succ(succ(succ(succ(0))))>; nonce; 0>(k, 0x, 0x01) in
+    ()
+
+def pasta2<i>(k : Name(KDF<L_step<i>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>; kdfkey; 0>) then Name(KDF<L_step<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>; kdfkey; 0> in
+    kdf<L_step<succ(i)>; kdfkey; 0>(k, 0x, 0x02)
+
+def pasta3<i>(k : Name(KDF<L_step<i>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>; kdfkey; 0>) then Name(KDF<L_step<succ(succ(i))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>; kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>;       kdfkey; 0>(k, 0x, 0x02) in
+    let k = kdf<L_step<succ(succ(i))>; kdfkey; 0>(k, 0x, 0x02) in
+    k
+
+struct Ticket<i> {
+    k : Name(KDF<L_chain<i>; kdfkey; 0>)
+}
+
+enum Maybe<i> {
+    | Just Ticket<session i>
+    | Nothing
+}
+
+def pasta4<i>(ticket : Maybe<session i>) @ alice
+    : if Just?(ticket) then Ticket<session succ(i)> else Ticket<session 0>
+    =
+    case ticket {
+        | Just t =>
+            parse t as Ticket<session i>(k) in
+            corr_case KDF<L_chain<i>; kdfkey; 0> in
+            let new_k = kdf<L_chain<succ(i)>; kdfkey; 0>(k, 0x, 0x02) in
+            Ticket<session succ(i)>(new_k)
+        | Nothing =>
+            corr_case a in
+            corr_case b in
+            let secret = dh_combine(dhpk(get(a)), get(b)) in
+            let seed = kdf<L_seed_kdf; kdfkey; 0>(0x, secret, 0x02) in
+            let k = kdf<L_chain<0>; kdfkey; 0>(seed, 0x, 0x02) in
+            Ticket<session 0>(k)
+    }

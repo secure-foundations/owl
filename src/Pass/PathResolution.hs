@@ -39,7 +39,7 @@ data PathType =
       | PTTy
       | PTNameType
       | PTFunc
-      | PTODH
+      | PTKDFRule
       | PTLoc
       | PTDef
       | PTTbl
@@ -53,7 +53,7 @@ instance Show PathType where
     show PTTy = "type"
     show PTNameType = "nametype"
     show PTFunc = "function"
-    show PTODH = "odh"
+    show PTKDFRule = "KDF rule"
     show PTLoc = "locality"
     show PTDef = "def"
     show PTTbl = "table"
@@ -71,7 +71,7 @@ data ResolveEnv = ResolveEnv {
     _namePaths :: T.Map String ResolvedPath,
     _tyPaths :: T.Map String ResolvedPath,
     _nameTypePaths :: T.Map String ResolvedPath,
-    _odhPaths :: T.Map String ResolvedPath,
+    _kdfRulePaths :: T.Map String ResolvedPath,
     _funcPaths :: T.Map String ResolvedPath,
     _localityPaths :: T.Map String ResolvedPath,
     _defPaths :: T.Map String ResolvedPath,
@@ -246,22 +246,35 @@ resolveDecls (d:ds) =
           p <- view curPath
           ds' <- local (over tyPaths $ T.insert s p) $ resolveDecls ds
           return (d' : ds')
-      DeclODH s b -> do
-          (is, (ne1, ne2, kdfBody)) <- unbind b
-          ne1' <- resolveNameExp ne1
-          ne2' <- resolveNameExp ne2
-          (args, cases) <- unbind kdfBody
-          cases' <- forM cases $ \bpnts -> do 
-              (ixs, (p, nts)) <- unbind bpnts 
-              p' <- resolveProp p
-              nts' <- forM nts $ \(str, nt) -> do
-                  nt' <- resolveNameType nt
-                  return (str, nt')
-              return $ bind ixs $ (p', nts')
-          let d' = Spanned (d^.spanOf) $ DeclODH s $ bind is (ne1', ne2', bind args cases')
+      -- A kdf_scope is a pure container: its declarations are resolved as if
+      -- they were at top level. Rules may refer to later rules of the scope.
+      DeclKDFScope s inner -> do
+          forM_ inner $ \d' -> case d'^.val of
+              DeclInclude _ -> resolveError (d'^.spanOf) "include not allowed inside kdf_scope"
+              DeclKDFScope _ _ -> resolveError (d'^.spanOf) "kdf_scope blocks cannot be nested"
+              _ -> return ()
           p <- view curPath
-          ds' <- local (over odhPaths $ T.insert s p) $ resolveDecls ds
-          return (d' : ds')
+          let labels = [(l, p) | Spanned _ (DeclKDFRule l _) <- inner]
+          ds' <- local (over kdfRulePaths $ T.insertMany labels) $ resolveDecls (inner ++ ds)
+          let (inner', rest') = splitAt (length inner) ds'
+          return $ (Spanned (d^.spanOf) $ DeclKDFScope s inner') : rest'
+      DeclKDFRule l b -> do
+          (params, rule) <- unbind b
+          wh' <- resolveProp (_kdfWhere rule)
+          let resolveCase (x, y, z) = (,,) <$> resolveAExpr x <*> resolveAExpr y <*> resolveAExpr z
+          cases' <- case _kdfCases rule of
+                      KDFOneCase c -> KDFOneCase <$> resolveCase c
+                      KDFRecCases i c0 bc1 -> do
+                          c0' <- resolveCase c0
+                          (i', c1) <- unbind bc1
+                          c1' <- resolveCase c1
+                          return $ KDFRecCases i c0' (bind i' c1')
+          outs' <- forM (_kdfOutputs rule) $ \(str, nt) -> (,) str <$> resolveNameType nt
+          p <- view curPath
+          local (over kdfRulePaths $ T.insert l p) $ do
+              let d' = Spanned (d^.spanOf) $ DeclKDFRule l $ bind params $ KDFRule (_kdfIsODH rule) wh' cases' outs'
+              ds' <- resolveDecls ds
+              return (d' : ds')
       DeclDetFunc s _ _ -> do
           let d' = d
           p <- view curPath
@@ -352,16 +365,7 @@ resolveNameType e = do
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
                       return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
-                  NT_KDF pos b -> do
-                      (((s, x), (s2, y), (s3, z)), cases) <- unbind b
-                      cases' <- forM cases $ \bpnts -> do 
-                          (is, (p, nts)) <- unbind bpnts
-                          p' <- resolveProp p
-                          nts' <- forM nts $ \(str, nt) -> do
-                              nt' <- resolveNameType nt
-                              return (str, nt')
-                          return $ bind is (p', nts')
-                      return $ NT_KDF pos $ bind ((s, x), (s2, y), (s3, z)) cases'
+                  NT_KDF -> return t
 
 resolveTy :: Ty -> Resolve Ty
 resolveTy e = do
@@ -420,12 +424,15 @@ resolveNameExp ne =
             p' <- resolvePath (ne^.spanOf) PTName p
             as' <- mapM resolveAExpr as
             return $ Spanned (ne^.spanOf) $ NameConst s p' as'
-        KDFName a b c nks j nt ib -> do
-            a' <- resolveAExpr a
-            b' <- resolveAExpr b
-            c' <- resolveAExpr c
-            nt' <- resolveNameType nt
-            return $ Spanned (ne^.spanOf) $ KDFName a' b' c' nks j nt' ib
+        KDFName r nks j -> do
+            r' <- resolveKDFRuleRef (ne^.spanOf) r
+            return $ Spanned (ne^.spanOf) $ KDFName r' nks j
+
+resolveKDFRuleRef :: Ignore Position -> KDFRuleRef -> Resolve KDFRuleRef
+resolveKDFRuleRef pos (KDFRuleRef l ps as) = do
+    l' <- resolvePath pos PTKDFRule l
+    as' <- mapM resolveAExpr as
+    return $ KDFRuleRef l' ps as'
 
 resolveFuncParam :: FuncParam -> Resolve FuncParam
 resolveFuncParam f = 
@@ -469,7 +476,7 @@ resolvePath' pos pt p =
                       PTName -> view namePaths
                       PTTy -> view tyPaths
                       PTNameType -> view nameTypePaths
-                      PTODH -> view odhPaths
+                      PTKDFRule -> view kdfRulePaths
                       PTFunc -> view funcPaths
                       PTLoc -> view localityPaths
                       PTPredicate -> view predPaths
@@ -560,6 +567,9 @@ resolveLemma pos lem =
       LemmaCrossDH n1 -> do
           n1' <- resolveNameExp n1
           return $ LemmaCrossDH n1' 
+      LemmaSecretNeq -> return lem
+      LemmaDHExp n1 n2 -> LemmaDHExp <$> resolveNameExp n1 <*> resolveNameExp n2
+      LemmaKDFLabel n -> LemmaKDFLabel <$> resolveNameExp n
 
 
 resolveCryptOp :: Ignore Position -> CryptOp -> Resolve CryptOp
@@ -568,7 +578,9 @@ resolveCryptOp pos cop =
       CLemma l -> do
           l' <- resolveLemma pos l
           return $ CLemma l'
-      CKDF x y nks i -> return cop
+      CKDF hints nks i -> do
+          hints' <- mapM (resolveKDFRuleRef pos) hints
+          return $ CKDF hints' nks i
       CAEnc -> return CAEnc
       CKEMDecaps -> return cop
       CEncStAEAD p is xpat -> do
@@ -784,11 +796,6 @@ resolveProp p =
           ne' <- resolveNameExp ne
           a' <- resolveAExpr a
           return $ Spanned (p^.spanOf) $ PAADOf ne' a'
-      PInODH s ikm info -> do
-          s' <- resolveAExpr s
-          ikm' <- resolveAExpr ikm
-          info' <- resolveAExpr info
-          return $ Spanned (p^.spanOf) $ PInODH s' ikm' info'
       PLetIn a xp -> do
           a' <- resolveAExpr a
           (x, p) <- unbind xp

@@ -1,0 +1,10 @@
+// The exponent must have name type DH.
+
+locality alice
+
+name k : nonce @ alice
+name m : nonce @ alice
+
+def alice_main(y : Data<adv>) @ alice : Unit =
+    dh_exp_lemma<k, m>(y);
+    ()

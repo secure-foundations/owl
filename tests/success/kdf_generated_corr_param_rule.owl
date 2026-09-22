@@ -1,0 +1,14 @@
+// With k corrupt, no key position of L1(0x01) holds a secret: a parameter
+// counts only when its value is a secret kdfkey of the scope. The instance is
+// not applicable, so its derived name is corrupt without a user corr flow.
+
+locality alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L1(x) : k, x, 0x -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit =
+    assert ((corr(k) /\ sec(KDF<L1(0x01);kdfkey;0>)) ==> False);
+    ()

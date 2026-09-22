@@ -325,6 +325,15 @@ concreteLength (CUsizePlus a b) = do
     b' <- concreteLength b
     return $ a' + b'
 
+-- prelude.smt2 bounds the lengths of the kdfInjKinds below by the uninterpreted
+-- security parameter MinKDFSliceLen. The concrete key sizes are therefore an
+-- upper bound on the values it can take for the extracted code.
+reportMaxKDFSliceLen :: ExtractionMonad t ()
+reportMaxKDFSliceLen = do
+    ls <- forM kdfInjKinds $ \nk -> fLenOfNameKind nk >>= concreteLength . lowerFLen
+    debugPrint $ "Security parameter: with these concrete key sizes, MinKDFSliceLen (prelude.smt2) is at most " 
+        ++ show (minimum ls) ++ " bytes (the minimum over kdfkey, enckey, mackey)"
+
 lowerLenConst :: String -> String
 lowerLenConst s = map toUpper s ++ "_SIZE"
 

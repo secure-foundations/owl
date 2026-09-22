@@ -1,0 +1,21 @@
+// Output types of LA<i> and LB<i> mention each other at the same index.
+locality alice
+kdf_scope G {
+    name k0 : kdfkey @ alice
+    rec_kdf<i> LB<i>
+        | 0        : k0,                                 0x, 0x01
+        | succ(i') : KDF<LA<i'>; kdfkey || enckey; 0>,   0x, 0x01
+        -> strict kdfkey || enckey Name(KDF<LA<i>; kdfkey || enckey; 0>)
+    rec_kdf<i> LA<i>
+        | 0        : KDF<LB<0>; kdfkey || enckey; 0>,    0x, 0x02
+        | succ(i') : KDF<LB<i>; kdfkey || enckey; 0>,    0x, 0x02
+        -> strict kdfkey || enckey Name(KDF<LB<i>; kdfkey || enckey; 0>)
+}
+def alice_main() @ alice : Unit =
+    corr_case k0 in
+    let kb0 = kdf<LB<0>; kdfkey || enckey; 0>(get(k0), 0x, 0x01) in
+    let ka0 = kdf<LA<0>; kdfkey || enckey; 0>(kb0, 0x, 0x02) in
+    let ea0 = kdf<LA<0>; kdfkey || enckey; 1>(kb0, 0x, 0x02) in
+    let c = aenc(ea0, kb0) in
+    output c to endpoint(alice);
+    ()

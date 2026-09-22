@@ -1,0 +1,20 @@
+// The zero case of LR<i> takes the output of L1<0> as its ikm; L1_bad's ikm
+// is `dh_ss(X, Y) ++ t` for any t. A distinguishing info constant separates
+// them. Compare tests/failure/rec_kdf_rules_not_separated.owl.
+
+locality alice
+
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ alice
+    name K<i> : kdfkey @ alice
+
+    odh L1<i> : K<i>, dh_ss(X, Y), 0x01 -> strict kdfkey
+    odh L1_bad(t) : 0x, dh_ss(X, Y) ++ t, 0x02 -> strict kdfkey
+
+    rec_kdf<i> LR<i>
+        | 0 : 0x, KDF<L1<i>;kdfkey;0>, 0x03
+        | succ(i') : KDF<LR<i'>;kdfkey;0>, KDF<L1<i>;kdfkey;0>, 0x03 -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit = ()

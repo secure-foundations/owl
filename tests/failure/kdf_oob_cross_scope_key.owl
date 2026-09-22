@@ -1,0 +1,29 @@
+// The salt k2 is a key of S2. Refuting the rules of the hinted scope S1 does
+// not make the output public: it is the secret KDF<L2;enckey;0>.
+
+locality alice
+
+name n1 : nonce @ alice
+name n2 : nonce @ alice
+
+kdf_scope S1 {
+    name k : kdfkey @ alice
+    kdf L1 : k, 0x, 0x -> strict enckey Name(n1)
+}
+kdf_scope S2 {
+    name k2 : kdfkey @ alice
+    kdf L2 : k2, 0x, 0x -> strict enckey Name(n2)
+}
+
+corr [k] ==> [n1]
+corr [k2] ==> [n2]
+
+def honest() @ alice : Unit =
+    corr_case k2 in
+    let ek = kdf<L2; enckey; 0>(get(k2), 0x, 0x) in
+    let c = aenc(ek, get(n2)) in
+    output c
+
+def leak() @ alice : Unit =
+    let h = kdf<L1; enckey; 0>(get(k2), 0x, 0x) in
+    output h

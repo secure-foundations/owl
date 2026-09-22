@@ -132,13 +132,11 @@ data SolverEnv = SolverEnv {
     _symIndexEnv :: M.Map IdxVar SExp,
     _symLabelVarEnv :: M.Map (AlphaOrd ResolvedPath) SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
-    _kdfPermCounter :: M.Map (AlphaOrd NameType) SExp,
     _memoInterpretAExp :: M.Map (AlphaOrd AExpr) SExp,
     _memoInterpretProp :: M.Map (AlphaOrd Prop) SExp,
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String (SExp, Int),
     _predInterps :: M.Map String SExp,
-    _inODHInterp :: Maybe SExp,
     _smtLog :: [SExp],
     -- The setup text is kept in pieces, which are never joined (see SMTQuery):
     _smtPreludeText :: T.Text,  -- contents of prelude.smt2
@@ -151,7 +149,7 @@ data SolverEnv = SolverEnv {
                                     
 type Check = Check' SolverEnv
 
-initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty Nothing [] mempty mempty (0, 0, []) mempty True 0
+initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] mempty mempty (0, 0, []) mempty True 0
 
 
 newtype Sym a = Sym {unSym :: ReaderT (Env SolverEnv) (StateT SolverEnv (ExceptT String IO)) a }
@@ -282,29 +280,6 @@ mkPred pth@(PRes (PDot p s)) = do
                         return ()
                 predInterps %= (M.insert sn (SAtom sn))
                 return $ SAtom sn
-
-symInODHProp :: Sym SExp
-symInODHProp = do
-    o <- use inODHInterp 
-    case o of
-      Just v -> return v
-      Nothing -> do
-          x1 <- freshSMTName
-          x2 <- freshSMTName
-          x3 <- freshSMTName
-          withSMTVars [s2n x1, s2n x2, s2n x3] $ do
-              p <- liftCheck $ inODHProp (aeVar' $ s2n x1) (aeVar' $ s2n x2) (aeVar' $ s2n x3)
-              v <- interpretProp p
-              emitRaw $ "(declare-fun %inODHProp (Bits Bits Bits) Bool)"
-              let ax = sForall 
-                         [(SAtom x1, bitstringSort), (SAtom x2, bitstringSort), (SAtom x3, bitstringSort)]
-                         (SApp [SAtom "=", sApp [SAtom "%inODHProp", SAtom x1, SAtom x2, SAtom x3], v])
-                         [sApp [SAtom "%inODHProp", SAtom x1, SAtom x2, SAtom x3]]
-                         ("inODHDef")
-              emitAssertion ax
-              return $ SAtom "%inODHProp"
-              assign inODHInterp $ Just $ SAtom "%inODHProp"
-              return $ SAtom "%inODHProp"
 
 renderSMTLog :: [SExp] -> T.Text
 renderSMTLog exps = 
@@ -510,12 +485,6 @@ sNotIn x (y:ys) = sAnd [sEq (SAtom "FALSE") (SApp [SAtom "eq", x, y]), sNotIn x 
 sDistinct :: [SExp] -> SExp
 sDistinct [] = sTrue
 sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
-
-sAtMostOne :: [SExp] -> SExp
-sAtMostOne xs = 
-    let sum = SApp $ SAtom "+" : (map (\x -> SApp [SAtom "ite", x, SAtom "1", SAtom "0"]) xs) 
-    in
-    SApp [SAtom "<=", sum, SAtom "1"]
 
 makeHex :: String -> Sym SExp
 makeHex s = do
@@ -738,16 +707,6 @@ sPlus xs = SApp $ (SAtom "+") : xs
 sNameKindLength :: SExp -> SExp
 sNameKindLength n = SApp [SAtom "NameKindLength", n]
 
-getKDFArgs :: SMTNameKindOf a => AExpr -> AExpr -> AExpr -> [a] -> Int -> Sym (SExp, SExp, SExp, SExp, SExp)
-getKDFArgs a b c nks j = do
-    va <- interpretAExp a
-    vb <- interpretAExp b
-    vc <- interpretAExp c
-    nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-    let start = sPlus $ take j nk_lengths
-    let segment = nk_lengths !! j
-    return (va, vb, vc, start, segment)
-
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
     ne' <- liftCheck $ normalizeNameExp ne
@@ -761,14 +720,16 @@ getSymName ne = do
           v <- getSymName ne
           vi <- symIndex i
           return $ SApp [SAtom "KEMName", v, vi]
-      KDFName a b c nks j nt _ -> do
-          va <- interpretAExp a
-          vb <- interpretAExp b
-          vc <- interpretAExp c
-          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-          let start = sPlus $ take j nk_lengths
-          let segment = nk_lengths !! j
-          return $ SApp [SAtom "KDFName", va, vb, vc, start, segment]
+      KDFName (KDFRuleRef l (is1, is2) as) _ j -> do
+        sl <- smtName l
+        vs1 <- mapM symIndex is1
+        vs2 <- mapM symIndex is2
+        vas <- mapM interpretAExp as
+        return $ sKDFName sl (vs1 ++ vs2 ++ vas) (SAtom $ show j)
+
+-- Output j of the instance of KDF rule l with the given parameters
+sKDFName :: String -> [SExp] -> SExp -> SExp
+sKDFName l params j = SApp $ (SAtom $ "%kdf_" ++ l) : params ++ [j]
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do
@@ -876,12 +837,6 @@ interpretProp = withPropMemo $ \p -> do
       PAADOf ne a -> do
           p <- liftCheck $ extractAAD ne a
           interpretProp p
-      PInODH s ikm info -> do
-          pv <- symInODHProp
-          v1 <- interpretAExp s
-          v2 <- interpretAExp ikm
-          v3 <- interpretAExp info
-          return $ sApp [pv, v1, v2, v3]
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
@@ -964,7 +919,7 @@ instance SMTNameKindOf NameType where
           NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
-          NT_KDF _ _ -> return $ SAtom "KDFkey"
+          NT_KDF -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
           NT_Nonce l -> do
               let v = lengthConstant l 

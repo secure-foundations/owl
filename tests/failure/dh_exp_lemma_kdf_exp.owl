@@ -1,0 +1,14 @@
+// The exponent must be a base name, not a KDF-derived one.
+
+locality alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L : k, 0x01, 0x -> strict kdfkey
+}
+
+name m : nonce @ alice
+
+def alice_main(y : Data<adv>) @ alice : Unit =
+    dh_exp_lemma<KDF<L; kdfkey; 0>, m>(y);
+    ()

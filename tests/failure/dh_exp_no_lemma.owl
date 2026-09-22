@@ -1,0 +1,10 @@
+// y^S != m is not available without dh_exp_lemma.
+
+locality alice
+
+name S : DH @ alice
+name m : nonce @ alice
+
+def alice_main(y : Data<adv>) @ alice : Unit =
+    assert (sec(S) ==> dh_combine(y, get(S)) != get(m));
+    ()

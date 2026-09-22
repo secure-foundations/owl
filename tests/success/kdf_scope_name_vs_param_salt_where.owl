@@ -1,0 +1,17 @@
+// The where clause on B excludes the salt of A, so the rules are disjoint.
+
+locality alice
+
+kdf_scope G {
+    name k  : kdfkey @ alice
+    name k2 : kdfkey @ alice
+    kdf A    : k2, k, 0x -> strict kdfkey
+    kdf B(x) where (x != get(k2)) : x, k, 0x -> strict kdfkey
+}
+
+def main() @ alice : Unit =
+    corr_case k in
+    corr_case k2 in
+    let a = kdf<A; kdfkey; 0>(get(k2), get(k), 0x) in
+    let b = kdf<B(0x01); kdfkey; 0>(0x01, get(k), 0x) in
+    ()

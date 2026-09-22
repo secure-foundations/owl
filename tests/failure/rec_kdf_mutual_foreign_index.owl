@@ -1,0 +1,17 @@
+locality alice
+
+// SHOULD FAIL: LB's zero case references LA at a foreign index parameter j.
+// With forward references this is a cycle: LB<0,j> -> LA<j> -> LB<j-1> ... -> LB<0,j>.
+kdf_scope Bad {
+    name k0<j> : kdfkey @ alice
+
+    rec_kdf<i> LB<i,j>
+        | 0        : KDF<LA<j>; kdfkey; 0>,   0x, 0x01
+        | succ(i') : KDF<LA<i'>; kdfkey; 0>,  0x, 0x01
+        -> strict kdfkey
+
+    rec_kdf<i> LA<i>
+        | 0        : k0<0>,                     0x, 0x02
+        | succ(i') : KDF<LB<i',i'>; kdfkey; 0>, 0x, 0x02
+        -> strict kdfkey
+}

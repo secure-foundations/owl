@@ -1,0 +1,25 @@
+// Positive test: func and predicate declarations are allowed inside kdf_scope.
+// The predicate defined inside the scope should be visible to outer defs.
+
+locality alice
+
+name n : nonce @ alice
+
+func parse
+    arity 1
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    func mkinfo
+        arity 1
+
+    predicate p(x) = (x == get(n))
+
+    kdf L1 : k, 0x, 0x01 -> enckey Name(n)
+}
+
+corr [k] ==> [n]
+
+def main(x : (a:Data<adv>{p[a]})) @ alice : Unit =
+    assert(x == get(n))

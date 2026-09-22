@@ -1,0 +1,19 @@
+locality alice
+
+kdf_scope KChain {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> L_step<i>
+        | 0 : k0, 0x, 0x02
+        | succ(i') : KDF<L_step<i'>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}
+
+// SHOULD FAIL: hint index is succ(succ(i)) but salt is K<i>.
+// L_step<succ(succ(i))> expects the salt K<succ(i)>, so the hint does not
+// match. The call is an instance of L_step<succ(i)>, so it is not out of
+// bounds either.
+def bad_skip_step<i>(k_i : SecName(KDF<L_step<i>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<i>; kdfkey; 0>) then SecName(KDF<L_step<succ(succ(i))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<i>; kdfkey; 0> in
+    let k = kdf<L_step<succ(succ(i))>; kdfkey; 0>(k_i, 0x, 0x02) in
+    k

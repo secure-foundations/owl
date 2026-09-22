@@ -1,0 +1,19 @@
+// With all three rules on the same info, nothing separates the output of L1
+// from `dh_ss(X, Y) ++ t`, so LR1 and L1_bad may overlap.
+// Compare tests/success/kdf_rules_info_separated.owl.
+
+locality alice
+
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ alice
+    name Z : DH @ alice
+
+    odh L1 : 0x, dh_ss(X, Y) ++ dh_ss(X, Z), 0x -> strict kdfkey
+    odh L1_bad(t) where (t != dh_combine(dhpk(get(X)), get(Z)))
+      : 0x, dh_ss(X, Y) ++ t, 0x -> strict kdfkey
+
+    kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit = ()

@@ -71,7 +71,9 @@ globalSMTSetup key = do
             put initSolverEnv
             emitComment $ T.pack $ "SMT SETUP: module-level declarations and axioms"
             setupAllFuncs
+            declareKDFRules
             setupNameEnvRO
+            setupKDFRules
             smtLabelSetup
             log <- use smtLog
             prelude <- liftIO $ T.readFile "prelude.smt2"
@@ -134,6 +136,14 @@ setupNameEnvRO = do
 
                         let nameExp = mkSpanned $ NameConst (map (\x -> IVar (ignore def) (ignore $ show x) x) is, map (\x -> IVar (ignore def) (ignore $ show x) x) ps) (PRes pth) [] 
 
+                        -- No applicable KDF rule instance derives the value of a base name
+                        scopes <- kdfScopeTags
+                        forM_ scopes $ \tag -> 
+                            emitAssertion $ sForall ivs
+                                (sEq (SApp [SAtom tag, sValue $ sApp (sn : (map fst ivs))]) (SAtom "0"))
+                                [sApp (sn : (map fst ivs))]
+                                ("kdfTag_" ++ (T.unpack $ renderSExp sn))
+
                         lAxs <- nameDefFlows nameExp nt
                         emitAssertion $ sForall (ivs)
                             lAxs
@@ -151,6 +161,102 @@ setupNameEnvRO = do
             --            vsolv <- interpretProp solvability
             --            let ivs = map (\i -> (SAtom (show i), indexSort)) (is ++ ps)
             --            emitAssertion $ sForall ivs vsolv [sApp (sn : map fst ivs)] ("solvability_" ++ show sn)  
+
+-- %kdftag_S is a trick for stating "different rules never produce the same
+-- value" with one axiom per rule, instead of one axiom per pair of rules.
+-- For each kdf_scope S, %kdftag_S(v) is the identifier of the rule of S that
+-- has an applicable instance with value v, and 0 if there is none. That this
+-- is well defined is what the disjointness checks on the rules of S establish.
+kdfScopeTag :: ResolvedPath -> KDFRuleDef -> Sym String
+kdfScopeTag pth rd = do
+    s <- smtName $ PRes $ PDot (pathPrefix pth) (_kdfRuleScope rd)
+    return $ "%kdftag_" ++ s
+
+kdfScopeTags :: Sym [String]
+kdfScopeTags = do
+    rules <- liftCheck collectKDFRules
+    nub <$> mapM (uncurry kdfScopeTag) rules
+
+-- The theory of KDF-derived names (docs/kdf-scopes.md, section 6). Output j of
+-- the instance of rule L with parameters p is the name %kdf_L(p, j); the
+-- instance is applicable (where clause and a secret input) when %app_L(p).
+declareKDFRules :: Sym ()
+declareKDFRules = do
+    rules <- liftCheck collectKDFRules
+    tags <- kdfScopeTags
+    forM_ tags $ \tag -> emit $ SApp [SAtom "declare-fun", SAtom tag, SApp [bitstringSort], SAtom "Int"]
+    forM_ rules $ \(pth, rd) -> do
+        sl <- smtName (PRes pth)
+        let (((is, ps), xs), _) = unsafeUnbind $ _kdfRuleBody rd
+        let sorts = replicate (length is + length ps) indexSort ++ replicate (length xs) bitstringSort
+        emit $ SApp [SAtom "declare-fun", SAtom ("%kdf_" ++ sl), SApp (sorts ++ [SAtom "Int"]), nameSort]
+        emit $ SApp [SAtom "declare-fun", SAtom ("%app_" ++ sl), SApp sorts, SAtom "Bool"]
+
+setupKDFRules :: Sym ()
+setupKDFRules = do
+    rules <- liftCheck collectKDFRules
+    -- A rule has no theory until it has passed its declaration-time checks
+    forM_ (zip [1 :: Int ..] rules) $ \(ruleId, (pth, rd)) -> when (_kdfRuleChecked rd) $ do
+        sl <- smtName (PRes pth)
+        let sApp' ps = sApp $ SAtom ("%app_" ++ sl) : ps
+        let idxVar i = SAtom $ cleanSMTIdent $ show i
+        let dataVar x = SAtom $ cleanSMTIdent $ show x
+        (((is, ps), xs), rule) <- liftCheck $ unbind $ _kdfRuleBody rd
+        let outs = _kdfOutputs rule
+        -- Facts about all instances of the rule
+        nks <- withSMTIndices (map (\i -> (i, IdxGhost)) (is ++ ps)) $ withSMTVars xs $ do
+            nks <- liftCheck $ mapM (getNameKind . snd) outs
+            let qvars = map (\i -> (idxVar i, indexSort)) (is ++ ps) ++ map (\x -> (dataVar x, bitstringSort)) xs
+            let params = map fst qvars
+            let ax nm body j = emitAssertion $ sForall qvars body [sKDFName sl params (SAtom $ show j)] (nm ++ "_" ++ sl ++ "_" ++ show j)
+            vwhere <- interpretProp $ _kdfWhere rule
+            forM_ (zip [0 :: Int ..] outs) $ \(j, (strictness, nt)) -> do
+                let ne = mkSpanned $ KDFName (KDFRuleRef (PRes pth) (map mkIVar is, map mkIVar ps) (map aeVar' xs)) nks j
+                let nm = sKDFName sl params (SAtom $ show j)
+                nk <- liftCheck $ smtNameKindOf nt
+                ax "kdf_kind" (SApp [SAtom "HasNameKind", nm, nk]) j
+                -- Only an applicable instance is secret
+                vcorr <- symLabel (nameLbl ne) >>= \l -> sFlows l <$> symLabel advLbl
+                ax "kdf_label" (case strictness of
+                                  KDFPub -> vcorr
+                                  _ -> sImpl (sNot $ sApp' params) vcorr) j
+                flows <- nameDefFlows ne nt
+                ax "kdf_flows" (sImpl vwhere flows) j
+                -- The value of an applicable instance is not equal to the value of any other instance,
+                -- or of any other base name
+                tagFn <- kdfScopeTag pth rd
+                let tag = SApp [SAtom tagFn, sValue nm]
+                ax "kdf_tag" (sAnd2 (sImpl (sApp' params) (sEq tag (SAtom $ show ruleId)))
+                                    (sOr (sEq tag (SAtom $ show ruleId)) (sEq tag (SAtom "0")))) j
+            -- Two instances, one of them applicable, with the same value are the same instance
+            let qvars2 = map (\(v, srt) -> (SAtom $ T.unpack (renderSExp v) ++ "_2", srt)) qvars
+            let (j1, j2) = (SAtom "%j1", SAtom "%j2")
+            let (nm1, nm2) = (sKDFName sl params j1, sKDFName sl (map fst qvars2) j2)
+            emitAssertion $ sForall (qvars ++ qvars2 ++ [(j1, SAtom "Int"), (j2, SAtom "Int")])
+                (sImpl (sAnd2 (sOr (sApp' params) (sApp' $ map fst qvars2))
+                              (sEq (SAtom "TRUE") (SApp [SAtom "eq", sValue nm1, sValue nm2])))
+                       (sAnd $ sEq j1 j2 : zipWith sEq params (map fst qvars2)))
+                [nm1, nm2]
+                ("kdf_self_disj_" ++ sl)
+            return nks
+        -- Facts about each case of the rule
+        insts <- liftCheck $ kdfInsts (PRes pth)
+        forM_ (zip [0 :: Int ..] insts) $ \(c, binst) -> do
+            ((vs, xs'), inst) <- liftCheck $ unbind binst
+            withSMTIndices (map (\i -> (i, IdxGhost)) vs) $ withSMTVars xs' $ do
+                let qvars = map (\i -> (idxVar i, indexSort)) vs ++ map (\x -> (dataVar x, bitstringSort)) xs'
+                let KDFRuleRef _ (ris, rps) ras = _kiRef inst
+                params <- liftM2 (++) (mapM symIndex (ris ++ rps)) (mapM interpretAExp ras)
+                vwhere <- interpretProp $ _kiWhere inst
+                vapp <- interpretProp $ _kiApp inst
+                emitAssertion $ sForall qvars (sEq (sApp' params) (sAnd2 vwhere vapp)) [sApp' params] 
+                    ("kdf_app_" ++ sl ++ "_" ++ show c)
+                let (salt, ikm, info) = _kiCase inst
+                forM_ [0 .. length outs - 1] $ \j -> do
+                    let nm = sKDFName sl params (SAtom $ show j)
+                    v <- interpretAExp $ mkSpanned $ AEKDF salt ikm info nks j
+                    emitAssertion $ sForall qvars (sImpl vwhere (sEq (sValue nm) v)) [nm]
+                        ("kdf_valueof_" ++ sl ++ "_" ++ show c ++ "_" ++ show j)
 
 mkCrossDisjointness :: [SMTNameDef] -> Sym ()
 mkCrossDisjointness fdfs = do
@@ -340,18 +446,6 @@ setupAllFuncs = do
     ufs <- liftCheck $ collectUserFuncs
     mapM_ setupUserFunc $ map (\(k, v) -> (pathPrefix k, v)) ufs 
 
--- kdfPerm va vb vc start segment nt_ = do
---     nt <- liftCheck $ normalizeNameType nt_
---     permctr <- use kdfPermCounter
---     case M.lookup (AlphaOrd nt) permctr of
---       Just nv -> return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, nv]
---       Nothing -> do
---           nv <- getFreshCtr
---           kdfPermCounter %= M.insert (AlphaOrd nt) (SAtom $ show nv)
---           return $ SApp [SAtom "KDFPerm", va, vb, vc, start, segment, (SAtom $ show nv)]
-
-
-
 smtTy :: SExp -> Ty -> Sym SExp
 smtTy xv t = 
     case t^.val of
@@ -371,14 +465,8 @@ smtTy xv t =
           return $ vt `sAnd2` v2
       TOption t -> sMkEnumCond xv [tUnit, t]
       TName n -> do
-          kdfRefinement <- case n^.val of
-                             KDFName a b c nks j nt _ -> do 
-                                 (va, vb, vc, start, segment) <- getKDFArgs a b c nks j
-                                 -- p <- kdfPerm va vb vc start segment nt
-                                 return $ xv `sEq` (SApp [SAtom "KDF", va, vb, vc, start, segment])
-                             _ -> return sTrue
           vn <- getSymName n
-          return $ sAnd2 kdfRefinement (xv `sHasType` (SApp [SAtom "TName", vn]))
+          return $ xv `sHasType` (SApp [SAtom "TName", vn])
       TVK n -> do
           vn <- symNameExp n
           vk <- getTopLevelFunc ("vk")
@@ -530,20 +618,6 @@ symAssert p = pushRoutine ("symAssert(" ++ show (owlpretty p) ++ ")") $ do
     b <- interpretProp p
     emitComment $ T.pack $ "Proving prop " ++ show (owlpretty p)
     emitToProve b
-
-disjointProps :: [Prop] -> Sym ()
-disjointProps ps = do
-    vps <- mapM interpretProp ps
-    emitToProve $ sAtMostOne vps
-
-symEqNameExp :: NameExp -> NameExp -> Check Bool
-symEqNameExp ne1 ne2 = do
-    (_, b) <- smtTypingQuery "symEqNameExp" $ do
-        s1 <- symNameExp ne1
-        s2 <- symNameExp ne2
-        emitToProve $ sEq s1 s2 
-    return b
-
 
 symDecideProp :: Prop -> Check (Maybe String, Maybe Bool) 
 symDecideProp p = do

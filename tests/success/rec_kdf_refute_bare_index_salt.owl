@@ -1,0 +1,18 @@
+// The call matches no rule. Refuting L's succ case, whose salt is L at the
+// case's own bare index i', needs i' split into 0 / succ so the salt unfolds.
+
+locality alice
+
+kdf_scope G {
+    name k0 : kdfkey @ alice
+
+    kdf M : k0, 0x03, 0x -> strict kdfkey
+
+    rec_kdf<i> L<i>
+        | 0        : k0,                    0x01, 0x
+        | succ(i') : KDF<L<i'>; kdfkey; 0>, 0x02, 0x
+        -> strict kdfkey
+}
+
+def f(m : Name(KDF<M; kdfkey; 0>)) @ alice : Data<adv> ||kdfkey|| =
+    kdf<L<succ(0)>; kdfkey; 0>(m, 0x02, 0x)

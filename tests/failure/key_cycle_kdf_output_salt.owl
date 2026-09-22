@@ -1,0 +1,12 @@
+// The output key would encrypt its own salt k0.
+locality alice
+kdf_scope G {
+    name k0 : kdfkey @ alice
+    kdf L : k0, 0x, 0x01 -> enckey Name(k0)
+}
+def alice_main() @ alice : Unit =
+    corr_case k0 in
+    let ek = kdf<L; enckey; 0>(get(k0), 0x, 0x01) in
+    let c = aenc(ek, get(k0)) in
+    output c to endpoint(alice);
+    ()

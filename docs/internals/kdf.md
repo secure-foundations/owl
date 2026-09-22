@@ -1,6 +1,9 @@
 KDFs in Owl
 ===========
 
+> **Superseded.** This describes the old `kdf {..}` / `dualkdf {..}` / `odh`
+> name types, which `kdf_scope` replaced. See [../kdf-scopes.md](../kdf-scopes.md).
+
 
 ## Concrete syntax
 

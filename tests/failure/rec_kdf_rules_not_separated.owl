@@ -1,0 +1,20 @@
+// tests/success/rec_kdf_rules_info_separated.owl with all rules on the same
+// info: nothing separates the output of L1<0> from `dh_ss(X, Y) ++ t`, so the
+// disjointness check of the zero case of LR against L1_bad fails.
+
+locality alice
+
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ alice
+    name K<i> : kdfkey @ alice
+
+    odh L1<i> : K<i>, dh_ss(X, Y), 0x -> strict kdfkey
+    odh L1_bad(t) : 0x, dh_ss(X, Y) ++ t, 0x -> strict kdfkey
+
+    rec_kdf<i> LR<i>
+        | 0 : 0x, KDF<L1<i>;kdfkey;0>, 0x
+        | succ(i') : KDF<LR<i'>;kdfkey;0>, KDF<L1<i>;kdfkey;0>, 0x -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit = ()

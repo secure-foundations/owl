@@ -1,0 +1,24 @@
+// One value named in two scopes, with no foreign name in any rule body.
+// L1(get(k2)) in S1 and L2(z) in S2, z == get(k1), have the inputs (k1, k2, 0x):
+// S1 would name the value a strict secret key, and S2 a public one. The first
+// call is rejected, because its ikm get(k2) is secret and is not a key of S1.
+locality alice
+name secretmsg : nonce @ alice
+kdf_scope S2 {
+    name k2 : kdfkey @ alice
+    kdf L2(x) : x, k2, 0x -> public enckey Name(secretmsg)
+}
+kdf_scope S1 {
+    name k1 : kdfkey @ alice
+    kdf L1(y) where (y == get(k2)) : k1, y, 0x -> strict enckey Name(secretmsg)
+}
+corr [k2] ==> [k1]
+def alice_main() @ alice : Unit =
+    corr_case k1 in
+    corr_case k2 in
+    let a = kdf<L1(get(k2)); enckey; 0>(get(k1), get(k2), 0x) in
+    let z : Data<[k1]> = get(k1) in
+    let b = kdf<L2(z); enckey; 0>(z, get(k2), 0x) in
+    output b;
+    assert(([k1] <= adv) \/ ([k2] <= adv));
+    ()

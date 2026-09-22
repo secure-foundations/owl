@@ -1,0 +1,20 @@
+// c2 is used as a salt at the wrong chain position, so no rule matches and
+// the result is public. Refuting L1 needs two levels of KDF injectivity down
+// to the constant 0x01.
+
+locality alice
+
+kdf_scope G {
+
+    name k : kdfkey @ alice
+
+    func c0() = gkdf<kdfkey; 0>(0x01, 0x02, 0x)
+
+    kdf L1 : c0(), k, 0x -> strict kdfkey
+    kdf L2 : KDF<L1;kdfkey;0>, k, 0x -> strict kdfkey
+
+}
+
+def finish(c2 : SecName(KDF<L2;kdfkey;0>)) @ alice : Unit =
+    let c = kdf<L2;kdfkey;0>(c2, get(k), 0x) in
+    output c

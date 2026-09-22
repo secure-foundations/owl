@@ -1,0 +1,22 @@
+// The parameter s is an ikm atom of L1(s), but G has no kdfkey it could be.
+// With A corrupt, L1(s) is applicable for no s, so KDF<L1(s)> is corrupt,
+// LR(s) is not applicable either, and the call is out of bounds.
+// The two rules are separated at declaration time by their info constants.
+
+locality alice
+
+kdf_scope G {
+    name A : DH @ alice
+    name B : DH @ alice
+    odh L1(s)
+      : 0x, dh_ss(A, B) ++ s, 0x01 -> strict kdfkey
+    kdf LR(s)
+      : 0x, KDF<L1(s);kdfkey;0>, 0x02 -> strict kdfkey
+}
+
+corr adv ==> [A]
+
+def alice_main(g : Data<adv>, x : Data<adv>) @ alice : Unit =
+    corr_case B in
+    let k = kdf<L1(x); kdfkey; 0>(0x, dh_combine(g, get(B)) ++ x, 0x01) in
+    ()

@@ -1,0 +1,17 @@
+// A parameter used as a DH base stands for an adversarial group element, and
+// its atom is never a key position. A hint may not pass an honest public key
+// for it: the atom would be a secret DH pair that applicability does not see.
+
+locality alice
+
+kdf_scope G {
+    name A : DH @ alice
+    name B : DH @ alice
+    name C : DH @ alice
+    odh L1(y) where (is_group_elem(y))
+      : 0x, dh_ss(A, B) ++ dh_combine(y, get(C)), 0x -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit =
+    let k = kdf<L1(dhpk(get(A))); kdfkey; 0>(0x, dh_combine(dhpk(get(A)), get(B)) ++ dh_combine(dhpk(get(A)), get(C)), 0x) in
+    ()

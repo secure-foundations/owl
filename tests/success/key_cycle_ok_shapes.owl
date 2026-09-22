@@ -1,0 +1,19 @@
+// Output types that reference names at or above the rule's own rank are
+// not key cycles and must be accepted: a later sibling output of the same
+// instance, the next instance of the same rule, an independent rule, and a
+// base name declared outside the scope.
+locality alice
+name data : nonce @ alice
+kdf_scope G {
+    name k0 : kdfkey @ alice
+    kdf L_indep : k0, 0x, 0x03 -> strict kdfkey
+    rec_kdf<i> L<i>
+        | 0        : k0,                                        0x, 0x01
+        | succ(i') : KDF<L<i'>; kdfkey || enckey || enckey || enckey; 0>,  0x, 0x01
+        -> strict kdfkey
+        || enckey Name(KDF<L<i>; kdfkey || enckey || enckey || enckey; 3>)
+        || enckey Name(KDF<L<succ(i)>; kdfkey || enckey || enckey || enckey; 0>)
+        || enckey Name(data)
+    kdf L_after : k0, 0x, 0x04 -> enckey Name(KDF<L_indep; kdfkey; 0>)
+}
+def alice_main() @ alice : Unit = ()

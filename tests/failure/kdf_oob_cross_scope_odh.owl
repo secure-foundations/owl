@@ -1,0 +1,27 @@
+// The ikm is the DH secret of C, D, which belong to S2. Refuting the rules of
+// the hinted scope S1 does not make the output public.
+
+locality alice
+
+name n1 : nonce @ alice
+name n2 : nonce @ alice
+
+kdf_scope S1 {
+    name A : DH @ alice
+    name B : DH @ alice
+    odh L1 : 0x, dh_ss(A, B), 0x -> strict enckey Name(n1)
+}
+kdf_scope S2 {
+    name C : DH @ alice
+    name D : DH @ alice
+    odh L2 : 0x, dh_ss(C, D), 0x -> strict enckey Name(n2)
+}
+
+corr [A] ==> [n1]
+corr [B] ==> [n1]
+corr [C] ==> [n2]
+corr [D] ==> [n2]
+
+def leak() @ alice : Unit =
+    let h = kdf<L1; enckey; 0>(0x, dh_combine(dhpk(get(C)), get(D)), 0x) in
+    output h

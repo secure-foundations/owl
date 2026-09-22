@@ -1,0 +1,13 @@
+// Output 0 of L is an encryption key whose plaintext type is output 0 of the
+// same instance: a key cycle of length one.
+locality alice
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L : k, 0x, 0x01 -> strict enckey Name(KDF<L;enckey;0>)
+}
+def alice_main() @ alice : Unit =
+    corr_case k in
+    let ek = kdf<L; enckey; 0>(get(k), 0x, 0x01) in
+    let c = aenc(ek, ek) in
+    output c;
+    ()
