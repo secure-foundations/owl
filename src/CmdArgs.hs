@@ -25,6 +25,7 @@ data Flags = Flags {
     _fLogTypecheck :: Bool,
     _fOnlyCheck :: Maybe String,
     _fNoColor :: Bool,
+    _fTestWithCache :: Bool,
     _fFileContents :: String
                    }
 
@@ -65,6 +66,8 @@ parseArgs =
       <*> option (Just <$> str) (long "only-check" <> help "Only check the given function" <> value Nothing)
       <*> switch
           ( long "no-color-output" <> help "Print errors without ANSI color codes" )
+      <*> switch
+          ( long "test-with-smtcache" <> help "Do tests without clearing the SMT cache" )
       <*> (pure "")
     where
         extractAllFlag = switch (long "extract" <> short 'e' <> help "Extract all specs and code")
@@ -84,7 +87,8 @@ doParseArgs = do
 
 postProcessFlags :: Flags -> Flags
 postProcessFlags f = 
-    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f }
+    f { _fCleanCache = _fCleanCache f || _fLogSMT f || _fDoTests f,
+        _fDoTests = _fDoTests f || _fTestWithCache f }
 
 getHelpMessage :: String
 getHelpMessage = 
