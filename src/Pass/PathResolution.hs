@@ -162,7 +162,9 @@ resolveDecls (d:ds) =
           return (d' : ds')
       DeclName s ixs -> do
           (is, ndecl) <- unbind ixs
-          ndecl' <- case ndecl of
+          p <- view curPath
+          -- The name is in scope in its own name type (recursive names)
+          ndecl' <- local (over namePaths $ T.insert s p) $ case ndecl of
                       DeclAbstractName -> return DeclAbstractName
                       DeclAbbrev bne2 -> do
                           (xs, ne2) <- unbind bne2
@@ -172,7 +174,6 @@ resolveDecls (d:ds) =
                           nt' <- resolveNameType nt
                           ls' <- mapM (resolveLocality (d^.spanOf)) ls
                           return $ DeclBaseName nt' ls'
-          p <- view curPath
           let d' = Spanned (d^.spanOf) $ DeclName s $ bind is ndecl' 
           ds' <- local (over namePaths $ T.insert s p) $ resolveDecls ds
           return $ d' : ds'

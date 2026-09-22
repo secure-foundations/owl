@@ -198,6 +198,9 @@ data Env senv = Env {
     _normalizePropHook :: Prop -> Check' senv Prop,
     _decidePropHook :: Prop -> Check' senv (Maybe Bool),
     _curDef :: Maybe String,
+    -- The base name whose name type is being checked, with its session index
+    -- binders. The name type may refer to the name itself (a recursive name).
+    _curRecName :: Maybe (ResolvedPath, [IdxVar]),
     _tcRoutineStack :: [String],
     _inTypeError :: Bool,
     _inSMT :: Bool,
@@ -529,6 +532,11 @@ inferIdx (IVar pos iname i) = do
                     typeError $ "Index should be nonghost: " ++ show (owlpretty iname) 
                 _ -> return t
           Nothing -> typeError $ "Unknown index: " ++ show (owlpretty iname) 
+inferIdx IZero = return IdxSession
+inferIdx (ISucc i) = do
+    t <- inferIdx i
+    assert ("succ only applies to session or ghost indices: " ++ show (owlpretty i)) $ t /= IdxPId
+    return t
 
 checkIdx :: Idx -> Check' senv ()
 checkIdx i = do
@@ -536,7 +544,7 @@ checkIdx i = do
     return ()
 
 checkIdxSession :: Idx -> Check' senv ()
-checkIdxSession i@(IVar pos _ _) = do
+checkIdxSession i = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -544,7 +552,7 @@ checkIdxSession i@(IVar pos _ _) = do
        TcDef _ ->  assert (show $ owlpretty "Wrong index type: " <> owlpretty i <> owlpretty ", got " <> owlpretty it <+> owlpretty " expected Session ID") $ it == IdxSession
 
 checkIdxPId :: Idx -> Check' senv ()
-checkIdxPId i@(IVar pos _ _) = do
+checkIdxPId i = do
     it <- inferIdx i
     tc <- view tcScope
     case tc of
@@ -736,6 +744,19 @@ getNameInfo = withMemoize (memogetNameInfo) $ \ne -> pushRoutine "getNameInfo" $
                    Just b_nd -> do
                        ((is, ps), nd') <- unbind b_nd
                        assert ("Wrong index arity for name " ++ show n) $ (length vs1, length vs2) == (length is, length ps)
+                       -- A recursive reference is well founded when every session index is
+                       -- succ^k of the binder of its own slot, with some k >= 1
+                       orec <- view curRecName
+                       case orec of
+                         Just (pthRec, binders) | pthRec `aeq` PDot p n -> do
+                             let succsOf b i = case i of
+                                                 IVar _ _ v | v == b -> Just 0
+                                                 ISucc i' -> (+ 1) <$> succsOf b i'
+                                                 _ -> Nothing
+                             let ks = zipWith succsOf binders vs1
+                             assert ("Recursive name use must have every session index of the form succ^n(<the index of that slot>), with n >= 1 for at least one slot: " ++ show (owlpretty ne)) $ 
+                                 all isJust ks && any (> 0) (catMaybes ks)
+                         _ -> return ()
                        let nd = substs (zip is vs1) $ substs (zip ps vs2) nd' 
                        case nd of
                          AbbrevNameDef bne2 -> do

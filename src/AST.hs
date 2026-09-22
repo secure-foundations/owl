@@ -95,7 +95,11 @@ instance Show ResolvedPath where
     show (PDot x y) = show x ++ "." ++ y
 
 
+-- Index expressions. Binders are always variables; `0` and `succ` may appear
+-- at use sites of session (or ghost) indices.
 data Idx = IVar (Ignore Position) (Ignore String) IdxVar
+         | IZero
+         | ISucc Idx
     deriving (Show, Generic, Typeable)
 
 
@@ -512,6 +516,7 @@ instance Alpha Idx
 instance Alpha Endpoint
 instance Subst Idx Idx where
     isvar (IVar _ _ v) = Just (SubstName v)
+    isvar _ = Nothing
 instance Subst AExpr Idx
 instance Subst ResolvedPath Idx
 

@@ -1,0 +1,12 @@
+// The flow is declared at i, not succ(i), so m<succ(i)> stays secret.
+
+locality alice
+
+name k<i> : nonce @ alice
+name m<i> : nonce @ alice
+
+corr<i> [k<i>] ==> [m<i>]
+
+def f<i>() @ alice : if sec(k<i>) then Name(m<succ(i)>) else Data<adv> =
+    corr_case k<i> in
+    get(m<succ(i)>)

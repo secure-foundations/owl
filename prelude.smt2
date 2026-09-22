@@ -498,6 +498,18 @@
 (assert (Flows %zeroLbl %top))
 
 (declare-sort Index)
+(declare-const IndexZero Index)
+(declare-fun IndexSucc (Index) Index)
+(declare-fun IndexPred (Index) Index)
+(declare-fun IndexToNat (Index) Int)
+(assert (= (IndexToNat IndexZero) 0))
+(assert (forall ((x Index)) (!
+    (and (= (IndexToNat (IndexSucc x)) (+ (IndexToNat x) 1))
+         (>= (IndexToNat x) 0)
+         (= (IndexPred (IndexSucc x)) x))
+    :pattern ((IndexSucc x))
+    :qid index_succ_nat
+)))
 (declare-fun Happened (String (List Index) (List Bits)) Bool)
 
 (declare-fun KEMName (Name Index) Name)

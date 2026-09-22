@@ -1,0 +1,17 @@
+// succ^k(i) != i. The succ axioms alone allow a fixed point; the IndexToNat
+// measure rules it out. Observed through name self-disjointness, since =idx
+// only takes bare index variables.
+
+locality alice
+
+name n<i> : nonce @ alice
+
+def f<i> () @ alice : Unit =
+    // succ(i) != i
+    assert (!(get(n<succ(i)>) == get(n<i>)));
+    // succ(succ(i)) != i
+    assert (!(get(n<succ(succ(i))>) == get(n<i>)));
+    // and one more step, plus the concrete-index case
+    assert (!(get(n<succ(succ(succ(i)))>) == get(n<i>)));
+    assert (!(get(n<succ(0)>) == get(n<0>)));
+    ()

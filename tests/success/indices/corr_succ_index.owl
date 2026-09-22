@@ -1,0 +1,12 @@
+// The corrupt branch is public only through a corr flow at succ(i).
+
+locality alice
+
+name k<i> : nonce @ alice
+name m<i> : nonce @ alice
+
+corr<i> [k<i>] ==> [m<succ(i)>]
+
+def f<i>() @ alice : if sec(k<i>) then Name(m<succ(i)>) else Data<adv> =
+    corr_case k<i> in
+    get(m<succ(i)>)
