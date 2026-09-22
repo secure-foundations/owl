@@ -1,13 +1,13 @@
 
 /*
 
-type := 0x1 (1 byte) 
+type := 0x1 (1 byte)
 reserved := 0^3 (3 bytes)
 sender := I_i (4 bytes)
 ephemeral (32 bytes)
 static (32 bytes)
 timestamp (12 bytes)
-mac1 (16 bytes) 
+mac1 (16 bytes)
 mac2 (16 bytes)
 
 */
@@ -26,48 +26,17 @@ type ty_zeros_32 = Const(0x00000000000000000000000000000000000000000000000000000
 locality Initiator : 1
 locality Responder : 1
 
-// Ephemeral Diffie-Hellman keys
-name E_init<i@n> : DH @ Initiator<n>
-name E_resp<i@m> : DH @ Responder<m>
-
-// Static Diffie-Hellman keys (public keys should be preshared)
-name S_init<@n> : DH @ Initiator<n>
-name S_resp<@m> : DH @ Responder<m>
-
-
-// These specify the preimages of the hashes used in the protocol.
-// Used for verification
-func h1_pre(s_resp) = crh(crh(construction()) ++ identifier()) ++ s_resp
-func h2_pre(s_resp, e_init) = crh(h1_pre(s_resp)) ++ e_init
-func h3_pre(s_resp, e_init, c) = crh(h2_pre(s_resp, e_init)) ++ c
-func h4_pre(s_resp, e_init, c, ts) = crh(h3_pre(s_resp, e_init, c)) ++ ts
-func h5_pre(s_resp, e_init, c, ts, e_resp) = crh(h4_pre(s_resp, e_init, c, ts)) ++ e_resp
-func h6_pre(s_resp, e_init, c, ts, e_resp, tau) = crh(h5_pre(s_resp, e_init, c, ts, e_resp)) ++ tau
-func honest_H4_pre<i@n,m>(c, ts) = h4_pre(dhpk(get(S_resp<@m>)), dhpk(get(E_init<i@n>)), c, ts)
 
 // These names are used to express the information flow label of secret data
 // flowing through the record layer. Intuitively, the label
-// [channel_secret_init_send<@n,m>] is the label of secret data flowing from the 
-// n'th initiator to the m'th responder. 
-name channel_secret_init_send<@n,m> : nonce 
-name channel_secret_resp_send<@n,m> : nonce 
-
-// These lines further specify the corruption model we consider. 
-
-// If an initiator's secret and ephemeral key (for any session) is corrupt, then
-// that initiator's channel_secret_init_send label is corrupt 
-corr<i,n,m> [S_init<@n>] /\ [E_init<i@n>] ==> [channel_secret_init_send<@n,m>]
-
-// This label is also corrupt if the responder's static key is corrupt 
-corr<n,m> [S_resp<@m>] ==> [channel_secret_init_send<@n,m>]
-
-// The conditions are dual for the label that specifies data going from the
-// responder to the initiator. 
-corr<j,n,m> [S_resp<@m>] /\ [E_resp<j@m>] ==> [channel_secret_resp_send<@n,m>]
-corr<n,m> [S_init<@n>] ==> [channel_secret_resp_send<@n,m>]
+// [channel_secret_init_send<@n,m>] is the label of secret data flowing from the
+// n'th initiator to the m'th responder.
+name channel_secret_init_send<@n,m> : nonce
+name channel_secret_resp_send<@n,m> : nonce
 
 
-// These specify local, mutable, monotonic counters used for 
+
+// These specify local, mutable, monotonic counters used for
 // stateful AEAD nonces
 counter N_init_send<i@n> @ Initiator<n>
 counter N_init_recv<i@n> @ Initiator<n>
@@ -75,178 +44,49 @@ counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
 // These are forward declared methods used to define Owl's authentication
-// guarantees. 
-def key_confirm_initiator_send<@n> @ Initiator<n> // (k : Ghost) @ Initiator<n> : Unit = () 
-def key_confirm_initiator_recv<@n> @ Initiator<n> // (k : Ghost) @ Initiator<n> : Unit = () 
-def key_confirm_responder_send<@m> @ Responder<m> // (k : Ghost) @ Responder<m> : Unit = () 
-def key_confirm_responder_recv<@m> @ Responder<m> // (k : Ghost) @ Responder<m> : Unit = () 
+// guarantees.
+def key_confirm_initiator_send<@n> @ Initiator<n>
+def key_confirm_initiator_recv<@n> @ Initiator<n>
+def key_confirm_responder_send<@m> @ Responder<m>
+def key_confirm_responder_recv<@m> @ Responder<m>
 
 def init_sent_message<@n> @ Initiator<n>
 def resp_sent_message<@m> @ Responder<m>
 
 
-// We now get into the invariants of the protocol, which are specfied via name
-// types. 
+// We now get into the invariants of the protocol, which are specified via name
+// types.
 
 
 // The type for encryption keys for transport-layer data, from the initiator to
-// the sender. 
-nametype transp_key_init_send<@n,m> = 
+// the sender.
+// From L2 on the chain has two initiator indices: n_eph owns the ephemeral
+// key, n_pk the static key decrypted from msg1. The refinement n_eph =idx n_pk
+// makes the plaintext type uninhabited for a "wrong initiator" key.
+nametype transp_key_init_send<@n_eph,n_pk,m> =
                     // This type says: data with label
-                    // channel_secret_init_send<@n,m>, and we know that 
+                    // channel_secret_init_send<@n_pk,m>, and we know that
                     // the initiator actually send that message (the happened
                     // predicate is like CryptoVerif's events)
-            st_aead (x : Data<adv /\ [channel_secret_init_send<@n,m>], |adv|> { happened(init_sent_message<@n>(x))})
-                aad x self. happened(key_confirm_initiator_send<@n>(self))
+            st_aead (x : Data<adv /\ [channel_secret_init_send<@n_pk,m>], |adv|> { n_eph =idx n_pk /\ happened(init_sent_message<@n_pk>(x))})
+                aad x self. happened(key_confirm_initiator_send<@n_pk>(self))
                 nonce N_init_send
 
 // Dual for the responder
-nametype transp_key_resp_send<@n,m> = 
-            st_aead (x : Data<adv /\ [channel_secret_resp_send<@n,m>], |adv|>{ happened(resp_sent_message<@m>(x)) })
+nametype transp_key_resp_send<@n_eph,n_pk,m> =
+            st_aead (x : Data<adv /\ [channel_secret_resp_send<@n_pk,m>], |adv|>{ n_eph =idx n_pk /\ happened(resp_sent_message<@m>(x)) })
                 aad x. true
                 nonce N_resp_send
 
-// Types for the KDF hash chain secrets 
-nametype C7<@n,m> = kdf {ikm info.
-    True -> 
-        strict transp_key_init_send<@n,m>
-            ||
-        strict transp_key_resp_send<@n,m>
-}
-
-nametype transp_key_init_send_corr = 
+nametype transp_key_init_send_corr =
       st_aead (x:Data<adv>{False})
                         aad x. true
                         nonce N_init_send
 
-nametype transp_key_resp_send_corr = 
+nametype transp_key_resp_send_corr =
       st_aead (x:Data<adv>{False})
                         aad x. true
                         nonce N_resp_send
-    
-// Due to the unauthenticated nature of WireGuard, we can't guarantee at all
-// points of the protocol that we have the correct value of the KDF chain. 
-// these "_corr" values are the specifications for the "incorrect" values.
-// If you look at the specification for encryption keys (given above), we 
-// see that they are specified to encrypt data refined at False; i.e., 
-// they are never actually used as encryption keys. This is useful for
-// verification of the responder, who may then rule out this case if they
-// decrypt data under this key. 
-nametype C7_corr = kdf {ikm info.
-    True ->
-        strict transp_key_init_send_corr
-        ||
-        strict transp_key_resp_send_corr
-}
-
-counter aead_counter_msg2_C7<j@m> @ Responder<m>
-
-predicate valid_h6(h) = 
-    exists m:idx,j:idx,einit:bv,c:bv,ts:bv,tau:bv.
-        h == crh(h6_pre(dhpk(get(S_resp<@m>)), einit, c, ts, dhpk(get(E_resp<j@m>)), tau))
-
-func honest_c1<i@n_eph>() = 
-    gkdf<kdfkey;0>(crh(construction()), dhpk(get(E_init<i@n_eph>)), 0x)
-        
-func honest_c2<i@n_eph,m>() =
-    gkdf<kdfkey||enckey;0>(honest_c1<session i, pid n_eph>(),
-        dh_combine(dhpk(get(E_init<i@n_eph>)), get(S_resp<@m>)), 0x)
-
-func honest_c3<i@n_eph, n_pk,m>() = 
-    gkdf<kdfkey||enckey;0>(honest_c2<session i, pid n_eph, pid m>(), 
-        dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m>)),
-        0x
-    )
-
-
-func honest_c4<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey||nonce||enckey;0>(honest_c3<session i, pid n_eph, pid n_pk, pid m>(),
-        dhpk(get(E_resp<j@m>)),
-        0x
-    )
-
-func honest_c5<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey;0>(honest_c4<session i, session j, pid n_eph, pid n_pk, pid m>(),
-        dh_combine(dhpk(get(E_init<i@n_eph>)), get(E_resp<j@m>)),
-        0x
-    )
-
-func honest_c6<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey; 0>(honest_c5<session i, session j, pid n_eph, pid n_pk, pid m>(),
-        dh_combine(dhpk(get(S_init<@n_pk>)), get(E_resp<j@m>)),
-        0x
-    )
-
-func honest_c7<i,j@n_eph,n_pk,m>() = 
-    gkdf<kdfkey||nonce||enckey; 0>(honest_c6<session i, session j, pid n_eph,
-    pid n_pk, pid m>(),
-        0x,
-        0x
-    )
-
-
-func tk1_of_c6(x, psk) = gkdf<enckey||enckey;0>(gkdf<kdfkey||nonce||enckey;0>(x, psk, 0x), 0x, 0x)
-func tk2_of_c6(x, psk) = gkdf<enckey||enckey;1>(gkdf<kdfkey||nonce||enckey;0>(x, psk, 0x), 0x, 0x)
-
-nametype C6_dual<@n, m> = dualkdf {salt info self .
-    (exists i:idx,j:idx. salt == honest_c6<session i, session j, pid n, pid n, pid m>()) -> strict C7<@n,m> || public nonce || 
-        strict st_aead (Data<adv> |0|)
-           aad x. valid_h6[x] /\ happened(key_confirm_responder_recv<@m>(tk1_of_c6(salt, self)))  
-                              /\ happened(key_confirm_responder_send<@m>(tk2_of_c6(salt, self))) 
-           nonce aead_counter_msg2_C7,
-    (forall i:idx,j:idx. salt != honest_c6<session i, session j, pid n, pid n, pid m>()) -> strict C7_corr || public nonce || 
-        strict st_aead (Data<adv> |0|)
-           aad x. valid_h6[x]
-           nonce aead_counter_msg2_C7
-}
-
-// The pre-shared key between initiator and responder. We assume for now we have 
-// one PSK between each pair
-name psk<@n,m> : C6_dual<@n,m> // @ Initiator<n>, Responder<m>
-
-enum PSKMode<n,m> {
-    | HasPSK Name(psk<@n,m>)
-    | NoPSK
-}
-
-nametype C6_corr = kdf {ikm info.
-    True -> strict C7_corr || public nonce ||
-        strict st_aead (Data<adv> |0|) // (x:(Data<adv> |0|){False})
-                       aad x. valid_h6[x]
-                       nonce aead_counter_msg2_C7
-}
-
-
-nametype C6<@n, m> = kdf {ikm info self.
-    (ikm == 0x0000000000000000000000000000000000000000000000000000000000000000 \/ ikm == get(psk<@n,m>)) -> 
-        strict C7<@n,m> || public nonce || 
-        strict st_aead (Data<adv> |0|)
-           aad x. valid_h6[x] /\ happened(key_confirm_responder_recv<@m>(tk1_of_c6(self, ikm))) 
-                              /\ happened(key_confirm_responder_send<@m>(tk2_of_c6(self, ikm))) 
-           nonce aead_counter_msg2_C7
-}
-
-
-nametype C5_corr = kdf {ikm info.
-    True -> strict C6_corr
-}
-
-
-nametype C5<@n,m> = kdf {ikm info.
-    True -> 
-    strict C6<@n,m> 
-}
-
-
-
-nametype C4_corr = kdf {ikm info.
-    True -> strict C5_corr
-}
-
-nametype C4<@n,m> = kdf {ikm info.
-    (exists i:idx,j:idx. ikm == dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))) -> strict C5<@n,m>, 
-    (forall i:idx,j:idx. ikm != dh_combine(dhpk(get(E_init<i@n>)), get(E_resp<j@m>))) -> strict C5_corr
-}
 
 // This is just useful for verification. Incurs no runtime overhead
 locality nobody
@@ -254,109 +94,315 @@ counter useless @ nobody
 nametype useless_enc = st_aead (x:Data<adv> | |group| |{False})
                         aad x. False
                         nonce useless
-                        
 
-nametype C3<@n,m> = kdf {ikm info.
-    (exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4<@n,m> || strict useless_enc, 
-    (forall j:idx. ikm != dhpk(get(E_resp<j@m>))) -> strict C4_corr || strict useless_enc
-    // !(exists j:idx. ikm == dhpk(get(E_resp<j@m>))) -> strict C4_corr<@n,m> || strict useless_enc
-}
-
-nametype C3_corr = kdf {ikm info.
-    True -> strict C4_corr || strict useless_enc
-}
-
+counter aead_counter_msg2_C7<j@m> @ Responder<m>
 counter aead_counter_msg1_C3<i@n> @ Initiator<n>
-
-predicate h3_pred(h) = 
-    exists n:idx,m:idx,i:idx,c:bv. 
-        h == crh(h3_pre(dhpk(get(S_resp<@m>)), dhpk(get(E_init<i@n>)), c))
-        
-
-nametype C2<@n,m> = kdf {ikm info. 
-    True -> strict C3<@n,m> || strict st_aead (Data<adv> |12|)
-                           aad x. h3_pred[x]
-                           nonce aead_counter_msg1_C3
-}
-
 counter aead_counter_msg1_C2<i@n> @ Initiator<n>
 
-// To actually use the Diffie-Hellman secrets, we have these
-// "odh" (oracle Diffie-Hellman) declarations, which specify how 
-// Diffie-Hellman secrets may be combined in the KDF.
-odh L1<i@n,m> :
-    E_init<i@n>, S_resp<@m> -> {salt info.
-        salt == honest_c1<session i, pid n>() -> 
-            strict C2<@n,m> || strict st_aead (dhpk(S_init<@n>))
-                             aad x. true
-                             nonce aead_counter_msg1_C2
-}                                                            
+
+// =====================================================================
+// KDF Group: WG_KDF
+//
+// The KDF chain in WireGuard proceeds as follows:
+//   C1  = KDF(crh(construction()), dhpk(E_init), 0x)
+//   C2  = KDF(C1,  dh(E_init, S_resp),              0x)   [ODH L1]
+//   C3  = KDF(C2,  dh(S_init, S_resp),              0x)   [ODH L2]
+//   C4  = KDF(C3,  dhpk(E_resp),                    0x)   [kdf L3 — public key in ikm]
+//   C5  = KDF(C4,  dh(E_init, E_resp),              0x)   [ODH L4]
+//   C6  = KDF(C5,  dh(S_init, E_resp),              0x)   [ODH L5]
+//   C7  = KDF(C6,  psk (or zeros_32),               0x)   [kdf L6]
+//   TK  = KDF(C7,  0x,                              0x)   [kdf L7]
+// =====================================================================
+
+kdf_scope WG_KDF {
+
+    // Ephemeral Diffie-Hellman keys
+    name E_init<i@n> : DH @ Initiator<n>
+    name E_resp<j@m> : DH @ Responder<m>
+
+    // Static Diffie-Hellman keys 
+    name S_init<@n> : DH @ Initiator<n>
+    name S_resp<@m> : DH @ Responder<m>
+
+    // Pre-shared key between initiator and responder.
+    name psk<@n,m> : kdfkey @ Initiator<n>, Responder<m>
+
+    // =====================================================================
+    // Helper functions for authentication conditions in L6's output type.
+    // =====================================================================
+    func tk1_of_c6(x, psk) =
+        gkdf<enckey||enckey; 0>(
+            gkdf<kdfkey||nonce||enckey; 0>(x, psk, 0x),
+            0x, 0x)
+
+    func tk2_of_c6(x, psk) =
+        gkdf<enckey||enckey; 1>(
+            gkdf<kdfkey||nonce||enckey; 0>(x, psk, 0x),
+            0x, 0x)
 
 
-odh L2<@n,m> : 
-    S_init<@n>, S_resp<@m> -> {salt info.
-        (exists i:idx. salt == honest_c2<session i, pid n, pid m>()) -> 
-                strict C3<@n,m> || strict st_aead (Data<adv> |12|)
-                           aad x. h3_pred[x]
-                           nonce aead_counter_msg1_C3,
-        <n_eph>
-        n_eph !=idx n /\ 
-        (!exists i:idx. salt == honest_c2<session i, pid n, pid m>())
-        /\
-        (exists i:idx.
-            salt == honest_c2<session i, pid n_eph, pid m>())
-            ->
-                strict C3_corr || strict st_aead (Data<adv> |12|)
-                                   aad x. h3_pred[x]
-                                   nonce aead_counter_msg1_C3
+    // =====================================================================
+    // These specify the preimages of the hashes used in the protocol.
+    // Used for verification
+    // =====================================================================
+    func h1_pre(s_resp) = crh(crh(construction()) ++ identifier()) ++ s_resp
+    func h2_pre(s_resp, e_init) = crh(h1_pre(s_resp)) ++ e_init
+    func h3_pre(s_resp, e_init, c) = crh(h2_pre(s_resp, e_init)) ++ c
+    func h4_pre(s_resp, e_init, c, ts) = crh(h3_pre(s_resp, e_init, c)) ++ ts
+    func h5_pre(s_resp, e_init, c, ts, e_resp) = crh(h4_pre(s_resp, e_init, c, ts)) ++ e_resp
+    func h6_pre(s_resp, e_init, c, ts, e_resp, tau) = crh(h5_pre(s_resp, e_init, c, ts, e_resp)) ++ tau
+    func honest_H4_pre<i@n,m>(c, ts) = h4_pre(dhpk(get(S_resp<@m>)), dhpk(get(E_init<i@n>)), c, ts)
+
+
+    // =====================================================================
+    // "Honest" ghost functions for verification: these compute what the
+    // intermediate KDF chain values should be in an honest execution.
+    // They are used in kdf_inj_lemma and other proof obligations in
+    // init.owl and resp.owl.
+    // =====================================================================
+
+    func honest_c1<i@n_eph>() =
+        gkdf<kdfkey; 0>(crh(construction()), dhpk(get(E_init<i@n_eph>)), 0x)
+
+    func honest_c2<i@n_eph,m>() =
+        gkdf<kdfkey||enckey; 0>(honest_c1<session i, pid n_eph>(),
+            dh_combine(dhpk(get(E_init<i@n_eph>)), get(S_resp<@m>)), 0x)
+
+    func honest_c3<i@n_eph, n_pk,m>() =
+        gkdf<kdfkey||enckey; 0>(honest_c2<session i, pid n_eph, pid m>(),
+            dh_combine(dhpk(get(S_init<@n_pk>)), get(S_resp<@m>)),
+            0x
+        )
+
+    func honest_c4<i,j@n_eph,n_pk,m>() =
+        gkdf<kdfkey||enckey; 0>(honest_c3<session i, pid n_eph, pid n_pk, pid m>(),
+            dhpk(get(E_resp<j@m>)),
+            0x
+        )
+
+    func honest_c5<i,j@n_eph,n_pk,m>() =
+        gkdf<kdfkey; 0>(honest_c4<session i, session j, pid n_eph, pid n_pk, pid m>(),
+            dh_combine(dhpk(get(E_init<i@n_eph>)), get(E_resp<j@m>)),
+            0x
+        )
+
+    func honest_c6<i,j@n_eph,n_pk,m>() =
+        gkdf<kdfkey; 0>(honest_c5<session i, session j, pid n_eph, pid n_pk, pid m>(),
+            dh_combine(dhpk(get(S_init<@n_pk>)), get(E_resp<j@m>)),
+            0x
+        )
+
+    func honest_c7<i,j@n_eph,n_pk,m>() =
+        gkdf<kdfkey||nonce||enckey; 0>(honest_c6<session i, session j, pid n_eph,
+        pid n_pk, pid m>(),
+            get(psk<@n_pk,m>),
+            0x
+        )
+
+
+    predicate valid_h6(h) =
+        exists m:idx,j:idx,einit:bv,c:bv,ts:bv,tau:bv.
+            h == crh(h6_pre(dhpk(get(S_resp<@m>)), einit, c, ts, dhpk(get(E_resp<j@m>)), tau))
+
+    predicate h3_pred(h) =
+        exists n:idx,m:idx,i:idx,c:bv.
+            h == crh(h3_pre(dhpk(get(S_resp<@m>)), dhpk(get(E_init<i@n>)), c))
+
+
+
+    // -----------------------------------------------------------------
+    // Rule L1: Derive C2 and enckey for S_init via ODH (E_init x S_resp)
+    // -----------------------------------------------------------------
+    odh L1<i@n,m> : honest_c1<session i, pid n>(), dh_ss(E_init<i@n>, S_resp<@m>), 0x ->
+        strict kdfkey ||
+        strict st_aead (dhpk(S_init<@n>))
+                       aad x. true
+                       nonce aead_counter_msg1_C2
         
-    }
+    corr<i,n,m> [E_init<i@n>] ==> [KDF<L1<i@n,m>;kdfkey||enckey;0>]
 
-odh L4<i,j@n,m> :
-    E_init<i@n>, E_resp<j@m> -> {salt info.
-        salt == honest_c4<session i, session j, pid n, pid n, pid m>()
-             -> strict C5<@n,m>,
+    // -----------------------------------------------------------------
+    // Rule L2 and L2_corr: Derive C3 via ODH (S_init x S_resp)
+    // L2 covers the case where the salt is an honest C2 for the same n
+    // that owns S_init<@n>.  The corresponding "wrong n_eph" case is L2_corr.
+    // -----------------------------------------------------------------
+    odh L2<i@n_eph,n_pk,m> : KDF<L1<i@n_eph,m>;kdfkey||enckey;0>, dh_ss(S_init<@n_pk>, S_resp<@m>), 0x ->
+        strict kdfkey ||
+        strict st_aead (Data<adv> |12|)
+                       aad x. h3_pred[x]
+                       nonce aead_counter_msg1_C3
 
-        salt != honest_c4<session i, session j, pid n, pid n, pid m>()
-            -> strict C5_corr
+    // -----------------------------------------------------------------
+    // Rule L3: Derive C4 from C3 using the responder's ephemeral public key
+    // `kdf` not `odh` since the information-flow content derives from the kdfkey
+    // C3 passed as salt
+    // -----------------------------------------------------------------
+    kdf L3<i,j@n_eph,n_pk,m> : KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>, dhpk(get(E_resp<j@m>)), 0x ->
+        strict kdfkey || strict useless_enc
+
+    // Off-chain family L3_corr..L6_corr: the initiator's chain when msg2
+    // carries an ephemeral x that is not an honest responder ephemeral.
+    // Salts are names, so secrecy flows down from C3.
+    kdf L3_corr<i@n,m>(x) where (is_group_elem(x) /\ (forall j:idx. x != dhpk(get(E_resp<j@m>)))) :
+        KDF<L2<i@n,n,m>;kdfkey||enckey;0>, x, 0x ->
+        strict kdfkey || strict useless_enc
+
+    // -----------------------------------------------------------------
+    // Rule L4: Derive C5 via ODH (E_init x E_resp)
+    // -----------------------------------------------------------------
+    odh L4<i,j@n_eph,n_pk,m> : KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>, dh_ss(E_init<i@n_eph>, E_resp<j@m>), 0x ->
+        strict kdfkey
+
+    // `kdf`, not `odh`: the DH base x is adversarial, so secrecy comes from the salt only
+    kdf L4_corr<i@n,m>(x) where (is_group_elem(x) /\ (forall j:idx. x != dhpk(get(E_resp<j@m>)))) :
+        KDF<L3_corr<i@n,m>(x);kdfkey||enckey;0>, dh_combine(x, get(E_init<i@n>)), 0x ->
+        strict kdfkey
+
+    // -----------------------------------------------------------------
+    // Rule L5: Derive C6 via ODH (S_init x E_resp)
+    //
+    // Replaces `odh L5<j@n,m>`. The correct case uses an honest C5
+    // (produced by L4); the wrong-n_eph case uses a C5 for a different
+    // party (produced by L5_corr).
+    // -----------------------------------------------------------------
+    odh L5<i,j@n_eph,n_pk,m> : KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>, dh_ss(S_init<@n_pk>, E_resp<j@m>), 0x ->
+        strict kdfkey
+
+    kdf L5_corr<i@n,m>(x) where (is_group_elem(x) /\ (forall j:idx. x != dhpk(get(E_resp<j@m>)))) :
+        KDF<L4_corr<i@n,m>(x);kdfkey;0>, dh_combine(x, get(S_init<@n>)), 0x ->
+        strict kdfkey
+
+    // -----------------------------------------------------------------
+    // Rules L6 / L6_zeros: Derive C7 from C6 using the PSK (or zeros)
+    //
+    // The old design used two complementary nametypes:
+    //   - C6_dual<@n,m>  (dualkdf: psk in ikm position, condition on salt
+    //                     being honest_c6)
+    //   - C6<@n,m>       (kdf: condition on ikm being psk or zeros_32)
+    //
+    // In the new design, the two cases (HasPSK / NoPSK) become two
+    // separate rules sharing the same salt type C6<@n,m>.
+    // -----------------------------------------------------------------
+    kdf L6<i,j@n_eph,n_pk,m>(ikm) where (ikm == 0x0000000000000000000000000000000000000000000000000000000000000000 \/ ikm == get(psk<@n_pk,m>)) : KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>, ikm, 0x ->
+        strict kdfkey || public nonce ||
+        strict st_aead (Data<adv> |0|)
+               aad x. valid_h6[x] /\ happened(key_confirm_responder_recv<@m>(tk1_of_c6(get(KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>), ikm)))
+                                   /\ happened(key_confirm_responder_send<@m>(tk2_of_c6(get(KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>), ikm)))
+               nonce aead_counter_msg2_C7
+
+    // No honest party encrypts under the off-chain k0 (the responder's
+    // ephemeral is always honest), so its plaintext type is uninhabited and a
+    // successful decryption under it closes the branch.
+    kdf L6_corr<i@n,m>(x, ikm) where ((ikm == 0x0000000000000000000000000000000000000000000000000000000000000000 \/ ikm == get(psk<@n,m>)) /\ is_group_elem(x) /\ (forall j:idx. x != dhpk(get(E_resp<j@m>)))) :
+        KDF<L5_corr<i@n,m>(x);kdfkey;0>, ikm, 0x ->
+        strict kdfkey || public nonce ||
+        strict st_aead (y:Data<adv> |0| {False})
+               aad y. False
+               nonce aead_counter_msg2_C7
+
+    // -----------------------------------------------------------------
+    // The responder's off-chain C6, for a msg1 ephemeral x that is not an honest
+    // ephemeral of any initiator. No honest rule covers any step, so the chain is
+    // written out from crh(construction()). n is the static-key owner n_pk.
+    func offchain_c6_resp<j@n,m>(x) =
+        gkdf<kdfkey; 0>(
+            gkdf<kdfkey; 0>(
+                gkdf<kdfkey||enckey; 0>(
+                    gkdf<kdfkey||enckey; 0>(
+                        gkdf<kdfkey||enckey; 0>(
+                            gkdf<kdfkey; 0>(crh(construction()), x, 0x),
+                            dh_combine(x, get(S_resp<@m>)), 0x),
+                        dh_combine(dhpk(get(S_init<@n>)), get(S_resp<@m>)), 0x),
+                    dhpk(get(E_resp<j@m>)), 0x),
+                dh_combine(x, get(E_resp<j@m>)), 0x),
+            dh_combine(dhpk(get(S_init<@n>)), get(E_resp<j@m>)), 0x)
+
+    // The responder encrypts msg2_empty under this k0, so the plaintext type is
+    // inhabited. No honest initiator decrypts under it.
+    // The where clause excludes ephemerals of every initiator: an honest
+    // ephemeral of another initiator n' is covered by L2..L7<i,j@n',n,m>.
+    kdf L6_corr_resp<j@n,m>(x) where (is_group_elem(x) /\ (forall i:idx, n':idx. x != dhpk(get(E_init<i@n'>)))) :
+        offchain_c6_resp<session j, pid n, pid m>(x), get(psk<@n,m>), 0x ->
+        strict kdfkey || public nonce ||
+        strict st_aead (Data<adv> |0|)
+               aad y. valid_h6[y]
+               nonce aead_counter_msg2_C7
+
+    // -----------------------------------------------------------------
+    // Rules L7 / L7_corr_resp: Derive transport keys from C7
+    // -----------------------------------------------------------------
+    kdf L7<i,j@n_eph,n_pk,m>(ikm) : KDF<L6<i,j@n_eph,n_pk,m>(ikm);kdfkey||nonce||enckey;0>, 0x, 0x ->
+        strict transp_key_init_send<@n_eph,n_pk,m> ||
+        strict transp_key_resp_send<@n_eph,n_pk,m>
+
+    // Secret names with an uninhabited plaintext type, so that resp_recv can
+    // close the off-chain branch across the def boundary. The initiator closes
+    // its off-chain branch inside init_stage2 and needs no such rule.
+    kdf L7_corr_resp<j@n,m>(x) : KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>, 0x, 0x ->
+        strict transp_key_init_send_corr ||
+        strict transp_key_resp_send_corr
+
+    // Corruption flows for the chain names: an output is corrupt when its salt
+    // and every secret ikm atom are. The L1 flow from E_init is declared above.
+    // L6_corr_resp has a public term salt, so it is corrupt exactly when the PSK is.
+    corr<i,n,m>[x] [KDF<L2<i@n,n,m>;kdfkey||enckey;0>] ==> [KDF<L3_corr<i@n,m>(x);kdfkey||enckey;0>]
+    corr<i,n,m>[x] [KDF<L3_corr<i@n,m>(x);kdfkey||enckey;0>] ==> [KDF<L4_corr<i@n,m>(x);kdfkey;0>]
+    corr<i,n,m>[x] [KDF<L4_corr<i@n,m>(x);kdfkey;0>] ==> [KDF<L5_corr<i@n,m>(x);kdfkey;0>]
+    corr<i,n,m>[x] [KDF<L5_corr<i@n,m>(x);kdfkey;0>] /\ [psk<@n,m>] ==> [KDF<L6_corr<i@n,m>(x, get(psk<@n,m>));kdfkey||nonce||enckey;0>]
+    corr<i,n,m>[x] [KDF<L5_corr<i@n,m>(x);kdfkey;0>] ==> [KDF<L6_corr<i@n,m>(x, 0x0000000000000000000000000000000000000000000000000000000000000000);kdfkey||nonce||enckey;0>]
+    corr<j,n,m>[x] [KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7_corr_resp<j@n,m>(x);enckey||enckey;0>]
+    corr<j,n,m>[x] [KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7_corr_resp<j@n,m>(x);enckey||enckey;1>]
+    corr<i,n,m> [S_resp<@m>] ==> [KDF<L1<i@n,m>;kdfkey||enckey;0>]
+    corr<i,n_eph,n_pk,m> [KDF<L1<i@n_eph,m>;kdfkey||enckey;0>] /\ [S_init<@n_pk>] ==> [KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>]
+    corr<i,n_eph,n_pk,m> [KDF<L1<i@n_eph,m>;kdfkey||enckey;0>] /\ [S_resp<@m>] ==> [KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>] ==> [KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>] /\ [E_init<i@n_eph>] ==> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>] /\ [E_resp<j@m>] ==> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>] /\ [S_init<@n_pk>] ==> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>] /\ [E_resp<j@m>] ==> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>] /\ [psk<@n_pk,m>] ==> [KDF<L6<i,j@n_eph,n_pk,m>(get(psk<@n_pk,m>));kdfkey||nonce||enckey;0>]
+    corr<i,j,n_eph,n_pk,m> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>] ==> [KDF<L6<i,j@n_eph,n_pk,m>(0x0000000000000000000000000000000000000000000000000000000000000000);kdfkey||nonce||enckey;0>]
+    corr<i,j,n_eph,n_pk,m>[x] [KDF<L6<i,j@n_eph,n_pk,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7<i,j@n_eph,n_pk,m>(x);enckey||enckey;0>]
+    corr<i,j,n_eph,n_pk,m>[x] [KDF<L6<i,j@n_eph,n_pk,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7<i,j@n_eph,n_pk,m>(x);enckey||enckey;1>]
+
+} // end kdf_scope WG_KDF
+
+
+
+
+// =====================================================================
+// Enum for the PSK mode
+// =====================================================================
+enum PSKMode<n,m> {
+    | HasPSK Name(psk<@n,m>)
+    | NoPSK
 }
 
-odh L5<j@n,m> :
-    S_init<@n>, E_resp<j@m> -> {salt info.
-        (exists i:idx. salt == honest_c5<session i, session j, pid n, pid n, pid m>())
-            -> 
-            strict C6<@n,m>,
 
-        <n_eph> 
-        n_eph !=idx n /\
-        (! exists i:idx. salt == honest_c5<session i, session j, pid n, pid n, pid m>()) /\
-        (exists i:idx.
-            salt == honest_c5<session i, session j, pid n_eph,
-            pid n, pid m>()
-        ) ->
-            strict C6_corr
+// These lines further specify the corruption model we consider.
 
-}
+// If an initiator's secret and ephemeral key (for any session) is corrupt, then
+// that initiator's channel_secret_init_send label is corrupt
+corr<i,n,m> [S_init<@n>] /\ [E_init<i@n>] ==> [channel_secret_init_send<@n,m>]
 
-nametype C1<@n,m> = kdf {ikm info.
-    True -> strict C2<@n,m> || strict st_aead (exists n. dhpk(S_init<@n>))
-                         aad x. true
-                         nonce aead_counter_msg1_C2
-}
+// This label is also corrupt if the responder's static key is corrupt
+corr<n,m> [S_resp<@m>] ==> [channel_secret_init_send<@n,m>]
 
-
-
+// The conditions are dual for the label that specifies data going from the
+// responder to the initiator.
+corr<j,n,m> [S_resp<@m>] /\ [E_resp<j@m>] ==> [channel_secret_resp_send<@n,m>]
+corr<n,m> [S_init<@n>] ==> [channel_secret_resp_send<@n,m>]
 
 
 ////////////////////////////
 // Message formats
 
-// Byte-precise format of the first message 
+// Byte-precise format of the first message
 struct msg1 {
       _msg1_tag : Const(0x01000000)
     , _msg1_sender : Data<adv> |4| // bytes??
     , _msg1_ephemeral : Data<adv> | |group| |
-    , _msg1_static : Data<adv> | cipherlen(|group|) | 
+    , _msg1_static : Data<adv> | cipherlen(|group|) |
     , _msg1_timestamp: Data<adv> | cipherlen(12) |
     , _msg1_mac1: Data<adv> | |maclen| |
     , _msg1_mac2: Const(0x00000000000000000000000000000000) // hardcode |maclen|=16 zeros, for now
@@ -378,8 +424,8 @@ struct msg2 {
 struct transp {
       _transp_tag : Const(0x04000000)
     , _transp_receiver : Data<adv> |4|
-    , _transp_counter  : Data<adv> | |counter| | 
-    , _transp_packet   : Data<adv> 
+    , _transp_counter  : Data<adv> | |counter| |
+    , _transp_packet   : Data<adv>
 }
 
 
@@ -398,7 +444,7 @@ def get_sender_i<@n>  () @ Initiator<n> : Data<adv> |4|
 // controlled
 def timestamp_i<@n>   () @ Initiator<n> : Data<adv> |12|
 
-def get_sender_r<@m>  () @ Responder<m> : Data<adv> |4| 
+def get_sender_r<@m>  () @ Responder<m> : Data<adv> |4|
 def timestamp_r<@m>   () @ Responder<m> : Data<adv> |12|
 
 
@@ -412,12 +458,12 @@ func dh(x, y) = dh_combine(dhpk(x), y)
 /////////////////////////
 // Transport keys for initiator
 
-// Here are the actual security guarantees. 
+// Here are the actual security guarantees.
 
 // As in other work, we need to define the notion of a clean session.
 // For us, a clean session for the i'th session, between the n'th initiator and
 // m'th responder, is one where:
-predicate init_clean<i,n,m>(haspsk, eph) = 
+predicate init_clean<i,n,m>(haspsk, eph) =
     // We have a psk, and that psk is secret (not corrupted); OR
     ((haspsk == true) /\ sec(psk<@n,m>))
     \/
@@ -429,50 +475,51 @@ predicate init_clean<i,n,m>(haspsk, eph) =
     // The responder's static key is secret; OR
     sec(S_resp<@m>)
     \/
-    // The ephermeral key received by the initiator is a correct one, and it is
-    // secret 
+    // The ephemeral key received by the initiator is a correct one, and it is
+    // secret
     (exists j:idx. eph == dhpk(get(E_resp<j@m>)) /\
-     sec(E_resp<j@m>)
+     (sec(S_resp<@m>) \/ sec(E_resp<j@m>))
     )))
 
 // This is the return type of the initiator from the handshake. The important
-// part is the last two fields. 
-struct transp_keys_init<i,n,m> {
+// part is the last two fields.
+struct transp_keys_init<i,j,n,m> {
     tki_msg2_receiver : Data<adv> |4|,
     tki_msg2_sender : Data<adv> |4|,
     tki_has_psk : Bool<adv>,
+    tki_ikm : Ghost,
     tki_eph : Ghost,
     tki_c7 : Ghost,
     // If the session is clean, then we get secret, authentic keys for the
-    // transport layer. Otherwise, we get arbitrary public data 
+    // transport layer. Otherwise, we get arbitrary public data
+    //
     tki_k_init_send : if init_clean<i,n,m>[tki_has_psk, tki_eph] then
-        (x:SecName(KDF<enckey||enckey; 0; transp_key_init_send<@n,m>>(tki_c7,0x, 0x)){
-            happened(key_confirm_responder_recv<@m>(x)) /\ 
+        (x:SecName(KDF<L7<i,j@n,n,m>(tki_ikm); enckey||enckey; 0>){
+            happened(key_confirm_responder_recv<@m>(x)) /\
             happened(key_confirm_initiator_send<@n>(x))
          })
         else Data<adv>,
     tki_k_resp_send : if init_clean<i,n,m>[tki_has_psk, tki_eph] then
-        (x:SecName(KDF<enckey||enckey; 1; transp_key_resp_send<@n,m>>(tki_c7, 0x, 0x)){
-            happened(key_confirm_responder_send<@m>(x)) /\ 
+        (x:SecName(KDF<L7<i,j@n,n,m>(tki_ikm); enckey||enckey; 1>){
+            happened(key_confirm_responder_send<@m>(x)) /\
             happened(key_confirm_initiator_recv<@n>(x))
          })
         else Data<adv>
 }
 
-
 /////////////////////////
-// (Pre-)Transport keys for initiator
+// (Pre-)Transport keys for responder
 
-// The responder's notion of a clean session is dual. 
-// It is indexed by FOUR indices (not three) because it might not be that 
-// the initiator corresponding to the received ephemeral key is the same one 
-// as the initiator corresponding to the received public static key. 
-predicate resp_clean<j,n_pk,n_eph,m>(haspsk, eph) = 
-    // We have a PSK and it is secret; OR 
+// The responder's notion of a clean session is dual.
+// It is indexed by FOUR indices (not three) because it might not be that
+// the initiator corresponding to the received ephemeral key is the same one
+// as the initiator corresponding to the received public static key.
+predicate resp_clean<j,n_pk,n_eph,m>(haspsk, eph) =
+    // We have a PSK and it is secret; OR
     (haspsk == true /\ sec(psk<@n_pk, m>))
     \/
     (
-    // The ephemeral key we receive is actually an ephemeral key; AND 
+    // The ephemeral key we receive is actually an ephemeral key; AND
     (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)))
     /\
       // Both static keys are secret; OR
@@ -483,17 +530,19 @@ predicate resp_clean<j,n_pk,n_eph,m>(haspsk, eph) =
      \/
      (exists i:idx. eph == dhpk(get(E_init<i@n_eph>)) /\
            // Responder's static key is secret, and initiator's ephemeral is
-           // secret; OR 
+           // secret; OR
          ((sec(S_resp<@m>) /\ sec(E_init<i@n_eph>))
           \/
-            //  Both ephemerals are secret. 
+            //  Both ephemerals are secret.
           (sec(E_resp<j@m>) /\ sec(E_init<i@n_eph>))))))
 
-// Return type of responder from handshake. 
-struct transp_keys_resp<j,n_pk,n_eph,m> {
+// Return type of responder from handshake. When the ephemeral is not honest
+// the def packs an arbitrary i.
+struct transp_keys_resp<i,j,n_pk,n_eph,m> {
     tkr_msg2_receiver : Data<adv> |4|,
     tkr_msg2_sender : Data<adv> |4|,
     tkr_has_psk : Bool<adv>,
+    tkr_ikm : Ghost,
     tkr_eph : Ghost,
     tkr_c7 : Ghost,
     // The responder in WireGuard cannot be sure it's talking to the initiator
@@ -501,37 +550,29 @@ struct transp_keys_resp<j,n_pk,n_eph,m> {
     // tkr_recvd boolean, which (under a clean session) implies that the
     // party corresponding to the received ephemeral key actually equals the
     // party corresponding to the received static key.
-    // Note that Owl lets us reason about this detail modularly, while other
-    // efforts need to glue to first transport message into the handshake for
-    // security.
-
-
-    // This boolean is initially false, but gets set to true after the first
-    // transport message. 
-    tkr_recvd : (x:Bool<adv>{(x == true /\ resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph]) ==> 
-        (n_pk =idx n_eph /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)))}),
-    // If we have a clean session, AND n_pk =idx n_eph (the two indices are
-    // equal, which is implied by the boolean) then we get the correct,
-    // authenticated, secret key. Otherwise, we get a secret "junk" key that we can
-    // later rule out, since nobody ever sends a message under that "junk" key
+    tkr_recvd : (x:Bool<adv>{(x == true /\ resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph]) ==>
+        (n_pk =idx n_eph /\ tkr_eph == dhpk(get(E_init<i@n_eph>)))}),
+    // Clean session with an honest ephemeral: the honest chain key, whose
+    // plaintext type is uninhabited unless n_pk = n_eph. Clean through the PSK
+    // only: a secret junk key that nobody sends under.
     tkr_k_init_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then
-        if (n_pk =idx n_eph) /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)) then 
-              (x:SecName(KDF<enckey||enckey;0;transp_key_init_send<@n_eph,m>>(tkr_c7, 0x, 0x)){
+        if tkr_eph == dhpk(get(E_init<i@n_eph>)) then
+              (x:SecName(KDF<L7<i,j@n_eph,n_pk,m>(tkr_ikm); enckey||enckey; 0>){
                   happened(key_confirm_responder_recv<@m>(x))
                })
         else
-            (x:SecName(KDF<enckey||enckey;0;transp_key_init_send_corr>(tkr_c7, 0x, 0x)){
+            (x:SecName(KDF<L7_corr_resp<j@n_pk,m>(tkr_eph); enckey||enckey; 0>){
                   happened(key_confirm_responder_recv<@m>(x))
              })
         else
-        Data<adv>, 
+        Data<adv>,
     tkr_k_resp_send : if resp_clean<j,n_pk,n_eph,m>[tkr_has_psk, tkr_eph] then
-        if n_pk =idx n_eph /\ exists i:idx. tkr_eph == dhpk(get(E_init<i@n_eph>)) then 
-            (x:SecName(KDF<enckey||enckey;1;transp_key_resp_send<@n_eph,m>>(tkr_c7, 0x, 0x)){
+        if tkr_eph == dhpk(get(E_init<i@n_eph>)) then
+            (x:SecName(KDF<L7<i,j@n_eph,n_pk,m>(tkr_ikm); enckey||enckey; 1>){
                   happened(key_confirm_responder_send<@m>(x))
                })
         else
-            (x:SecName(KDF<enckey||enckey;1;transp_key_resp_send_corr>(tkr_c7, 0x, 0x)){
+            (x:SecName(KDF<L7_corr_resp<j@n_pk,m>(tkr_eph); enckey||enckey; 1>){
                   happened(key_confirm_responder_send<@m>(x)) })
-        else Data<adv> 
+        else Data<adv>
 }
