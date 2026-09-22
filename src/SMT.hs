@@ -33,44 +33,66 @@ import qualified Data.Text.IO as T
 import Unbound.Generics.LocallyNameless
 import Unbound.Generics.LocallyNameless.Unsafe (unsafeUnbind)
 
+-- The module-level setup does not depend on the current type context and is by far
+-- the most expensive piece to produce (name disjointness alone is quadratic
+-- in the number of names), so it is shared across queries. The context setup
+-- is incremental: every new binder extends from its nearest ancestor's solver setup.
 smtSetup :: Sym ()
 smtSetup = do
     p_solverEnv <- view $ curMemo . memoSolverEnv
+    key <- liftCheck moduleFingerprint
     smtenv <- liftIO $ readIORef p_solverEnv
     case smtenv of
-      Just senv -> put senv
-      Nothing -> do
-            emitComment $ T.pack $ "SMT SETUP for typing query"
-            setupSMTOptions
-            setupAllFuncs 
-            setupIndexEnv
-            setupNameEnvRO
-            smtLabelSetup 
-            setupTyEnv 
-            thePrelude <- do
-                log <- use smtLog
-                prelude <- liftIO $ T.readFile "prelude.smt2"
-                return $ prelude <> T.pack "\n" <> renderSMTLog log
-            smtLog %= (\_ -> [])
-            smtPreludeSetup %= (\_ -> thePrelude)
+      Just senv | senv ^. smtGlobalKey == key -> put senv
+      _ -> do
+            stack <- view memoStack
+            ancestors <- liftIO $ mapM (readIORef . _memoSolverEnv) (drop 1 stack)
+            case [senv | Just senv <- ancestors, senv ^. smtGlobalKey == key] of
+              (senv : _) -> put senv
+              [] -> globalSMTSetup key
+            setupIndexEnvIncremental
+            setupTyEnvIncremental
+            ctxLog <- use smtLog
+            smtLog .= []
+            let ctxText = renderSMTLog ctxLog
+            smtContextText %= (\t -> if T.null t then ctxText else t <> T.pack "\n" <> ctxText)
             senv <- get
             liftIO $ writeIORef p_solverEnv $ Just senv
 
+-- Initialize a solver env with an empty log and type context. Keep fresh-name counter
+-- so that later context setup does not clash with the names declared here.
+globalSMTSetup :: ModuleFingerprint -> Sym ()
+globalSMTSetup key = do
+    ref <- view globalSMTSetupCache
+    cached <- liftIO $ readIORef ref
+    case cached of
+      Just (k, senv) | k == key -> put senv
+      _ -> do
+            put initSolverEnv
+            emitComment $ T.pack $ "SMT SETUP: module-level declarations and axioms"
+            setupAllFuncs
+            setupNameEnvRO
+            smtLabelSetup
+            log <- use smtLog
+            prelude <- liftIO $ T.readFile "prelude.smt2"
+            smtLog .= []
+            smtPreludeText .= prelude
+            smtGlobalText .= renderSMTLog log
+            smtGlobalKey .= key
+            senv <- get
+            liftIO $ writeIORef ref $ Just (key, senv)
+
 smtTypingQuery s = fromSMT initSolverEnv s smtSetup
 
-setupSMTOptions :: Sym ()
-setupSMTOptions = do
-    o <- view $ z3Options
-    forM_ (M.assocs o) $ \(k, v) -> do
-        emit $ SApp [SAtom "set-option", SAtom k, SAtom v]
-
-setupIndexEnv :: Sym ()
-setupIndexEnv = do
+-- Append index env to the solver state, oldest first.
+setupIndexEnvIncremental :: Sym ()
+setupIndexEnvIncremental = do
     inds <- view $ inScopeIndices
-    assocs <- forM (map fst inds) $ \i -> do
+    known <- use symIndexEnv
+    let new = filter (\i -> not (M.member i known)) (map fst inds)
+    forM_ (reverse new) $ \i -> do
         x <- freshIndexVal (cleanSMTIdent $ show i)
-        return (i, x)
-    symIndexEnv .= M.fromList assocs
+        symIndexEnv %= M.insert i x
 
 sZero :: SExp
 sZero = SAtom "zero"
@@ -202,15 +224,18 @@ mkTy s t = do
     emitAssertion c
     return x
 
-setupTyEnv :: Sym ()
-setupTyEnv = do
+-- Append type context to the solver state, oldest first.
+setupTyEnvIncremental :: Sym ()
+setupTyEnvIncremental = do
     vE <- view tyContext
     go vE
     where
         go [] = return ()
         go ((x, (_, _, t)) : xs) = do
-            v <- mkTy (Just $ show x) t
-            varVals %= (M.insert x v)
+            known <- use varVals
+            when (not (M.member x known)) $ do
+                v <- mkTy (Just $ show x) t
+                varVals %= (M.insert x v)
             go xs
 
 depBindLength :: Alpha a => DepBind a -> Int

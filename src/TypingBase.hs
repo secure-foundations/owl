@@ -164,6 +164,10 @@ data MemoEntry senv = MemoEntry {
     _memoSolverEnv :: IORef (Maybe senv)
 }
 
+-- Key type to uniquely identify the current module environment, for caching SMT query setup.
+-- See `moduleFingerprint` for contents.
+type ModuleFingerprint = (Int, Int, [(Maybe String, [Int])])
+
 data Env senv = Env { 
     -- These below must only be modified by the trusted functions, since memoization
     -- depends on them
@@ -183,6 +187,7 @@ data Env senv = Env {
     _freshCtr :: IORef Integer,
     _smtCache :: IORef (M.Map Int Bool),
     _memoStack :: [MemoEntry senv],
+    _globalSMTSetupCache :: IORef (Maybe (ModuleFingerprint, senv)),
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
     _typeCheckLogDepth :: IORef Int,
@@ -337,7 +342,28 @@ writeSMTCache = do
     cache <- liftIO $ readIORef cacheref
     filepath <- view $ envFlags . fFilePath
     let hintsFile = filepath ++ ".smtcache"
-    liftIO $ BS.writeFile hintsFile $ encode cache
+    -- Failed queries are not persisted to disk since they include `unknown` results,
+    -- which might be dependent on the specific run conditions.
+    liftIO $ BS.writeFile hintsFile $ encode $ M.filter id cache
+
+-- Compute the fingerprint for the current module environment. The fingerprint tuple includes
+-- the lengths of all module env state fields that go into the SMT query setup in `SMT.globalSMTSetup`.
+-- Since declarations only add to these state fields, the fingerprint changes whenever any new declaration
+-- is processed. Even if an old cached setup is reused, it can't be unsound since it can only be missing 
+-- declarations or axioms.
+moduleFingerprint :: Check' senv ModuleFingerprint
+moduleFingerprint = do
+    oms <- view openModules
+    mc <- view modContext
+    dfs <- view detFuncs
+    let modSig mb = [ length (_flowAxioms mb), length (_predicates mb),
+                      length (_advCorrConstraints mb), length (_tyDefs mb),
+                      length (_odh mb),
+                      length (_nameTypeDefs mb), length (_userFuncs mb),
+                      length (_nameDefs mb), length (_modules mb),
+                      -- making an abstract name concrete replaces its entry
+                      length [() | (_, b) <- _nameDefs mb, (_, AbstractName) <- [unsafeUnbind b]] ]
+    return (length dfs, length mc, map (\(n, mb) -> (fmap show n, modSig mb)) oms)
 
 loadSMTCache :: Check' senv ()
 loadSMTCache = do
