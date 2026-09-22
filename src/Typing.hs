@@ -2029,7 +2029,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
       (EDebug (DebugPrintTyContext anf)) -> do
           tC <- view tyContext
           let tC' = if anf then removeAnfVars tC else tC
-          liftIO $ putDoc $ owlprettyTyContext tC'
+          liftPutDoc $ owlprettyTyContext tC'
           getOutTy ot $ tUnit
       (EDebug (DebugPrintExpr e)) -> do
           liftIO $ putStrLn $ show $ owlpretty e
@@ -3507,13 +3507,15 @@ typeError' msg = do
                     local (set inTypeError True) $ (removeAnfVars <$> view tyContext) >>= normalizeTyContext
     let rep = E.Err Nothing msg [(pos, E.This msg)] info
     let diag = E.addFile (E.addReport def rep) (fn) f  
-    liftIO $ putDoc $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line <> pretty "====================" <> line
+    noColor <- view $ envFlags . fNoColor
+    let putDoc' d = liftIO $ putDoc $ if noColor then unAnnotate d else d
+    putDoc' $ owlpretty "Type context" <> line <> pretty "===================" <> line <> owlprettyTyContext tyc <> line <> pretty "====================" <> line
     e <- ask
-    E.printDiagnostic S.stdout True True 4 E.defaultStyle diag 
+    E.printDiagnostic S.stdout True (not noColor) 4 E.defaultStyle diag 
     pc <- view pathCondition
     case pc of
       [] -> return ()
-      _ -> liftIO $ putDoc $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
+      _ -> putDoc' $ owlpretty "Path condition: " <> list (map owlpretty pc) <> line
     writeSMTCache
     -- Uncomment for debugging
     -- rs <- view tcRoutineStack

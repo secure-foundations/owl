@@ -119,7 +119,8 @@ resolveError pos msg = do
     f <- view $ flags . fFileContents
     let rep = Err Nothing msg [(unignore pos, This ("Resolution error: " ++ msg))] []
     let diag = addFile (addReport def rep) (fn) f  
-    printDiagnostic stdout True True 4 defaultStyle diag 
+    noColor <- view $ flags . fNoColor
+    printDiagnostic stdout True (not noColor) 4 defaultStyle diag
     Resolve $ lift $ throwError () 
 
 resolveDepBind :: Alpha a => DepBind a -> (a -> Resolve a) -> Resolve (DepBind a)
