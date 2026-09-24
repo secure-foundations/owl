@@ -219,7 +219,6 @@ kdf_scope WG_KDF {
                        aad x. true
                        nonce aead_counter_msg1_C2
         
-    corr<i,n,m> [E_init<i@n>] ==> [KDF<L1<i@n,m>;kdfkey||enckey;0>]
 
     // -----------------------------------------------------------------
     // Rule L2 and L2_corr: Derive C3 via ODH (S_init x S_resp)
@@ -341,29 +340,6 @@ kdf_scope WG_KDF {
     kdf L7_corr_resp<j@n,m>(x) : KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>, 0x, 0x ->
         strict transp_key_init_send_corr ||
         strict transp_key_resp_send_corr
-
-    // Corruption flows for the chain names: an output is corrupt when its salt
-    // and every secret ikm atom are. The L1 flow from E_init is declared above.
-    // L6_corr_resp has a public term salt, so it is corrupt exactly when the PSK is.
-    corr<i,n,m>[x] [KDF<L2<i@n,n,m>;kdfkey||enckey;0>] ==> [KDF<L3_corr<i@n,m>(x);kdfkey||enckey;0>]
-    corr<i,n,m>[x] [KDF<L3_corr<i@n,m>(x);kdfkey||enckey;0>] ==> [KDF<L4_corr<i@n,m>(x);kdfkey;0>]
-    corr<i,n,m>[x] [KDF<L4_corr<i@n,m>(x);kdfkey;0>] ==> [KDF<L5_corr<i@n,m>(x);kdfkey;0>]
-    corr<i,n,m>[x] [KDF<L5_corr<i@n,m>(x);kdfkey;0>] /\ [psk<@n,m>] ==> [KDF<L6_corr<i@n,m>(x, get(psk<@n,m>));kdfkey||nonce||enckey;0>]
-    corr<i,n,m>[x] [KDF<L5_corr<i@n,m>(x);kdfkey;0>] ==> [KDF<L6_corr<i@n,m>(x, 0x0000000000000000000000000000000000000000000000000000000000000000);kdfkey||nonce||enckey;0>]
-    corr<j,n,m>[x] [KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7_corr_resp<j@n,m>(x);enckey||enckey;0>]
-    corr<j,n,m>[x] [KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7_corr_resp<j@n,m>(x);enckey||enckey;1>]
-    corr<i,n,m> [S_resp<@m>] ==> [KDF<L1<i@n,m>;kdfkey||enckey;0>]
-    corr<i,n_eph,n_pk,m> [KDF<L1<i@n_eph,m>;kdfkey||enckey;0>] /\ [S_init<@n_pk>] ==> [KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>]
-    corr<i,n_eph,n_pk,m> [KDF<L1<i@n_eph,m>;kdfkey||enckey;0>] /\ [S_resp<@m>] ==> [KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L2<i@n_eph,n_pk,m>;kdfkey||enckey;0>] ==> [KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>] /\ [E_init<i@n_eph>] ==> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L3<i,j@n_eph,n_pk,m>;kdfkey||enckey;0>] /\ [E_resp<j@m>] ==> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>] /\ [S_init<@n_pk>] ==> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L4<i,j@n_eph,n_pk,m>;kdfkey;0>] /\ [E_resp<j@m>] ==> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>] /\ [psk<@n_pk,m>] ==> [KDF<L6<i,j@n_eph,n_pk,m>(get(psk<@n_pk,m>));kdfkey||nonce||enckey;0>]
-    corr<i,j,n_eph,n_pk,m> [KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>] ==> [KDF<L6<i,j@n_eph,n_pk,m>(0x0000000000000000000000000000000000000000000000000000000000000000);kdfkey||nonce||enckey;0>]
-    corr<i,j,n_eph,n_pk,m>[x] [KDF<L6<i,j@n_eph,n_pk,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7<i,j@n_eph,n_pk,m>(x);enckey||enckey;0>]
-    corr<i,j,n_eph,n_pk,m>[x] [KDF<L6<i,j@n_eph,n_pk,m>(x);kdfkey||nonce||enckey;0>] ==> [KDF<L7<i,j@n_eph,n_pk,m>(x);enckey||enckey;1>]
 
 } // end kdf_scope WG_KDF
 
