@@ -102,6 +102,10 @@ def init_stage2<i@n,m>
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
         corr_case E_init<i@n> in
         corr_case E_resp<j@m> in
+        // A public c4 is not the salt of any secret off-chain L4_corr instance.
+        forall i':idx, n':idx, m':idx { forall x:bv {
+            secret_neq_lemma(c4, get(KDF<L3_corr<i'@n',m'>(x); kdfkey||enckey; 0>))
+        } };
         let c5 = kdf<L4<i,j@n,n,m>, L4_corr<i@n,m>(msg2_ephemeral); kdfkey; 0>(c4, ss, 0x) in
 
         // Derive C6 via ODH L5 (S_init x E_resp)
@@ -109,6 +113,10 @@ def init_stage2<i@n,m>
         let ss_msg2_eph_s_init = dh_combine(msg2_ephemeral, get(S_init<@n>)) in
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
         corr_case KDF<L4<i,j@n,n,m>;kdfkey;0> when !init_safe<i,n,m>[] in
+        // A public c5 is not the salt of any secret off-chain L5_corr instance.
+        forall i':idx, n':idx, m':idx { forall x:bv {
+            secret_neq_lemma(c5, get(KDF<L4_corr<i'@n',m'>(x); kdfkey; 0>))
+        } };
         let c6 = kdf<L5<i,j@n,n,m>, L5_corr<i@n,m>(msg2_ephemeral); kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x) in
 
         // Derive C7 and tau and k0 from C6 using the PSK.

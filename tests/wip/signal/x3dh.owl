@@ -1,12 +1,17 @@
 // X3DH with the exact compromise conditions (no cross-party corruption flows):
 //   - bob_good: some DH pair of the master secret has both keys secret
-//   - the corr rules for ma1, ae2, be2, mb2 state the exact condition per direction
+//   - no corr flows between keys other than the long_sskB / long_skB
+//     same-key link; the only other flows are for ma1 and mb2 in the sessions
+//     where a party encrypts under adversary-computable data (see
+//     CORRUPTION ASSUMPTIONS)
 //   - one off-chain rule per role (L1_badA / L1_badB), each guarded by
 //     "some honest DH atom has both keys secret"
 //   - Alice checks is_group_elem on the verified signed prekey and splits on
 //     whether it is Bob's honest one
 // The theorem covers a compromised long-term key of Alice with an honest
-// ephemeral (SK protected by DH2, DH3) and a leaked one-time prekey (DH1, DH2, DH3).
+// ephemeral (SK protected by DH2, DH3), a leaked one-time prekey (DH1, DH2, DH3),
+// and, for ma1, a compromise of both of Alice's handshake keys with an honest
+// ratchet key ae2 and signed prekey bs (protected by DH(ae2, bs)).
 //
 // Alice's initial ratchet step follows [DR] 3.3 / 7.1:
 // RK_1 || CK_A = KDF_RK(SK, DH(ae2, bs)), with Bob's signed prekey bs as his
@@ -187,52 +192,21 @@ struct bob_message1 {
 // the L1_badB rules, not by a flow corr [long_skA] ==> [ae1]: that flow would
 // discard the guarantee X3DH gives when Alice's long-term key is
 // compromised but her ephemeral is honest (SK protected by DH2 and DH3).
-
 corr [long_sskB] ==> [long_skB]
 corr [long_skB] ==> [long_sskB]
-// if Bob's long-term signing key is corrupt, then Bob's ephemeral key bs is also
-// corrupt (because long_sskB signs bs). bo serves to make each computed
-// premaster secret unique per session but is not meant to provide secrecy by
-// itself, so we assume that if bs is corrupted then bo is also corrupted.
-corr [long_sskB] ==> [bs]
-corr [bs] ==> [bo]
 
-// No cross-party flows (corr [bs] ==> [long_skA], corr [ae1] ==> [long_skB],
-// corr [bo] ==> [ae1]): a leaked one-time key of Bob does not reveal Alice's
-// ephemeral.
+// Alice authenticates bs only by Bob's signature. With long_skB (hence
+// long_sskB) corrupt, the adversary signs its own prekey g^y and computes
+// every DH value of Alice's session: dh(g^y, long_skA), dh(long_skB, ae1),
+// dh(g^y, ae1), dh(b1, ae1) for its own b1, and dh(g^y, ae2).
+corr [long_skB] ==> [ma1]
 
-// The adversary can compute the X3DH master secret exactly when it holds one
-// key of each DH pair: s1 = dh(bs, long_skA), s2 = dh(long_skB, ae1),
-// s3 = dh(bs, ae1), s4 = dh(bo, ae1). Owl does not emit the axiom that a
-// name derived from corrupt inputs is corrupt, so the messages and ratchet
-// keys protected by the master secret carry that condition explicitly. The
-// two directions differ:
-//
-// Alice's direction (ma1, her ratchet key ae2). Alice uses her own honest
-// ae1, the verified bs and the out-of-band-verified long_skB; only bo is
-// unauthenticated, and a forged bo gives the adversary s4 for free. Under
-// long_skB ==> long_sskB ==> bs ==> bo the condition is exactly
-//   ([bs] \/ ([long_skA] /\ [ae1])) /\ ([long_skB] \/ [ae1]),
-// i.e. one of the three conjunctions below. In particular Alice's message
-// stays secret when long_skA alone is compromised (DH2, DH3 protect it) or
-// when bo alone leaks (DH1, DH2, DH3 protect it).
-corr [bs] /\ [long_skB] ==> [ma1]
-corr [bs] /\ [ae1] ==> [ma1]
-corr [long_skA] /\ [ae1] ==> [ma1]
-
-corr [bs] /\ [long_skB] ==> [ae2]
-corr [bs] /\ [ae1] ==> [ae2]
-corr [long_skA] /\ [ae1] ==> [ae2]
-
-// Bob's direction (mb2, his ratchet key be2). Bob cannot authenticate
-// Alice's ephemeral: an adversary may send its own a1 = g^x, and then
-// knows s2, s3, s4 itself, so only s1 = dh(bs, long_skA) protects the key
-// Bob derives. Bob's reply is therefore secret only when bs and long_skA
-// are both honest (the "compromised signed prekey allows impersonation to
-// Bob" observation of [KBB]; a compromised long_skA allows it trivially).
-corr [bs] ==> [be2]
-corr [long_skA] ==> [be2]
-
+// Bob cannot authenticate Alice's ephemeral: an adversary may send its own
+// a1 = g^x and a4 = g^z, and then knows s2, s3, s4 and DH(a4, bs) itself, so
+// only s1 = dh(bs, long_skA) protects the keys Bob derives. Bob's reply is
+// therefore secret only when bs and long_skA are both honest (the
+// "compromised signed prekey allows impersonation to Bob" observation of
+// [KBB]; a compromised long_skA allows it trivially).
 corr [bs] ==> [mb2]
 corr [long_skA] ==> [mb2]
 
