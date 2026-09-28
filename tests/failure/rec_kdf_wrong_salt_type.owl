@@ -1,0 +1,17 @@
+locality alice
+
+kdf_scope KChain {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> L_step<i>
+        | 0 : k0, 0x, 0x02
+        | succ(i') : KDF<L_step<i'>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}
+
+// SHOULD FAIL: the hint L_step<succ(i)> needs the predecessor K<i> as salt,
+// but k_succ_i is K<succ(i)>.
+def bad_wrong_pred<i>(k_succ_i : SecName(KDF<L_step<succ(i)>; kdfkey; 0>)) @ alice
+    : if sec(KDF<L_step<succ(i)>; kdfkey; 0>) then SecName(KDF<L_step<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<L_step<succ(i)>; kdfkey; 0> in
+    let k = kdf<L_step<succ(i)>; kdfkey; 0>(k_succ_i, 0x, 0x02) in
+    k

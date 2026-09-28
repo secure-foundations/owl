@@ -1,0 +1,17 @@
+// Corruption propagates down a chain without user corr flows: every key
+// position of L2 is corrupt when k is.
+locality alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    name X : DH @ alice
+    name Y : DH @ alice
+    kdf L1 : k, 0x, 0x -> strict kdfkey
+    odh L2 : KDF<L1;kdfkey;0>, dh_ss(X, Y), 0x -> strict kdfkey
+    kdf L3 : 0x, KDF<L2;kdfkey;0>, 0x01 -> strict nonce
+}
+
+def alice_main() @ alice : Unit =
+    assert (corr(k) /\ corr(X) ==> corr(KDF<L2;kdfkey;0>));
+    assert (corr(k) /\ corr(Y) ==> corr(KDF<L3;nonce;0>));
+    ()

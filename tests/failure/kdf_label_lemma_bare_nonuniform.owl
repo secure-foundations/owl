@@ -1,0 +1,21 @@
+// kdf_label_lemma at a bare index of a rule whose succ case mentions the
+// predecessor (its salt is the previous instance): the case is not
+// determined and the two cases differ, so the lemma is rejected.
+
+locality alice
+locality bob
+
+kdf_scope S {
+    name A<i> : DH @ alice
+    name B<i> : DH @ bob
+    name r : kdfkey @ alice, bob
+
+    rec_odh<i> L<i>
+        | 0        : r,                        dh_ss(A<0>, B<0>), 0x
+        | succ(i') : KDF<L<i'>; kdfkey; 0>,   dh_ss(A<i>, B<i>), 0x
+        -> strict kdfkey
+}
+
+def bare<i>() @ alice : Unit =
+    kdf_label_lemma<KDF<L<i>; kdfkey; 0>>();
+    ()

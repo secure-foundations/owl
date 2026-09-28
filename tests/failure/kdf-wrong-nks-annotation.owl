@@ -1,0 +1,14 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // Rule L1 declares a single kdfkey output
+    kdf L1 : k, 0x, 0x01 -> strict kdfkey
+}
+
+// SHOULD FAIL: return type says SecName(KDF<L1;enckey;0>) but L1 declares kdfkey output
+def alice_main() @ alice : SecName(KDF<L1;enckey;0>) =
+    kdf<L1;kdfkey;0>(get(k), 0x, 0x01)

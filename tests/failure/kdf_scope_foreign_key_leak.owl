@@ -1,0 +1,22 @@
+// A rule of scope S2 keyed by k1, a key of scope S1: with k1 secret and k2
+// corrupt, B names the value a strict secret key while the same call hinted
+// into S1 is out of bounds and public. Rejected at the declaration of B.
+locality alice
+name secretmsg : nonce @ alice
+kdf_scope S1 {
+    name k1 : kdfkey @ alice
+    kdf A : k1, 0x, 0x01 -> strict kdfkey
+}
+kdf_scope S2 {
+    name k2 : kdfkey @ alice
+    kdf B : k1, k2, 0x -> strict enckey Name(secretmsg)
+}
+corr [k1] ==> [secretmsg]
+corr adv ==> [k2]
+def alice_main() @ alice : Unit =
+    corr_case k1 in
+    let kb = kdf<B; enckey; 0>(get(k1), get(k2), 0x) in
+    let leak = kdf<A; kdfkey; 0>(get(k1), get(k2), 0x) in
+    output leak;
+    assert([k1] <= adv);
+    ()

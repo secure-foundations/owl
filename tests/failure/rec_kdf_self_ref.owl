@@ -1,0 +1,10 @@
+locality alice
+
+kdf_scope KBad {
+    name k0 : kdfkey @ alice
+
+    // SHOULD FAIL: the succ case references L_bad<succ(i')>, which is not smaller.
+    rec_kdf<i> L_bad<i>
+        | 0 : k0, 0x, 0x01
+        | succ(i') : KDF<L_bad<succ(i')>; kdfkey; 0>, 0x, 0x01 -> strict kdfkey
+}

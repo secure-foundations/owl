@@ -132,13 +132,11 @@ data SolverEnv = SolverEnv {
     _symIndexEnv :: M.Map IdxVar SExp,
     _symLabelVarEnv :: M.Map (AlphaOrd ResolvedPath) SExp,
     _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
-    _kdfPermCounter :: M.Map (AlphaOrd NameType) SExp,
     _memoInterpretAExp :: M.Map (AlphaOrd AExpr) SExp,
     _memoInterpretProp :: M.Map (AlphaOrd Prop) SExp,
     _varVals :: M.Map DataVar SExp,
     _funcInterps :: M.Map String (SExp, Int),
     _predInterps :: M.Map String SExp,
-    _inODHInterp :: Maybe SExp,
     _smtLog :: [SExp],
     -- The setup text is kept in pieces, which are never joined (see SMTQuery):
     _smtPreludeText :: T.Text,  -- contents of prelude.smt2
@@ -151,7 +149,7 @@ data SolverEnv = SolverEnv {
                                     
 type Check = Check' SolverEnv
 
-initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty Nothing [] mempty mempty (0, 0, []) mempty True 0
+initSolverEnv_ hk = SolverEnv hk M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty M.empty [] mempty mempty (0, 0, []) mempty True 0
 
 
 newtype Sym a = Sym {unSym :: ReaderT (Env SolverEnv) (StateT SolverEnv (ExceptT String IO)) a }
@@ -282,29 +280,6 @@ mkPred pth@(PRes (PDot p s)) = do
                         return ()
                 predInterps %= (M.insert sn (SAtom sn))
                 return $ SAtom sn
-
-symInODHProp :: Sym SExp
-symInODHProp = do
-    o <- use inODHInterp 
-    case o of
-      Just v -> return v
-      Nothing -> do
-          x1 <- freshSMTName
-          x2 <- freshSMTName
-          x3 <- freshSMTName
-          withSMTVars [s2n x1, s2n x2, s2n x3] $ do
-              p <- liftCheck $ inODHProp (aeVar' $ s2n x1) (aeVar' $ s2n x2) (aeVar' $ s2n x3)
-              v <- interpretProp p
-              emitRaw $ "(declare-fun %inODHProp (Bits Bits Bits) Bool)"
-              let ax = sForall 
-                         [(SAtom x1, bitstringSort), (SAtom x2, bitstringSort), (SAtom x3, bitstringSort)]
-                         (SApp [SAtom "=", sApp [SAtom "%inODHProp", SAtom x1, SAtom x2, SAtom x3], v])
-                         [sApp [SAtom "%inODHProp", SAtom x1, SAtom x2, SAtom x3]]
-                         ("inODHDef")
-              emitAssertion ax
-              return $ SAtom "%inODHProp"
-              assign inODHInterp $ Just $ SAtom "%inODHProp"
-              return $ SAtom "%inODHProp"
 
 renderSMTLog :: [SExp] -> T.Text
 renderSMTLog exps = 
@@ -511,12 +486,6 @@ sDistinct :: [SExp] -> SExp
 sDistinct [] = sTrue
 sDistinct (x:xs) = sAnd2 (sNotIn x xs) (sDistinct xs)
 
-sAtMostOne :: [SExp] -> SExp
-sAtMostOne xs = 
-    let sum = SApp $ SAtom "+" : (map (\x -> SApp [SAtom "ite", x, SAtom "1", SAtom "0"]) xs) 
-    in
-    SApp [SAtom "<=", sum, SAtom "1"]
-
 makeHex :: String -> Sym SExp
 makeHex s = do
     liftCheck $ assert  "makeHex: string length must be even" (length s `mod` 2 == 0)
@@ -700,6 +669,10 @@ symIndex idx@(IVar ispan iname v) = do
           indices <- view $ inScopeIndices
           liftIO $ putStrLn $ "Unknown index: " ++ show (unignore iname)
           liftCheck $ typeError (show $ owlpretty "SMT ERROR: unknown index " <> owlpretty iname <> owlpretty " under inScopeIndices " <> (list $ map (owlpretty . fst) indices) <> owlpretty " and iEnv " <> (list $ map (owlpretty . fst) $ M.toList iEnv))
+symIndex IZero = return $ SAtom "IndexZero"
+symIndex (ISucc i) = do
+    vi <- symIndex i
+    return $ SApp [SAtom "IndexSucc", vi]
 
 data SMTNameDef = 
     SMTBaseName (SExp, ResolvedPath) (Bind ([IdxVar], [IdxVar]) (Maybe NameType))
@@ -734,16 +707,6 @@ sPlus xs = SApp $ (SAtom "+") : xs
 sNameKindLength :: SExp -> SExp
 sNameKindLength n = SApp [SAtom "NameKindLength", n]
 
-getKDFArgs :: SMTNameKindOf a => AExpr -> AExpr -> AExpr -> [a] -> Int -> Sym (SExp, SExp, SExp, SExp, SExp)
-getKDFArgs a b c nks j = do
-    va <- interpretAExp a
-    vb <- interpretAExp b
-    vc <- interpretAExp c
-    nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-    let start = sPlus $ take j nk_lengths
-    let segment = nk_lengths !! j
-    return (va, vb, vc, start, segment)
-
 getSymName :: NameExp -> Sym SExp
 getSymName ne = do 
     ne' <- liftCheck $ normalizeNameExp ne
@@ -757,19 +720,47 @@ getSymName ne = do
           v <- getSymName ne
           vi <- symIndex i
           return $ SApp [SAtom "KEMName", v, vi]
-      KDFName a b c nks j nt _ -> do
-          va <- interpretAExp a
-          vb <- interpretAExp b
-          vc <- interpretAExp c
-          nk_lengths <- liftCheck $ forM nks $ \nk -> sNameKindLength <$> smtNameKindOf nk
-          let start = sPlus $ take j nk_lengths
-          let segment = nk_lengths !! j
-          return $ SApp [SAtom "KDFName", va, vb, vc, start, segment]
+      KDFName (KDFRuleRef l (is1, is2) as) _ j -> do
+        sl <- smtName l
+        vs1 <- mapM symIndex is1
+        vs2 <- mapM symIndex is2
+        vas <- mapM interpretAExp as
+        return $ sKDFName sl (vs1 ++ vs2 ++ vas) (SAtom $ show j)
+
+-- Output j of the instance of KDF rule l with the given parameters
+sKDFName :: String -> [SExp] -> SExp -> SExp
+sKDFName l params j = SApp $ (SAtom $ "%kdf_" ++ l) : params ++ [j]
 
 symNameExp :: NameExp -> Sym SExp
 symNameExp ne = do
     n <- getSymName ne
     return $ SApp [SAtom "ValueOf", n]
+
+-- The trigger of a user-written forall: the largest subterm of the body that
+-- applies an uninterpreted function and mentions the bound variable. Left to
+-- the solver, a fact like `forall i. .. a<succ(i)> .. b<i> ..` may be triggered
+-- by `b<i>` alone, and two such facts then produce new index terms forever.
+quantPattern :: String -> SExp -> [SExp]
+quantPattern x body = 
+    case L.sortOn (negate . size) (candidates body) of
+      [] -> []
+      (t : _) -> [t]
+    where
+        -- (`eq` is a function of the prelude, so an equation x == t(i) is triggered by itself)
+        interpreted = ["and", "or", "not", "implies", "=>", "=", "ite", "distinct", "!",
+                       "+", "-", "*", "<", "<=", ">", ">=", "true", "false", "let"]
+        candidates t = case t of
+            SApp (SAtom f : _) | f `elem` ["forall", "exists"] -> []
+            SApp (SAtom f : args) | not (f `elem` interpreted) && mentions t -> [t]
+            SApp ts -> concatMap candidates ts
+            _ -> []
+        mentions t = case t of
+            SAtom y -> y == x
+            SApp ts -> any mentions ts
+            _ -> False
+        size t = case t of
+            SApp ts -> 1 + sum (map size ts)
+            _ -> (1 :: Int)
 
 sForall :: [(SExp, SExp)] -> SExp -> [SExp] -> String -> SExp
 sForall vs bdy pats qid = 
@@ -846,12 +837,6 @@ interpretProp = withPropMemo $ \p -> do
       PAADOf ne a -> do
           p <- liftCheck $ extractAAD ne a
           interpretProp p
-      PInODH s ikm info -> do
-          pv <- symInODHProp
-          v1 <- interpretAExp s
-          v2 <- interpretAExp ikm
-          v3 <- interpretAExp info
-          return $ sApp [pv, v1, v2, v3]
       (PEq p1 p2) -> do
           v1 <- interpretAExp p1
           v2 <- interpretAExp p2
@@ -864,21 +849,17 @@ interpretProp = withPropMemo $ \p -> do
       (PQuantBV q _ ip) -> do
           (x, p) <- liftCheck $ unbind ip
           v <- withSMTVars [x] $ interpretProp p 
-          canTrig <- liftCheck $ quantFree p
-          let trig = if canTrig then [v] else []
           let xname = cleanSMTIdent $ show x
           case q of
-            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v trig $ "forall_" ++ xname
-            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v trig $ "exists_" ++ xname
+            Forall -> return $ sForall [(SAtom xname, bitstringSort)] v (quantPattern xname v) $ "forall_" ++ xname
+            Exists -> return $ sExists [(SAtom xname, bitstringSort)] v [] $ "exists_" ++ xname
       (PQuantIdx q _ ip) -> do
           (i, p') <- liftCheck $ unbind ip
           v <- withSMTIndices [(i, IdxGhost)] $ interpretProp p'
           let iname = cleanSMTIdent $ show i
-          canTrig <- liftCheck $ quantFree p
-          let trig = if canTrig then [v] else []
           case q of
-            Forall -> return $ sForall [(SAtom iname, indexSort)] v trig $ "forall_" ++ iname 
-            Exists -> return $ sExists [(SAtom iname, indexSort)] v trig $ "exists_" ++ iname
+            Forall -> return $ sForall [(SAtom iname, indexSort)] v (quantPattern iname v) $ "forall_" ++ iname 
+            Exists -> return $ sExists [(SAtom iname, indexSort)] v [] $ "exists_" ++ iname
       (PHonestPKEnc ne a) -> do
           vn <- getSymName ne
           a' <- interpretAExp a
@@ -938,7 +919,7 @@ instance SMTNameKindOf NameType where
           NT_StAEAD _ _ _ _ -> return $ SAtom "Enckey"
           NT_PKE _ -> return $ SAtom "PKEkey"
           NT_Sig _ -> return $ SAtom "Sigkey"
-          NT_KDF _ _ -> return $ SAtom "KDFkey"
+          NT_KDF -> return $ SAtom "KDFkey"
           NT_MAC _ -> return $ SAtom "MACkey"
           NT_Nonce l -> do
               let v = lengthConstant l 

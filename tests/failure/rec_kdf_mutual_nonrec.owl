@@ -1,0 +1,14 @@
+locality alice
+
+// SHOULD FAIL: a non-recursive rule in a recursive component has no recursion
+// index, so LA<j> -> LB<j> cannot be ranked.
+kdf_scope Bad {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> LB<i>
+        | 0        : k0,                     0x, 0x01
+        | succ(i') : KDF<LA<i'>; kdfkey; 0>, 0x, 0x01
+        -> strict kdfkey
+
+    kdf LA<j> : KDF<LB<j>; kdfkey; 0>, 0x, 0x02 -> strict kdfkey
+}

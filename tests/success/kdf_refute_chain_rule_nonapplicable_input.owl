@@ -1,0 +1,24 @@
+// With A and C corrupt, L1(y) is not applicable for any y, so KDF<L1(y)> is
+// never a name and LR(y) is refuted too: the call below is out of bounds.
+// (With C secret, dh_combine(y, get(C)) could make some L1(y) applicable.)
+// The two rules are separated at declaration time by their info constants.
+
+locality alice
+
+kdf_scope G {
+    name A : DH @ alice
+    name B : DH @ alice
+    name C : DH @ alice
+    odh L1(y) where (is_group_elem(y))
+      : 0x, dh_ss(A, B) ++ dh_combine(y, get(C)), 0x01 -> strict kdfkey
+    kdf LR(y) where (is_group_elem(y))
+      : 0x, KDF<L1(y);kdfkey;0>, 0x02 -> strict kdfkey
+}
+
+corr adv ==> [A]
+corr adv ==> [C]
+
+def alice_main(g : Data<adv>, x : Data<adv>) @ alice : Unit =
+    corr_case B in
+    let k = kdf<L1(x); kdfkey; 0>(0x, dh_combine(g, get(B)) ++ dh_combine(x, get(C)), 0x01) in
+    ()

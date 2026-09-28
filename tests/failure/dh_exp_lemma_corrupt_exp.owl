@@ -1,0 +1,12 @@
+// With S corrupt the adversary can pick y with y^S = m.
+
+locality alice
+
+name S : DH @ alice
+name m : nonce @ alice
+
+def alice_main(y : Data<adv>) @ alice : Unit =
+    dh_exp_lemma<S, m>(y);
+    corr_case S in
+    assert (dh_combine(y, get(S)) != get(m));
+    ()

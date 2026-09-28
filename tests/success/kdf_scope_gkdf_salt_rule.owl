@@ -1,0 +1,19 @@
+// The salts differ only inside the gkdf term; disjointness needs KDF
+// injectivity.
+
+locality alice
+
+kdf_scope G {
+
+    name k : kdfkey @ alice
+
+    kdf L1 : gkdf<kdfkey; 0>(0x01, 0x, 0x), k, 0x -> strict kdfkey
+    kdf L2 : gkdf<kdfkey; 0>(0x02, 0x, 0x), k, 0x -> strict kdfkey
+
+}
+
+def main() @ alice : Unit =
+    corr_case k in
+    let s = kdf<;kdfkey;0>(0x01, 0x, 0x) in
+    let c1 = kdf<L1;kdfkey;0>(s, get(k), 0x) in
+    ()

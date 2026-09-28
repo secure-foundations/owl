@@ -46,6 +46,7 @@ extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path 
 
 extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann)
 extract' modbody = do
+    reportMaxKDFSliceLen
     owlExtrData <- preprocessModBody modbody
     concreteExtrData <- concretifyPass owlExtrData
     specs <- specExtractPass concreteExtrData

@@ -1,0 +1,17 @@
+// The output key would encrypt the DH exponent it is derived from.
+locality alice
+locality bob
+kdf_scope G {
+    name A : DH @ alice
+    name B : DH @ alice
+    odh L : 0x, dh_ss(A, B), 0x01 -> enckey Name(A)
+}
+corr [B] ==> [A]
+def alice_main() @ alice : Unit =
+    corr_case A in
+    corr_case B in
+    let ss = dh_combine(dhpk(get(A)), get(B)) in
+    let ek = kdf<L; enckey; 0>(0x, ss, 0x01) in
+    let c = aenc(ek, get(A)) in
+    output c to endpoint(bob);
+    ()

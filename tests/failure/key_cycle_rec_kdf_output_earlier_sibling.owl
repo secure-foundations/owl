@@ -1,0 +1,14 @@
+// Output 1 of L<i> mentions output 2 of the same instance, and output 2
+// mentions output 1: the outputs of an instance of a recursive rule are
+// ordered too, and output 2 may not mention the earlier output 1.
+locality alice
+kdf_scope G {
+    name k0 : kdfkey @ alice
+    rec_kdf<i> L<i>
+        | 0        : k0,                                 0x, 0x01
+        | succ(i') : KDF<L<i'>; kdfkey || enckey || enckey; 0>, 0x, 0x01
+        -> strict kdfkey
+        || enckey Name(KDF<L<i>; kdfkey || enckey || enckey; 2>)
+        || enckey Name(KDF<L<i>; kdfkey || enckey || enckey; 1>)
+}
+def alice_main() @ alice : Unit = ()

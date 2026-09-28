@@ -1,0 +1,21 @@
+// With k corrupt the call is not applicable for its hint L3, so every rule of
+// the scope must be refuted; L2(t) is refuted for all t. The rules are
+// separated at declaration time by their info constants.
+
+locality alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    name X : DH @ alice
+    name Y : DH @ alice
+
+    kdf L1 : k, 0x01, 0x01 -> strict kdfkey
+    odh L2(t) : 0x, dh_ss(X, Y) ++ t, 0x02 -> strict kdfkey
+    kdf L3 : 0x, KDF<L1;kdfkey;0>, 0x03 -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit =
+    corr_case k in
+    let c1 = kdf<L1;kdfkey;0>(get(k), 0x01, 0x01) in
+    let c2 = kdf<L3;kdfkey;0>(0x, c1, 0x03) in
+    ()

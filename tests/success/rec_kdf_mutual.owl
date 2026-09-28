@@ -1,0 +1,52 @@
+// Two mutually recursive rules: LB<succ(i')> is salted by LA<i'> (a forward
+// reference at a strictly smaller index) and LA<i> by LB<i> (same index,
+// earlier rule). Rank (index, declaration position) decreases on every edge.
+
+locality alice
+
+kdf_scope Mutual {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> LB<i>
+        | 0        : k0,                       0x, 0x01
+        | succ(i') : KDF<LA<i'>; kdfkey; 0>,   0x, 0x01
+        -> strict kdfkey
+
+    rec_kdf<i> LA<i>
+        | 0        : KDF<LB<0>; kdfkey; 0>,    0x, 0x02
+        | succ(i') : KDF<LB<i>; kdfkey; 0>,    0x, 0x02
+        -> strict kdfkey
+}
+
+def step_b0() @ alice
+    : if sec(k0) then SecName(KDF<LB<0>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    kdf<LB<0>; kdfkey; 0>(get(k0), 0x, 0x01)
+
+// A hint at a bare index variable selects no case (the instance is opaque),
+// so the generic Alice step is written for epoch succ(i), as for any
+// recursive rule; epoch 0 is its own def.
+def step_a0(kb : Name(KDF<LB<0>; kdfkey; 0>)) @ alice
+    : if sec(KDF<LB<0>; kdfkey; 0>) then Name(KDF<LA<0>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<LB<0>; kdfkey; 0> in
+    kdf<LA<0>; kdfkey; 0>(kb, 0x, 0x02)
+
+def step_a<i>(kb : Name(KDF<LB<succ(i)>; kdfkey; 0>)) @ alice
+    : if sec(KDF<LB<succ(i)>; kdfkey; 0>) then Name(KDF<LA<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<LB<succ(i)>; kdfkey; 0> in
+    kdf<LA<succ(i)>; kdfkey; 0>(kb, 0x, 0x02)
+
+def step_b<i>(ka : Name(KDF<LA<i>; kdfkey; 0>)) @ alice
+    : if sec(KDF<LA<i>; kdfkey; 0>) then Name(KDF<LB<succ(i)>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case KDF<LA<i>; kdfkey; 0> in
+    kdf<LB<succ(i)>; kdfkey; 0>(ka, 0x, 0x01)
+
+def two_rounds() @ alice
+    : if sec(k0) then SecName(KDF<LB<succ(succ(0))>; kdfkey; 0>) else Data<adv> ||kdfkey|| =
+    corr_case k0 in
+    let kb0 = kdf<LB<0>; kdfkey; 0>(get(k0), 0x, 0x01) in
+    let ka0 = kdf<LA<0>; kdfkey; 0>(kb0, 0x, 0x02) in
+    let kb1 = kdf<LB<succ(0)>; kdfkey; 0>(ka0, 0x, 0x01) in
+    let ka1 = kdf<LA<succ(0)>; kdfkey; 0>(kb1, 0x, 0x02) in
+    let kb2 = kdf<LB<succ(succ(0))>; kdfkey; 0>(ka1, 0x, 0x01) in
+    kb2

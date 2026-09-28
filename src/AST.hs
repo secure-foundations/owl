@@ -95,7 +95,11 @@ instance Show ResolvedPath where
     show (PDot x y) = show x ++ "." ++ y
 
 
+-- Index expressions. Binders are always variables; `0` and `succ` may appear
+-- at use sites of session (or ghost) indices.
 data Idx = IVar (Ignore Position) (Ignore String) IdxVar
+         | IZero
+         | ISucc Idx
     deriving (Show, Generic, Typeable)
 
 
@@ -128,11 +132,14 @@ data KDFStrictness = KDFStrict | KDFPub | KDFUnstrict
     deriving (Show, Generic, Typeable, Eq)
 
 
+-- A reference to an instance of a KDF rule: L<is@ps>(args)
+data KDFRuleRef = KDFRuleRef Path ([Idx], [Idx]) [AExpr]
+    deriving (Show, Generic, Typeable)
+
 data NameExpX = 
     NameConst ([Idx], [Idx]) Path [AExpr]
     | KEMName NameExp Idx
-    | KDFName AExpr AExpr AExpr [NameKind] Int NameType (Ignore Bool)
-           -- Ignore Bool is whether we trust that the name is well-formed
+    | KDFName KDFRuleRef [NameKind] Int -- Output j of a KDF rule instance
     deriving (Show, Generic, Typeable)
 
 
@@ -194,13 +201,18 @@ data PropX =
     | PIsConstant AExpr -- Internal use
     | PApp Path [Idx] [AExpr]
     | PAADOf NameExp AExpr         
-    | PInODH AExpr AExpr AExpr
     | PHonestPKEnc NameExp AExpr
     | PHonestKEMEncaps NameExp AExpr
     deriving (Show, Generic, Typeable)    
 
 data NameKind = NK_KDF | NK_DH | NK_Enc | NK_PKE | NK_Sig | NK_MAC | NK_KEM | NK_Nonce String
     deriving (Show, Generic, Typeable, Eq)
+
+-- The kinds whose length prelude.smt2 bounds below by the security parameter
+-- MinKDFSliceLen: a KDF output slice of one of these kinds is assumed collision
+-- resistant (kdf_collision_resistant_on_large_slices). Nonces are not among them; the extracted nonces are short.
+kdfInjKinds :: [NameKind]
+kdfInjKinds = [NK_KDF, NK_Enc, NK_MAC]
 
 type Prop = Spanned PropX
 
@@ -228,18 +240,12 @@ pEq x y = mkSpanned $ PEq x y
 pNot :: Prop -> Prop
 pNot p = mkSpanned $ PNot p
 
-pKDF a b c nks j res = 
-    pEq res (mkSpanned $ AEKDF a b c nks j)
-
 pFlow :: Label -> Label -> Prop
 pFlow l1 l2 = mkSpanned $ PFlow l1 l2
 
 pHappened :: Path -> ([Idx], [Idx]) -> [AExpr] -> Prop
 pHappened s ids xs = mkSpanned $ PHappened s ids xs
 
-
-data KDFPos = KDF_SaltPos | KDF_IKMPos
-    deriving (Show, Generic, Typeable, Eq)
 
 data NameTypeX =
     NT_DH
@@ -251,9 +257,7 @@ data NameTypeX =
     | NT_MAC Ty
     | NT_KEM NameType
     | NT_App Path ([Idx], [Idx]) [AExpr]
-    | NT_KDF KDFPos 
-        -- (Maybe (NameExp, Int, Int)) (Maybe (NameExp, Int, Int)) 
-        KDFBody
+    | NT_KDF -- kdfkey; its uses are given by the rules of its kdf_scope
     deriving (Show, Generic, Typeable)
 
 
@@ -323,8 +327,28 @@ type ModuleExp = Spanned ModuleExpX
 data DepBind a = DPDone a | DPVar Ty String (Bind DataVar (DepBind a))
     deriving (Show, Generic, Typeable)
 
-type KDFBody =  Bind ((String, DataVar), (String, DataVar), (String, DataVar)) 
-        [Bind [IdxVar] (Prop, [(KDFStrictness, NameType)])]
+-- KDF rules (see docs/kdf-scopes.md)
+
+type KDFCase = (AExpr, AExpr, AExpr) -- salt, ikm, info
+
+data KDFCases = 
+    KDFOneCase KDFCase
+    -- A rule recursive in one of its session indices. The Idx is that index: the
+    -- binder in the declaration, or the actual index once the rule is
+    -- instantiated. The zero case is read with the index equal to 0; the succ
+    -- case binds the predecessor i' and is read with the index equal to succ(i').
+    | KDFRecCases Idx KDFCase (Bind IdxVar KDFCase)
+    deriving (Show, Generic, Typeable)
+
+type KDFRuleParams = (([IdxVar], [IdxVar]), [DataVar])
+
+data KDFRule = KDFRule {
+    _kdfIsODH :: Bool,
+    _kdfWhere :: Prop,
+    _kdfCases :: KDFCases,
+    _kdfOutputs :: [(KDFStrictness, NameType)]
+}
+    deriving (Show, Generic, Typeable)
 
 
 -- Decls are surface syntax
@@ -342,7 +366,8 @@ data DeclX =
     | DeclInclude String
     | DeclCounter String (Bind ([IdxVar], [IdxVar]) Locality) 
     | DeclStruct String (Bind [IdxVar] (DepBind ())) -- Int is arity of indices
-    | DeclODH String (Bind ([IdxVar], [IdxVar]) (NameExp, NameExp, KDFBody)) 
+    | DeclKDFScope String [Decl]
+    | DeclKDFRule String (Bind KDFRuleParams KDFRule)
     | DeclTy String (Maybe Ty)
     | DeclNameType String (Bind (([IdxVar], [IdxVar]), [DataVar]) NameType)
     | DeclDetFunc String DetFuncOps Int
@@ -440,12 +465,8 @@ data ExprX =
 
 type Expr = Spanned ExprX
 
-type KDFSelector = (Int, [Idx])
-
 data CryptOp = 
-      CKDF [KDFSelector] [Either KDFSelector (String, ([Idx], [Idx]), KDFSelector)]
-           [NameKind]
-           Int 
+      CKDF [KDFRuleRef] [NameKind] Int -- hints, output kinds, selected output
       | CLemma BuiltinLemma
       | CAEnc 
       | CKEMDecaps
@@ -466,6 +487,9 @@ data BuiltinLemma =
       | LemmaConstant 
       | LemmaDisjNotEq 
       | LemmaCrossDH NameExp 
+      | LemmaSecretNeq
+      | LemmaDHExp NameExp NameExp -- indices of the second name may be omitted (quantified)
+      | LemmaKDFLabel NameExp
     deriving (Show, Generic, Typeable)
 
 
@@ -502,6 +526,8 @@ data FuncParam =
 
 $(makeClosedAlpha ''Position)
 
+makeLenses ''KDFRule
+
 instance Subst b Position
 
 instance Alpha a => Alpha (Spanned a)
@@ -512,6 +538,7 @@ instance Alpha Idx
 instance Alpha Endpoint
 instance Subst Idx Idx where
     isvar (IVar _ _ v) = Just (SubstName v)
+    isvar _ = Nothing
 instance Subst AExpr Idx
 instance Subst ResolvedPath Idx
 
@@ -556,10 +583,20 @@ instance Subst Idx NameExpX
 instance Subst AExpr NameExpX
 instance Subst ResolvedPath NameExpX
 
-instance Alpha KDFPos
-instance Subst Idx KDFPos
-instance Subst AExpr KDFPos
-instance Subst ResolvedPath KDFPos
+instance Alpha KDFRuleRef
+instance Subst Idx KDFRuleRef
+instance Subst AExpr KDFRuleRef
+instance Subst ResolvedPath KDFRuleRef
+
+instance Alpha KDFCases
+instance Subst Idx KDFCases
+instance Subst AExpr KDFCases
+instance Subst ResolvedPath KDFCases
+
+instance Alpha KDFRule
+instance Subst Idx KDFRule
+instance Subst AExpr KDFRule
+instance Subst ResolvedPath KDFRule
 
 instance Alpha NameTypeX
 instance Subst Idx NameTypeX

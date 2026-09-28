@@ -1,0 +1,7 @@
+locality alice
+
+name k : kdfkey @ alice
+name n : nonce @ alice
+
+// SHOULD FAIL: kdf/odh rules must be inside a kdf_scope block
+kdf L1 : k, 0x, 0x01 -> enckey Name(n)

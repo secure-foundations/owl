@@ -80,12 +80,6 @@
     :qid concat_prefix_postfix
 )))
 
-(assert (forall ((x Bits) (y Bits) (z Bits)) (!
-    (= (concat (concat x y) z) (concat x (concat y z)))
-    :pattern ((concat (concat x y) z))
-    :qid concat_assoc
-)))
-
 
 
 (declare-fun eq (Bits Bits) Bits)
@@ -336,7 +330,6 @@
 ; intersect. For soundness, this set must have measure zero
 
 (declare-fun KDF (Bits Bits Bits Int Int) Bits)
-(declare-fun KDFName (Bits Bits Bits Int Int) Name)
 
 (assert (forall ((x Bits) (y Bits) (z Bits) (i Int) (j Int)) (!
     (=>
@@ -346,10 +339,6 @@
     :pattern ((KDF x y z i j))
     :qid kdf_length
 )))
-
-; Abstract permission that the specified KDF hash has a certain name type
-; (name type given by last argument counter)
-(declare-fun KDFPerm (Bits Bits Bits Int Int Int) Bool)
 
 (assert (forall ((n1 Name) (n2 Name)) (!
     (=> (= TRUE (eq (ValueOf n1) (ValueOf n2)))
@@ -365,16 +354,34 @@
     :qid isconstant_neq_name
 )))
 
-; The below can be generalized
-(assert (forall ((a Bits) (x Bits) (y Bits) (n Name) (i Int) (j Int)) (!
-    (=> (and 
-            (HasNameKind n DHkey)
-            (IsConstant a))
-         (not (= TRUE (eq a (KDF x (dhpk (ValueOf n)) y i j)))))
-    :pattern ((IsConstant a) (eq a (KDF x (dhpk (ValueOf n)) y i j)))
-    :qid isconstant_neq_kdf_dhpk
-)))
+; The shortest KDF output slice assumed collision resistant: a security
+; parameter, in bytes. It is uninterpreted, and only the key kinds that a KDF
+; rule can output are bounded below by it (kdfInjKinds in src/AST.hs is the
+; same list). NonceLength is deliberately not: the extracted nonces are shorter
+; than any sensible value of it.
+; (concreteLength in src/Extraction/ExtractionBase.hs fixes the concrete sizes;
+; extraction prints the largest value they allow.)
+(declare-const MinKDFSliceLen Int)
+(assert (> MinKDFSliceLen 0))
+(assert (>= (NameKindLength KDFkey) MinKDFSliceLen))
+(assert (>= (NameKindLength Enckey) MinKDFSliceLen))
+(assert (>= (NameKindLength MACkey) MinKDFSliceLen))
 
+; Collision resistance of the KDF: slices of at least MinKDFSliceLen bytes, at
+; any offsets, collide only on equal inputs. The trigger needs an existing
+; equality between two KDF terms; do not loosen it.
+; NOTE: No axiom of this file, and no axiom the checker generates, may
+; bound the number of Bits values of a given length: no "the empty string is
+; unique", no exhaustive list of the strings of some length. Exhaustiveness may
+; be stated only under HasType (as for Bool and Unit). Otherwise, the collision
+; resistance axiom may run into cardinality-related unsoundness.
+(assert (forall ((a Bits) (b Bits) (c Bits) (i Int) (j Int) (a2 Bits) (b2 Bits) (c2 Bits) (i2 Int) (j2 Int)) (!
+    (=> (and (>= i 0) (>= i2 0) (>= j MinKDFSliceLen) (>= j2 MinKDFSliceLen)
+             (= TRUE (eq (KDF a b c i j) (KDF a2 b2 c2 i2 j2))))
+        (and (= TRUE (eq a a2)) (= TRUE (eq b b2)) (= TRUE (eq c c2))))
+    :pattern ((eq (KDF a b c i j) (KDF a2 b2 c2 i2 j2)))
+    :qid kdf_collision_resistant_on_large_slices
+)))
 
 (declare-fun andb (Bits Bits) Bits)
 (assert (forall ((x Bits) (y Bits)) (!
@@ -414,6 +421,19 @@
     :pattern (crh x)
     :qid crh_length
 )))
+
+; Hashes and concatenations of constants are constants
+(assert (forall ((x Bits)) (!
+    (=> (IsConstant x) (IsConstant (crh x)))
+    :pattern ((crh x))
+    :qid isconstant_crh
+)))
+(assert (forall ((x Bits) (y Bits)) (!
+    (=> (and (IsConstant x) (IsConstant y)) (IsConstant (concat x y)))
+    :pattern ((concat x y))
+    :qid isconstant_concat
+)))
+
 
 (declare-sort Label)
 (declare-const %adv Label)
@@ -504,6 +524,18 @@
 (assert (Flows %zeroLbl %top))
 
 (declare-sort Index)
+(declare-const IndexZero Index)
+(declare-fun IndexSucc (Index) Index)
+(declare-fun IndexPred (Index) Index)
+(declare-fun IndexToNat (Index) Int)
+(assert (= (IndexToNat IndexZero) 0))
+(assert (forall ((x Index)) (!
+    (and (= (IndexToNat (IndexSucc x)) (+ (IndexToNat x) 1))
+         (>= (IndexToNat x) 0)
+         (= (IndexPred (IndexSucc x)) x))
+    :pattern ((IndexSucc x))
+    :qid index_succ_nat
+)))
 (declare-fun Happened (String (List Index) (List Bits)) Bool)
 
 (declare-fun KEMName (Name Index) Name)

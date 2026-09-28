@@ -1,0 +1,16 @@
+// A rule may only use keys derived in its own scope.
+
+locality alice
+
+kdf_scope S1 {
+    name k1 : kdfkey @ alice
+    kdf L1 : k1, 0x, 0x -> strict kdfkey
+}
+
+kdf_scope S2 {
+    name k2 : kdfkey @ alice
+    kdf L2a : k2, 0x, 0x -> strict kdfkey
+    kdf L2b : KDF<L1; kdfkey; 0>, 0x, 0x -> strict kdfkey
+}
+
+def main() @ alice : Unit = ()

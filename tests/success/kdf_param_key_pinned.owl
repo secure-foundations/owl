@@ -1,0 +1,26 @@
+// A parameter in a key position counts when its value is a secret kdfkey of
+// the scope. With k corrupt, L1(get(psk)) is applicable exactly when psk is
+// secret, and L1(0x00) never is, so its derived name is corrupt.
+locality alice
+
+name secretmsg : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    name psk : kdfkey @ alice
+    kdf L1(x) where (x == get(psk) \/ x == 0x00) : k, x, 0x -> strict enckey Name(secretmsg)
+}
+
+corr adv ==> [k]
+corr [psk] ==> [secretmsg]
+
+def alice_main() @ alice : Unit =
+    corr_case psk in
+    let r1 = kdf<L1(get(psk)); enckey; 0>(get(k), get(psk), 0x) in
+    assert (corr(psk) ==> corr(KDF<L1(get(psk)); enckey; 0>));
+    let c = aenc(r1, get(secretmsg)) in
+    output c;
+    let r0 = kdf<L1(0x00); enckey; 0>(get(k), 0x00, 0x) in
+    assert (corr(KDF<L1(0x00); enckey; 0>));
+    output r0;
+    ()

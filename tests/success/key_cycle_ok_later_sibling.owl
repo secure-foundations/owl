@@ -1,0 +1,9 @@
+// Output 0 mentions output 1 of the same instance, and output 1 mentions no
+// output: the outputs of an instance are ordered, and a reference to a later
+// one is not a key cycle. Compare tests/failure/key_cycle_kdf_output_siblings.owl.
+locality alice
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L : k, 0x, 0x01 -> strict enckey Name(KDF<L;enckey||enckey;1>) || strict enckey Data<adv>
+}
+def alice_main() @ alice : Unit = ()

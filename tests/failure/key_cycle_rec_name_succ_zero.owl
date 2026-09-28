@@ -1,0 +1,8 @@
+// k<succ(0)> would encrypt itself.
+locality alice
+name k<i> : enckey Name(k<succ(0)>) @ alice
+def alice_main() @ alice : Unit =
+    corr_case k<succ(0)> in
+    let c = aenc(get(k<succ(0)>), get(k<succ(0)>)) in
+    output c to endpoint(alice);
+    ()

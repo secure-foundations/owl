@@ -1,0 +1,19 @@
+// B(get(k2)) coincides with A, and no where clause excludes it. Accepting the
+// scope would give one value two names (main derives False).
+
+locality alice
+
+kdf_scope G {
+    name k  : kdfkey @ alice
+    name k2 : kdfkey @ alice
+    kdf A    : k2, k, 0x -> strict kdfkey
+    kdf B(x) : x,  k, 0x -> strict kdfkey
+}
+
+def main() @ alice : Unit =
+    corr_case k in
+    corr_case k2 in
+    let a = kdf<A; kdfkey; 0>(get(k2), get(k), 0x) in
+    let b = kdf<B(get(k2)); kdfkey; 0>(get(k2), get(k), 0x) in
+    assert (sec(k) ==> False);
+    ()

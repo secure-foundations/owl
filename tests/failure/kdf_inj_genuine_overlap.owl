@@ -1,0 +1,19 @@
+// Injectivity reduces `c == c0()` to `x == 0x02` with x attacker-chosen, so
+// L1 cannot be refuted and the call must not be typed out of bounds.
+
+locality alice
+
+kdf_scope G {
+
+    name k : kdfkey @ alice
+
+    func c0() = gkdf<kdfkey; 0>(0x01, 0x02, 0x)
+
+    kdf L1 : c0(), k, 0x -> strict kdfkey
+    kdf L2 : KDF<L1;kdfkey;0>, k, 0x -> strict kdfkey
+
+}
+
+def finish(x : Data<adv>, c : (y:Data<adv>{y == gkdf<kdfkey; 0>(0x01, x, 0x)})) @ alice : Unit =
+    let c' = kdf<L2;kdfkey;0>(c, get(k), 0x) in
+    output c'

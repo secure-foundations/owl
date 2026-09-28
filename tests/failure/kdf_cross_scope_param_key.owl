@@ -1,0 +1,29 @@
+// L1(get(k2)) and L2(get(k1)) have the same inputs (k1, k2, 0x). Each is
+// applicable through the key of its own scope, so the value would get two
+// names: a secret encryption key in S1 and a public value in S2. A call may
+// therefore not pass a secret key of another scope, even through a parameter.
+locality alice
+
+name n1 : nonce @ alice
+
+kdf_scope S1 {
+    name k1 : kdfkey @ alice
+    kdf L1(y) : k1, y, 0x -> strict enckey Name(n1)
+}
+
+kdf_scope S2 {
+    name k2 : kdfkey @ alice
+    kdf L2(x) : x, k2, 0x -> public enckey Name(n1)
+}
+
+corr [k1] ==> [n1]
+
+def alice_main() @ alice : Unit =
+    corr_case k1 in
+    corr_case k2 in
+    let a = kdf<L1(get(k2)); enckey; 0>(get(k1), get(k2), 0x) in
+    let c = aenc(a, get(n1)) in
+    output c;
+    let b = kdf<L2(get(k1)); enckey; 0>(get(k1), get(k2), 0x) in
+    output b;
+    ()

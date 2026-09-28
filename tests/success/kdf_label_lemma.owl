@@ -1,0 +1,40 @@
+// kdf_label_lemma<KDF<L<..>; ..>>(): the label of a derived name is secret
+// exactly when its rule instance is applicable (secret salt, or a secret DH
+// pair). The reference must select a case: index 0 or succ(..), or a bare
+// index when the rule is uniform (its zero case is its succ case at 0).
+
+locality alice
+locality bob
+
+kdf_scope S {
+    name A<i> : DH @ alice
+    name B<i> : DH @ bob
+    name r : kdfkey @ alice, bob
+
+    // Both cases: salt is the previous chain key (r at 0), pair (A<i>, B<i>).
+    rec_odh<i> L<i>
+        | 0        : r,                        dh_ss(A<0>, B<0>), 0x
+        | succ(i') : KDF<L<i'>; kdfkey; 0>,   dh_ss(A<i>, B<i>), 0x
+        -> strict kdfkey
+
+    // Same shape in both cases: uniform in i, so a bare index is allowed.
+    rec_odh<i> M<i>
+        | 0        : KDF<L<0>; kdfkey; 0>,     dh_ss(A<succ(0)>, B<0>), 0x
+        | succ(i') : KDF<L<i>; kdfkey; 0>,     dh_ss(A<succ(i)>, B<i>), 0x
+        -> strict kdfkey
+}
+
+def determined() @ alice : Unit =
+    kdf_label_lemma<KDF<L<0>; kdfkey; 0>>();
+    kdf_label_lemma<KDF<L<succ(0)>; kdfkey; 0>>();
+    assert (sec(r) ==> sec(KDF<L<0>; kdfkey; 0>));
+    assert ((sec(A<0>) /\ sec(B<0>)) ==> sec(KDF<L<0>; kdfkey; 0>));
+    assert (corr(KDF<L<0>; kdfkey; 0>) ==> (corr(r) /\ (corr(A<0>) \/ corr(B<0>))));
+    assert (sec(KDF<L<0>; kdfkey; 0>) ==> sec(KDF<L<succ(0)>; kdfkey; 0>));
+    ()
+
+def bare<i>() @ alice : Unit =
+    kdf_label_lemma<KDF<M<i>; kdfkey; 0>>();
+    assert (corr(KDF<M<i>; kdfkey; 0>) ==> (corr(KDF<L<i>; kdfkey; 0>) /\ (corr(A<succ(i)>) \/ corr(B<i>))));
+    assert ((sec(A<succ(i)>) /\ sec(B<i>)) ==> sec(KDF<M<i>; kdfkey; 0>));
+    ()

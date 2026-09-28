@@ -1,0 +1,20 @@
+// Without proof hints at the declaration, LR1 and L1_bad(t) overlap unless
+// the rules are separated by their inputs. A distinguishing info constant
+// does it: the three rules disagree on the info in every pair.
+// Compare tests/failure/kdf_rules_not_separated.owl.
+
+locality alice
+
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ alice
+    name Z : DH @ alice
+
+    odh L1 : 0x, dh_ss(X, Y) ++ dh_ss(X, Z), 0x01 -> strict kdfkey
+    odh L1_bad(t) where (t != dh_combine(dhpk(get(X)), get(Z)))
+      : 0x, dh_ss(X, Y) ++ t, 0x02 -> strict kdfkey
+
+    kdf LR1 : 0x, KDF<L1;kdfkey;0>, 0x03 -> strict kdfkey
+}
+
+def alice_main() @ alice : Unit = ()

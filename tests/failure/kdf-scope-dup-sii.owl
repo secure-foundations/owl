@@ -1,0 +1,11 @@
+locality alice
+
+name n : nonce @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+
+    // SHOULD FAIL: two rules with identical (salt, ikm, info) are ambiguous
+    kdf L1 : k, 0x, 0x -> enckey Name(n)
+    kdf L2 : k, 0x, 0x -> enckey Name(n)
+}

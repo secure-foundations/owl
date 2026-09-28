@@ -1,0 +1,19 @@
+// dh_exp_lemma<s, n>(y): y^s != n for public y, secret base DH name s and base
+// name n. Omitted indices of n are universally quantified.
+
+locality alice
+
+name S : DH @ alice
+name T<i> : DH @ alice
+name m : nonce @ alice
+name n<i> : nonce @ alice
+
+def alice_main<i>(y : Data<adv>) @ alice : Unit =
+    dh_exp_lemma<S, m>(y);
+    dh_exp_lemma<S, n>(y);
+    dh_exp_lemma<T<i>, T>(y);
+    assert (sec(S) ==> dh_combine(y, get(S)) != get(m));
+    assert (sec(S) ==> forall j:idx. dh_combine(y, get(S)) != get(n<j>));
+    // same family as the exponent: only T<i> itself is excluded
+    assert (sec(T<i>) ==> forall j:idx. (get(T<j>) != get(T<i>)) ==> dh_combine(y, get(T<i>)) != get(T<j>));
+    ()

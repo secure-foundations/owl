@@ -1,0 +1,17 @@
+locality alice
+
+// SHOULD FAIL: the zero case of LB references the later rule LA at index 0
+// (same rank index, later position): LB<0> -> LA<0> -> LB<0>.
+kdf_scope Bad {
+    name k0 : kdfkey @ alice
+
+    rec_kdf<i> LB<i>
+        | 0        : KDF<LA<0>; kdfkey; 0>,  0x, 0x01
+        | succ(i') : KDF<LA<i'>; kdfkey; 0>, 0x, 0x01
+        -> strict kdfkey
+
+    rec_kdf<i> LA<i>
+        | 0        : KDF<LB<0>; kdfkey; 0>,  0x, 0x02
+        | succ(i') : KDF<LB<i>; kdfkey; 0>,  0x, 0x02
+        -> strict kdfkey
+}

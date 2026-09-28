@@ -1,0 +1,15 @@
+// Injectivity reduces the overlap of the two salts to `x == 0x`, which is
+// satisfiable.
+
+locality alice
+
+kdf_scope G {
+
+    name k : kdfkey @ alice
+
+    kdf L1 : gkdf<kdfkey; 0>(0x01, 0x, 0x), k, 0x -> strict kdfkey
+    kdf L2(x) : gkdf<kdfkey; 0>(0x01, x, 0x), k, 0x -> strict kdfkey
+
+}
+
+def main() @ alice : Unit = ()

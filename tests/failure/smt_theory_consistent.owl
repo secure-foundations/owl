@@ -1,0 +1,53 @@
+// Canary for the consistency of the SMT theory. The injectivity axioms
+// (kdf_collision_resistant_on_large_slices, the self-disjointness of indexed and derived names, eq_concat)
+// have a model only while no axiom bounds the number of bitstrings of a given
+// length; see the invariant at the top of prelude.smt2. This file puts the
+// values such a counting axiom would be about into one context (several KDF
+// values, including equal-length outputs at different offsets, the empty
+// constant, unit, both booleans, and an enum), and then asserts false. It
+// must fail, and only at that last assertion: everything before it typechecks.
+
+locality alice
+
+name n : nonce @ alice
+name K<i> : enckey Data<adv> @ alice
+
+enum E {
+    | E1
+    | E2 Data<adv>
+    | E3
+}
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L1(x) : k, x, 0x01 -> strict kdfkey || strict enckey Data<adv> || strict mackey Data<adv>
+    kdf L2 : KDF<L1(0x);kdfkey||enckey||mackey;0>, 0x, 0x02 -> strict kdfkey || nonce
+}
+
+def alice_main<i, j>(x : Data<adv>, y : Data<adv>) @ alice : Unit =
+    corr_case k in
+    let a0 = kdf<L1(x); kdfkey||enckey||mackey; 0>(get(k), x, 0x01) in
+    let a1 = kdf<L1(x); kdfkey||enckey||mackey; 1>(get(k), x, 0x01) in
+    let a2 = kdf<L1(x); kdfkey||enckey||mackey; 2>(get(k), x, 0x01) in
+    let b0 = kdf<L1(y); kdfkey||enckey||mackey; 0>(get(k), y, 0x01) in
+    let c0 = kdf<L1(0x); kdfkey||enckey||mackey; 0>(get(k), 0x, 0x01) in
+    let d0 = kdf<L2; kdfkey||nonce; 0>(c0, 0x, 0x02) in
+    let d1 = kdf<L2; kdfkey||nonce; 1>(c0, 0x, 0x02) in
+    let p0 = kdf<;kdfkey;0>(x, y, 0x) in
+    let p1 = kdf<;kdfkey;0>(y, x, 0x) in
+    let e = 0x in
+    let u = () in
+    let t = true in
+    let f = false in
+    let bx = eq(x, y) in
+    let bk = eq(a0, b0) in
+    let bp = eq(p0, p1) in
+    let bo = eq(a0, a1) in
+    let be = eq(e, x) in
+    let v1 = E1() in
+    let v2 = E2(x) in
+    let v3 = E3() in
+    let be2 = eq(v1, v3) in
+    let kk = eq(get(K<i>), get(K<j>)) in
+    assert (false);
+    ()
