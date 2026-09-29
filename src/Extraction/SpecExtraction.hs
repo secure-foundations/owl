@@ -645,7 +645,11 @@ extractExpr expr = do
                     extractExpr k
                 (_, _) -> do
                     x' <- extractVar x
-                    e' <- extractExpr e
+                    -- Bind a pure RHS directly via `pure` rather than using an itree `bind`
+                    opure <- extractPureValue e
+                    e' <- case opure of
+                        Just v -> return [di|pure(#{v})|]
+                        Nothing -> extractExpr e
                     k' <- extractExpr k
                     return $ pretty "let" <+> x' <+> pretty "=" <+> parens e' <+> pretty "in" <> line <> k'
         CBlock e -> extractExpr e
@@ -655,6 +659,31 @@ extractExpr expr = do
             e2' <- extractExpr e2
             return $ parens $
                 pretty "if" <+> parens a' <+> pretty "then" <> line <> parens e1' <> line <> pretty "else" <> line <> parens e2'
+        -- Special case for pure `case`-exprs: just extract to a plain `match` rather than using
+        -- an itree `case`
+        CCase ae cases | Just pureCases <- mapM pureCaseBranch cases -> do
+            ae' <- extractCAExpr ae
+            translateCaseName <- case ae ^. tty of
+                    FEnum n _ -> return specName
+                    FOption _ -> return id
+                    t -> throwError $ TypeError $ "Unsupported spec case type: " ++ show (owlpretty t)
+            let extractPureCase (c, ox, v) = do
+                    v' <- extractCAExpr v
+                    case ox of
+                        Nothing -> do
+                            let parens = case ae ^. tty of
+                                    FOption _ -> ""
+                                    _ -> "()"
+                            return [di|#{translateCaseName c}#{parens} => #{v'},|]
+                        Just x -> do
+                            x' <- extractVar x
+                            return [di|#{translateCaseName c}(#{x'}) => #{v'},|]
+            cases' <- mapM extractPureCase pureCases
+            return [__di|
+            (ret(match #{ae'} {
+            #{vsep cases'}
+            }))
+            |]
         CCase ae cases -> do
             ae' <- extractCAExpr ae
             translateCaseName <- case ae ^. tty of
@@ -816,3 +845,45 @@ specCast (x, FOption (FEnum _ _)) (RTOption (RTSeq RTU8)) = return [di|option_as
 specCast (x, FInt) RTUsize = return [di|(#{x}) as usize|]
 specCast (x, _) RTUnit = return [di|()|]
 specCast (x, _) _ = return [di|#{x}|]
+
+-- The returned value of a pure case branch
+pureCaseBranch :: (String, Either (CExpr FormatTy) (Bind (CDataVar FormatTy) (FormatTy, CExpr FormatTy)))
+                  -> Maybe (String, Maybe (CDataVar FormatTy), CAExpr FormatTy)
+pureCaseBranch (c, Left e) = (\v -> (c, Nothing, v)) <$> pureRet e
+pureCaseBranch (c, Right xte) = let (x, (_, e)) = unsafeUnbind xte in (\v -> (c, Just x, v)) <$> pureRet e
+
+pureRet :: CExpr FormatTy -> Maybe (CAExpr FormatTy)
+pureRet e = case e ^. tval of
+    CRet a -> Just a
+    CBlock e' -> pureRet e'
+    _ -> Nothing
+
+
+-- The spec value of a pure expression (just returns a `CAExpr` in all branches)
+extractPureValue :: CExpr FormatTy -> EM (Maybe (Doc ann))
+extractPureValue e = case e ^. tval of
+    CRet a -> Just <$> extractCAExpr a
+    CBlock e' -> extractPureValue e'
+    CCase ae cases | Just pureCases <- mapM pureCaseBranch cases -> do
+        ae' <- extractCAExpr ae
+        translateCaseName <- case ae ^. tty of
+                FEnum n _ -> return specName
+                FOption _ -> return id
+                t -> throwError $ TypeError $ "Unsupported spec case type: " ++ show (owlpretty t)
+        cases' <- forM pureCases $ \(c, ox, v) -> do
+            v' <- extractCAExpr v
+            case ox of
+                Nothing -> do
+                    let parens = case ae ^. tty of
+                            FOption _ -> ""
+                            _ -> "()"
+                    return [di|#{translateCaseName c}#{parens} => #{v'},|]
+                Just x -> do
+                    x' <- extractVar x
+                    return [di|#{translateCaseName c}(#{x'}) => #{v'},|]
+        return $ Just [__di|
+        (match #{ae'} {
+        #{vsep cases'}
+        })
+        |]
+    _ -> return Nothing

@@ -632,6 +632,21 @@ pub mod itree {
                 owl_spec!($mut_state, $mut_type, $($e2)*)
             }
         }};
+        // A pure let binds a spec value directly. It denotes the same itree as
+        // `let x = (ret(e)) in ...` (since `Ret(x).bind(k) == k(x)`), but avoids a
+        // bind per let.
+        ($mut_state:ident, $mut_type:ident, let _ = (pure ($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
+            {
+                let _ = $($e)*;
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            }
+        }};
+        ($mut_state:ident, $mut_type:ident, let $var:ident = (pure ($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
+            {
+                let $var = $($e)*;
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            }
+        }};
         // Special-case handling of `let _ = ...` pattern for RHS returning ()
         ($mut_state:ident, $mut_type:ident, let _ = (call($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
             ($($e)*)
