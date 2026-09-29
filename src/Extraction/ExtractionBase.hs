@@ -88,6 +88,7 @@ data ExtractionError =
     | GhostInExec String
     | LiftedError ExtractionError
     | CantCastType String String String
+    | UnsupportedKEM
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -127,6 +128,8 @@ instance OwlPretty ExtractionError where
         owlpretty "Lifted error:" <+> owlpretty e
     owlpretty (CantCastType v t1 t2) =
         owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
+    owlpretty UnsupportedKEM =
+        owlpretty "Extraction does not yet support KEMs"
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
@@ -266,6 +269,7 @@ specNameOfExecName s =
     if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s
 
 fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
+fLenOfNameKind NK_KEM = throwError UnsupportedKEM
 fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
@@ -283,6 +287,7 @@ fLenOfNameTy nt = do
 
 
 secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
+secrecyOfNameKind NK_KEM = throwError UnsupportedKEM
 secrecyOfNameKind nk = do
     return $ case nk of
         NK_KDF -> BufSecret

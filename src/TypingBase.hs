@@ -807,6 +807,7 @@ getNameKind nt =
       NT_StAEAD _ _ _ _ -> return $ NK_Enc
       NT_PKE _ -> return $ NK_PKE
       NT_MAC _ -> return $ NK_MAC
+      NT_KEM _ -> return $ NK_KEM
       NT_App p ps as -> resolveNameTypeApp p ps as >>= getNameKind
       NT_KDF -> return $ NK_KDF
     
