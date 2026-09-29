@@ -240,7 +240,7 @@ pub exec fn clone_vec_u8(v: &Vec<u8>) -> (res: Vec<u8>)
 
 #[verifier(external_body)]
 pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
-    ensures v.view() == old(v).view().add(s.view())
+    ensures final(v).view() == old(v).view().add(s.view())
 {
     v.extend(s);
 }
@@ -248,7 +248,7 @@ pub exec fn extend_vec_u8(v: &mut Vec<u8>, s: &[u8])
 #[verifier::external_body]
 pub exec fn vec_truncate(vec: &mut Vec<u8>, len: usize)
     ensures
-        vec.view() == seq_truncate(old(vec).view(), len as nat)
+        final(vec).view() == seq_truncate(old(vec).view(), len as nat)
 {
     vec.truncate(len)
 }

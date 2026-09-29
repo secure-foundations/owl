@@ -449,7 +449,7 @@ pub mod itree {
     #[verifier::external_body]
     pub proof fn consume_itree_declassify<A,Endpoint>(tracked itree_t: &mut ITreeToken<A,Endpoint>) -> (tracked declassify_t: DeclassifyingOpToken)
 	    requires old(itree_t).view() is Declassify
-	    ensures itree_t.view() == old(itree_t).view().do_declassify(),
+	    ensures final(itree_t).view() == old(itree_t).view().do_declassify(),
 	            declassify_t.view() == old(itree_t).view()->Declassify_0
     { unimplemented!() }
 
@@ -483,7 +483,7 @@ pub mod itree {
     #[macro_export]
     macro_rules! owl_call {
         [$($tail:tt)*] => {
-            ::builtin_macros::verus_exec_macro_exprs!{
+            ::vstd::prelude::verus_exec_macro_exprs!{
                 owl_call_internal!(res, res.view(), $($tail)*)
             }
         };
@@ -493,7 +493,7 @@ pub mod itree {
     #[macro_export]
     macro_rules! owl_call_ret_unit {
         [$($tail:tt)*] => {
-            ::builtin_macros::verus_exec_macro_exprs!{
+            ::vstd::prelude::verus_exec_macro_exprs!{
                 owl_call_internal!(res, res.view(), $($tail)*)
             }
         };
@@ -504,7 +504,7 @@ pub mod itree {
     #[macro_export]
     macro_rules! owl_call_ret_option {
         [$($tail:tt)*] => {
-            ::builtin_macros::verus_exec_macro_exprs!{
+            ::vstd::prelude::verus_exec_macro_exprs!{
                 owl_call_internal!(res, view_option(res), $($tail)*)
             }
         };
@@ -514,7 +514,7 @@ pub mod itree {
     #[macro_export]
     macro_rules! owl_call_internal {
         ($res: ident, $view_res:expr, $effects:ident, $itree:ident, $mut_state:expr, $spec:ident ( $($specarg:expr),* ), $self:ident . $exec:ident ( $($execarg:expr),* ) ) => {
-            ::builtin_macros::verus_exec_expr! {{
+            ::vstd::prelude::verus_exec_expr! {{
                 reveal($spec);
                 let tracked (Tracked(call_token), Tracked(cont_token)) = split_bind($itree, $spec($($specarg),*));
                 let ($res, Tracked(call_token)) = match $self.$exec($effects, Tracked(call_token), $($execarg),*) {

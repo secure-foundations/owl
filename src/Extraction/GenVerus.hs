@@ -852,7 +852,7 @@ genVerusDef lname cdef = do
         requires 
             itree.view() == #{specname}(*self, *old(mut_state), #{hsep . punctuate comma $ specargs}),
         ensures
-            res matches Ok(r) ==> (r.1).view().view().results_in((#{viewRes}, *mut_state)),
+            res matches Ok(r) ==> (r.1).view().view().results_in((#{viewRes}, *final(mut_state))),
     {
         let tracked mut itree = itree;
         let (res_inner, Tracked(itree)): (#{pretty rtyLt}, #{itreeTy}) = {

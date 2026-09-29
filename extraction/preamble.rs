@@ -98,7 +98,7 @@ pub trait OwlEffects {
                 option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
             ),
         ensures
-            t.view() == old(t).view().give_output(),
+            final(t).view() == old(t).view().give_output(),
     ;
 
     fn owl_input<A>(
@@ -108,7 +108,7 @@ pub trait OwlEffects {
         requires
             old(t).view().is_input(),
         ensures
-            t.view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
+            final(t).view() == old(t).view().take_input(ie.0.view(), endpoint_of_addr(ie.1.view())),
     ;
 
     fn owl_sample<A, 'a>(
@@ -119,7 +119,7 @@ pub trait OwlEffects {
         requires
             old(t).view().is_sample(n),
         ensures
-            t.view() == old(t).view().get_sample(res.view()),
+            final(t).view() == old(t).view().get_sample(res.view()),
             res.len_valid(),
     ;
 
@@ -137,7 +137,7 @@ pub trait OwlEffects {
                 option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
             ),
         ensures
-            t.view() == old(t).view().give_output(),
+            final(t).view() == old(t).view().give_output(),
     ;
 }
 
