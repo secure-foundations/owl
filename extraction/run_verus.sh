@@ -6,7 +6,7 @@ function usage() {
     echo "Usage: ${0} [-n] [-v <verus-args>] <path-to-extraction-dir>"
     echo "  -n: Do not format the code"
     echo "  -v <verus-args>: Additional arguments to pass to verus"
-    echo "You must have verus and verusfmt in your path"
+    echo "You must have verus (0.2026.09.06.8dea4a2, Rust 1.98.0) and verusfmt in your path"
     exit 2
 }
 
@@ -49,7 +49,7 @@ pushd $ext_dir_path
 cargo verus verify -- --rlimit=100 $verus_args
 popd
 
-if [ -z $verus_args ]; then
+if [ -z "$verus_args" ]; then
     echo ""
     echo "Done!" 
 else
