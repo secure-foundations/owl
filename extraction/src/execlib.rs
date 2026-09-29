@@ -1,7 +1,8 @@
 use std::rc::Rc;
 pub use vstd::{modes::*, prelude::*, seq::*, view::*, slice::*};
 use crate::{*, speclib::*};
-use vest::regular::builder::*;
+// (the other Vest names are re-exported by the preamble)
+use vest_lib::core::exec::{PreSerializeError, ComplianceErrorKind};
 
 
 verus! {
@@ -174,23 +175,65 @@ impl<'x> OwlBuf<'x> {
     }
 }
 
-impl vest::buf_traits::VestInput for OwlBuf<'_> {
-    fn len(&self) -> usize {
-        self.len()
-    }
+///////// Vest 2.0 integration for OwlBuf
 
-    fn subrange(&self, start: usize, end: usize) -> Self {
-        OwlBuf::subrange(self.another_ref(), start, end)
-    }
+impl DeepView for OwlBuf<'_> {
+    type V = Seq<u8>;
 
-    fn clone(&self) -> Self {
-        self.another_ref()
+    open spec fn deep_view(&self) -> Seq<u8> {
+        self.view()
     }
 }
 
-impl vest::buf_traits::VestPublicInput for OwlBuf<'_> {
-    fn as_byte_slice(&self) -> (res: &[u8]) {
-        self.as_slice()
+impl InputSlice for OwlBuf<'_> {
+    proof fn deep_view_eq_view(&self) {
+    }
+}
+
+impl<'x> InputBuf for OwlBuf<'x> {
+    fn len(&self) -> (len: usize) {
+        OwlBuf::len(self)
+    }
+
+    fn subrange(&self, i: usize, j: usize) -> (sliced: Self) {
+        OwlBuf::subrange(self.another_ref(), i, j)
+    }
+}
+
+impl<'x> Parser<OwlBuf<'x>> for U8 {
+    type PT = u8;
+
+    fn parse(&self, ibuf: &OwlBuf<'x>) -> (r: PResult<u8>) {
+        let s = ibuf.as_slice();
+        <U8 as Parser<&[u8]>>::parse(&U8, &s)
+    }
+}
+
+impl<Len: AsLen> Serializer<Vec<u8>, OwlBuf<'_>> for Varied<Len> {
+    fn serialize_into(&self, v: &OwlBuf<'_>, obuf: &mut Vec<u8>) {
+        obuf.write_bytes(v.as_slice());
+    }
+}
+
+impl Serializer<Vec<u8>, OwlBuf<'_>> for Tail {
+    fn serialize_into(&self, v: &OwlBuf<'_>, obuf: &mut Vec<u8>) {
+        obuf.write_bytes(v.as_slice());
+    }
+}
+
+impl<Len: AsLen> Prepare<OwlBuf<'_>> for Varied<Len> {
+    fn prepare(&self, v: &OwlBuf<'_>) -> (checked: Result<usize, PreSerializeError>) {
+        if v.len() == self.0.get() {
+            Ok(v.len())
+        } else {
+            Err(PreSerializeError::not_compliant(ComplianceErrorKind::LengthInconsistent))
+        }
+    }
+}
+
+impl Prepare<OwlBuf<'_>> for Tail {
+    fn prepare(&self, v: &OwlBuf<'_>) -> (checked: Result<usize, PreSerializeError>) {
+        Ok(v.len())
     }
 }
 
@@ -475,22 +518,28 @@ pub mod secret {
         SecretBuf::from_buf(OwlBuf::from_vec(v))
     }
 
-    impl vest::buf_traits::VestInput for SecretBuf<'_> {
-        fn len(&self) -> usize {
-            self.buf.len()
+    ///////// Vest 2.0 integration for SecretBuf
+
+    impl DeepView for SecretBuf<'_> {
+        type V = Seq<u8>;
+
+        open spec fn deep_view(&self) -> Seq<u8> {
+            self.view()
+        }
+    }
+
+    impl InputSlice for SecretBuf<'_> {
+        proof fn deep_view_eq_view(&self) {
+        }
+    }
+
+    impl<'x> InputBuf for SecretBuf<'x> {
+        fn len(&self) -> (len: usize) {
+            SecretBuf::len(self)
         }
 
-        fn subrange(&self, start: usize, end: usize) -> Self {
-            let new_buf = self.buf.another_ref().subrange(start, end);
-            reveal(SecretBuf::len_valid);
-            proof {
-                use_type_invariant(&new_buf);
-            }
-            SecretBuf { buf: new_buf }
-        }
-
-        fn clone(&self) -> Self {
-            self.another_ref()
+        fn subrange(&self, i: usize, j: usize) -> (sliced: Self) {
+            SecretBuf::subrange(self.another_ref(), i, j)
         }
     }
 
@@ -507,10 +556,10 @@ pub mod secret {
     }
 
     impl SecretOutputBuf {
-        pub fn new_obuf(len: usize) -> (result: SecretOutputBuf)
-            ensures result.view() == seq_u8_of_len(len as nat)
+        pub fn new_obuf() -> (result: SecretOutputBuf)
+            ensures result.view() == Seq::<u8>::empty()
         {
-            SecretOutputBuf { obuf: vec_u8_of_len(len) }
+            SecretOutputBuf { obuf: Vec::new() }
         }
 
         pub fn len(&self) -> (result: usize)
@@ -519,16 +568,13 @@ pub mod secret {
             self.obuf.len()
         }
 
-        pub fn set_range_from_secret_buf(&mut self, i: usize, input: &SecretBuf) 
-            requires
-                0 <= i + input@.len() <= old(self)@.len() <= usize::MAX,
+        // Private: appends the contents of a SecretBuf, only used by the serializers below
+        fn write_secret(&mut self, input: &SecretBuf)
             ensures
-                self@.len() == old(self)@.len() && self@ == old(self)@.subrange(0, i as int).add(
-                    input@,
-                ).add(old(self)@.subrange(i + input@.len(), self@.len() as int)),
+                final(self)@ == old(self)@ + input@,
         {
             let slice = input.private_as_slice();
-            vest::utils::set_range(&mut self.obuf, i, slice);
+            extend_vec_u8(&mut self.obuf, slice);
         }
 
         pub fn into_secret_buf<'x>(self) -> (result: SecretBuf<'x>)
@@ -538,43 +584,62 @@ pub mod secret {
         }
     }
 
-    impl vest::buf_traits::VestOutput<SecretBuf<'_>> for SecretOutputBuf {
-        fn len(&self) -> usize {
-            SecretOutputBuf::len(&self)
+    impl OutputBuf for SecretOutputBuf {
+        open spec fn fits(&self, _len: nat) -> bool {
+            true
         }
 
-        fn set_range(&mut self, i: usize, buf: &SecretBuf<'_>) {
-            self.set_range_from_secret_buf(i, buf)
+        proof fn lemma_fits_mono(&self, _shorter: nat, _longer: nat) {
+        }
+
+        #[verifier::prophetic]
+        open spec fn same_destination(&self, _other: &Self) -> bool {
+            true
+        }
+
+        proof fn lemma_same_destination_reflexive(&self) {
+        }
+
+        proof fn lemma_same_destination_transitive(&self, _middle: &Self, _last: &Self) {
+        }
+
+        fn write_byte(&mut self, byte: u8) {
+            self.obuf.push(byte);
+        }
+
+        fn write_bytes(&mut self, bytes: &[u8]) {
+            extend_vec_u8(&mut self.obuf, bytes);
         }
     }
 
-
-    impl<'a> vest::buf_traits::VestOutput<&'a [u8]> for SecretOutputBuf {
-        fn len(&self) -> usize {
-            SecretOutputBuf::len(&self)
-        }
-
-        fn set_range(&mut self, i: usize, buf: &&[u8]) {
-            self.set_range_from_secret_buf(i, &OwlBuf::from_slice(*buf).into_secret())
+    impl<Len: AsLen> Serializer<SecretOutputBuf, SecretBuf<'_>> for Varied<Len> {
+        fn serialize_into(&self, v: &SecretBuf<'_>, obuf: &mut SecretOutputBuf) {
+            obuf.write_secret(v);
         }
     }
 
-    impl<'a> vest::buf_traits::VestPublicOutput<&'a [u8]> for SecretOutputBuf {
-        fn set_byte(&mut self, i: usize, value: u8) {
-            assume(self.obuf@.len() < usize::MAX);
-            let ghost old_self = self@;
-            let value_arr = [value];
-            self.set_range_from_secret_buf(i, &OwlBuf::from_slice(value_arr.as_slice()).into_secret());
-            proof {
-                assert(self.obuf@[i as int] == value);
-                assert_seqs_equal!(self.obuf@, old_self.update(i as int, value));
+    impl Serializer<SecretOutputBuf, SecretBuf<'_>> for Tail {
+        fn serialize_into(&self, v: &SecretBuf<'_>, obuf: &mut SecretOutputBuf) {
+            obuf.write_secret(v);
+        }
+    }
+
+    impl<Len: AsLen> Prepare<SecretBuf<'_>> for Varied<Len> {
+        fn prepare(&self, v: &SecretBuf<'_>) -> (checked: Result<usize, PreSerializeError>) {
+            if v.len() == self.0.get() {
+                Ok(v.len())
+            } else {
+                Err(PreSerializeError::not_compliant(ComplianceErrorKind::LengthInconsistent))
             }
         }
+    }
 
-        fn set_byte_range(&mut self, i: usize, buf: &[u8]) {
-            self.set_range_from_secret_buf(i, &OwlBuf::from_slice(buf).into_secret())
+    impl Prepare<SecretBuf<'_>> for Tail {
+        fn prepare(&self, v: &SecretBuf<'_>) -> (checked: Result<usize, PreSerializeError>) {
+            Ok(v.len())
         }
     }
+
 
     }
 
@@ -745,21 +810,25 @@ pub mod secret {
     }
 
 
-    impl<'a> Builder for OwlStAEADBuilder<'a> {
-        open spec fn value(&self) -> Seq<u8> {
+    // (Vest 1.0 had a `Builder` trait for these methods; Vest 2.0 does not)
+    impl<'a> OwlStAEADBuilder<'a> {
+        pub open spec fn value(&self) -> Seq<u8> {
             enc_st_aead(self.k.view(), self.msg.view(), self.iv.view(), self.aad.view())
         }
-        
+
         #[verifier::external_body]
-        proof fn value_wf(&self);
-        
-        #[verifier::external_body]
-        fn length(&self) -> usize {
+        pub fn length(&self) -> (res: usize)
+            ensures res == self.value().len()
+        {
             self.msg.len() + TAG_SIZE
         }
 
         #[verifier::external_body]
-        fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize) {
+        pub fn into_mut_vec(&self, data: &mut Vec<u8>, pos: usize)
+            requires pos + self.value().len() <= old(data)@.len(),
+            ensures final(data)@ == old(data)@.subrange(0, pos as int).add(self.value()).add(
+                old(data)@.subrange(pos + self.value().len() as int, old(data)@.len() as int)),
+        {
             let mut iv_sized = self.iv.private_as_slice().to_vec();
             iv_sized.resize(NONCE_SIZE, 0u8);
             match owl_aead::encrypt_combined_into(

@@ -18,17 +18,13 @@ pub mod owl_hkdf;
 pub mod owl_hmac;
 pub mod owl_pke;
 pub mod owl_util;
-pub use vest::{
-    properties::*,
-    regular::*,
-    regular::builder::*,
-    regular::bytes::*,
-    regular::repetition::*,
-    regular::tag::*,
-    regular::sequence::*,
-    regular::variant::*,
-    regular::uints::*,
-    utils::*,
+pub use vest_lib::{
+    combinators::*,
+    core::spec::*,
+    core::exec::{
+        InputBuf, InputSlice, OutputBuf, PResult, ParseError, Parser, Prepare, Serializer,
+        SerializerExt,
+    },
 };
 
 pub use std::collections::HashMap;
@@ -123,17 +119,19 @@ pub trait OwlEffects {
             res.len_valid(),
     ;
 
-    fn owl_output_serialize_fused<A, I: VestPublicInput, C: View + Combinator<I, Vec<u8>>>(
+    fn owl_output_serialize_fused<A, T: DeepView, C: Serializer<Vec<u8>, T>>(
         &mut self,
         Tracked(t): Tracked<&mut ITreeToken<A, Endpoint>>,
         comb: C,
-        val: C::Type,
+        val: T,
         dest_addr: Option<&str>,
         ret_addr: &str,
-    ) where <C as View>::V: SecureSpecCombinator<Type = <C::Type as View>::V>
+    )
         requires
-            comb@.spec_serialize(val.view()) matches Ok(b) ==> old(t).view().is_output(
-                b,
+            comb.exec_inv(),
+            comb.consistent(val.deep_view()),
+            old(t).view().is_output(
+                comb.spec_serialize(val.deep_view()),
                 option_map(view_option(dest_addr), |a| endpoint_of_addr(a)),
             ),
         ensures

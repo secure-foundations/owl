@@ -1,9 +1,14 @@
-use vest::properties::*;
+use vest_lib::core::spec::*;
+use vest_lib::core::exec::{
+    OutputBuf, PResult, ParseError, Parser, PreSerializeError, Prepare, Serializer,
+};
 use vstd::prelude::*;
+use crate::execlib::{OwlBuf, slice_eq};
 
 verus! {
 
-/// Combinator for parsing and serializing a fixed number of bytes (statically known).
+/// Combinator for parsing and serializing a fixed, statically known byte string. The
+/// parsed value is `()`.
 pub struct OwlConstBytes<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> View for OwlConstBytes<N> {
@@ -14,97 +19,83 @@ impl<const N: usize> View for OwlConstBytes<N> {
     }
 }
 
-impl<const N: usize> SpecCombinator for OwlConstBytes<N> {
-    type Type = ();
+impl<const N: usize> SpecParser for OwlConstBytes<N> {
+    type PVal = ();
 
-    open spec fn spec_parse(&self, s: Seq<u8>) -> Result<(usize, Self::Type), ()> {
-        if N <= s.len() && s.subrange(0, N as int) == self.0@ {
-            Ok((N, ()))
+    open spec fn spec_parse(&self, s: Seq<u8>) -> Option<(int, ())> {
+        if N <= s.len() && s.take(N as int) == self.0@ {
+            Some((N as int, ()))
         } else {
-            Err(())
+            None
         }
     }
-
-    open spec fn spec_serialize(&self, _v: Self::Type) -> Result<Seq<u8>, ()> {
-        Ok(self.0@)
-    }
-
-    // proof fn spec_parse_wf(&self, s: Seq<u8>) {
-    // }
 }
 
-impl<const N: usize> SecureSpecCombinator for OwlConstBytes<N> {
-    open spec fn is_prefix_secure() -> bool {
+impl<const N: usize> SafeParser for OwlConstBytes<N> {
+    proof fn lemma_parse_safe(&self, ibuf: Seq<u8>) {
+    }
+}
+
+impl<const N: usize> Consistency for OwlConstBytes<N> {
+    type Val = ();
+
+    open spec fn consistent(&self, v: ()) -> bool {
         true
     }
+}
 
-    proof fn lemma_prefix_secure(&self, s1: Seq<u8>, s2: Seq<u8>) {
-        assert(s1.add(s2).len() == s1.len() + s2.len());
-        if let Ok((n, v)) = self.spec_parse(s1) {
-            assert(s1.add(s2).subrange(0, n as int) == s1.subrange(0, n as int))
-        } else {
-        }
-    }
+impl<const N: usize> SpecByteLen for OwlConstBytes<N> {
+    type T = ();
 
-    proof fn theorem_serialize_parse_roundtrip(&self, v: Self::Type) {
-        if let Ok(buf) = self.spec_serialize(v) {
-            assert(buf.subrange(0, buf.len() as int) == self.0@);
-        }
-    }
-
-    proof fn theorem_parse_serialize_roundtrip(&self, s: Seq<u8>) {
-    }
-
-    proof fn lemma_parse_length(&self, s: Seq<u8>) {
-    }
-
-    open spec fn is_productive(&self) -> bool {
-        N > 0
-    }
-
-    proof fn lemma_parse_productive(&self, s: Seq<u8>) {
+    open spec fn byte_len(&self, v: ()) -> nat {
+        N as nat
     }
 }
 
-impl<const N: usize, I, O> Combinator<I, O> for OwlConstBytes<N> where
-    I: VestPublicInput,
-    O: VestPublicOutput<I>,
- {
-    type Type = ();
+impl<const N: usize> SpecSerializer for OwlConstBytes<N> {
+    type SVal = ();
 
-    open spec fn spec_length(&self) -> Option<usize> {
-        Some(N)
+    open spec fn spec_serialize(&self, v: ()) -> Seq<u8> {
+        self.0@
     }
+}
 
-    fn length(&self) -> Option<usize> {
-        Some(N)
+impl<const N: usize> SpecSerializerDps for OwlConstBytes<N> {
+    type SValue = ();
+
+    open spec fn spec_serialize_dps(&self, v: (), obuf: Seq<u8>) -> Seq<u8> {
+        self.0@ + obuf
     }
+}
 
-    fn parse(&self, s: I) -> (res: Result<(usize, Self::Type), ParseError>) {
+// Parsing compares bytes, which Vest's generic `InputBuf` does not expose, so the
+// parser is specific to `OwlBuf` (constants only occur in public formats).
+impl<'x, const N: usize> Parser<OwlBuf<'x>> for OwlConstBytes<N> {
+    type PT = ();
+
+    fn parse(&self, s: &OwlBuf<'x>) -> (res: PResult<()>) {
         if N <= s.len() {
-            let s_ = s.subrange(0, N);
-            if compare_slice(s_.as_byte_slice(), self.0.as_slice()) {
+            let prefix = s.another_ref().subrange(0, N);
+            if slice_eq(prefix.as_slice(), self.0.as_slice()) {
                 Ok((N, ()))
             } else {
-                Err(ParseError::Other("OwlConstBytes: mismatch".to_string()))
+                Err(ParseError::invalid_tag())
             }
         } else {
-            Err(ParseError::UnexpectedEndOfInput)
+            Err(ParseError::unexpected_eof())
         }
     }
+}
 
-    fn serialize(&self, v: Self::Type, data: &mut O, pos: usize) -> (res: Result<
-        usize,
-        SerializeError,
-    >) {
-        let s = self.0.as_slice();
-        if s.len() <= data.len() && s.len() == N && pos <= data.len() - s.len() {
-            data.set_byte_range(pos, s);
-            assert(data@.subrange(pos as int, pos + N as int) == self@.spec_serialize(v@).unwrap());
-            Ok(N)
-        } else {
-            Err(SerializeError::InsufficientBuffer)
-        }
+impl<Output: OutputBuf, const N: usize> Serializer<Output, ()> for OwlConstBytes<N> {
+    fn serialize_into(&self, v: &(), obuf: &mut Output) {
+        obuf.write_bytes(self.0.as_slice());
+    }
+}
+
+impl<const N: usize> Prepare<()> for OwlConstBytes<N> {
+    fn prepare(&self, v: &()) -> (checked: Result<usize, PreSerializeError>) {
+        Ok(N)
     }
 }
 
