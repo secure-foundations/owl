@@ -104,6 +104,7 @@ concretifyTy t = do
       TName ne -> formatTyOfNameExp ne
       TVK ne -> return $ fPBuf $ Just $ FLNamed "vk"
       TEnc_PK ne -> return $ fPBuf $ Just $ FLNamed "pke_pk"
+      TKEM_PK _ -> throwError UnsupportedKEM
       TDH_PK ne -> return $ fPBuf $ Just $ FLNamed "group"
       TSS ne1 ne2 -> return $ groupFormatTy BufSecret
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
@@ -188,6 +189,7 @@ formatTyOfNameExp ne = do
             let nk = nks !! i
             sec <- secrecyOfNameKind nk
             FBuf sec . Just <$> fLenOfNameKind nk
+        KEMName _ _ -> throwError UnsupportedKEM
 
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
@@ -195,6 +197,7 @@ concretifyNameExpLoc n = do
     case n ^. val of
         NameConst _ p _ -> flattenPath p
         KDFName {} -> throwError $ UnsupportedNameExp n
+        KEMName _ _ -> throwError UnsupportedKEM
 
 concretifyPath :: Path -> EM String
 concretifyPath (PRes rp) = do
@@ -330,6 +333,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
         ("vk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "vk"
         ("dhpk", [x]) -> return $ mkAppNoLets f $ groupFormatTy BufPublic
         ("enc_pk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "enc_pk"
+        ("kem_pk", _) -> throwError UnsupportedKEM
         ("dh_combine", [x, y]) -> do
             return $ mkAppNoLets f $ groupFormatTy BufSecret
         ("checknonce", [x, y]) -> do
@@ -551,14 +555,19 @@ concretifyExpr e = do
       EAssert _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAssume _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAdmit -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      ECrypt (CLemma _) _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      ECrypt CKEMDecaps _ -> throwError UnsupportedKEM
+      EKEMEncaps {} -> throwError UnsupportedKEM
       ECrypt cop aes -> do
           (cs, argLets) <- concretifyAExprs aes
           addLets argLets <$> concretifyCryptOp aes cop cs
       ECall p _ aes -> do
             s <- concretifyPath p
-            (cs, argLets) <- concretifyAExprs aes
             (argtys, t) <- tySigOfCall p
-            cs' <- ghostifyArgs argtys cs
+            -- Do not concretify ghost args to calls
+            csLets <- forM (zip argtys aes) $ \(at, a) ->
+                if at == FGhost then return $ noLets ghostUnit else concretifyAExpr a
+            let (cs', argLets) = (map fst csLets, concatMap snd csLets)
             argsWithLets <- forM (zip argtys cs') $ \(t, a) -> do
                         unifyFormatTy t (a ^. tty) -- check types are compatible
                         bufcast a t

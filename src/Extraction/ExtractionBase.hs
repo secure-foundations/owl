@@ -88,6 +88,7 @@ data ExtractionError =
     | GhostInExec String
     | LiftedError ExtractionError
     | CantCastType String String String
+    | UnsupportedKEM
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -127,6 +128,8 @@ instance OwlPretty ExtractionError where
         owlpretty "Lifted error:" <+> owlpretty e
     owlpretty (CantCastType v t1 t2) =
         owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
+    owlpretty UnsupportedKEM =
+        owlpretty "Extraction does not yet support KEMs"
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
@@ -266,6 +269,7 @@ specNameOfExecName s =
     if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s
 
 fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
+fLenOfNameKind NK_KEM = throwError UnsupportedKEM
 fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
@@ -283,6 +287,7 @@ fLenOfNameTy nt = do
 
 
 secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
+secrecyOfNameKind NK_KEM = throwError UnsupportedKEM
 secrecyOfNameKind nk = do
     return $ case nk of
         NK_KDF -> BufSecret
@@ -442,25 +447,50 @@ mkNestPattern l =
             [x] -> x
             x:y:tl -> foldl (\acc v -> parens (acc <+> pretty "," <+> v)) (parens (x <> pretty "," <+> y)) tl 
 
-nestOrdChoiceTy :: [Doc ann] -> Doc ann
-nestOrdChoiceTy l = 
-    [di|ord_choice_type!(#{hsep . punctuate comma $ l})|]
+-- Vest 2.0 sequences formats with the `Pair` combinator. Its values are left-nested tuples,
+-- so the value pattern for a nest is still `mkNestPattern`.
+mkNestComb :: [Doc ann] -> Doc ann
+mkNestComb l =
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> [di|Pair(#{acc}, #{v})|]) [di|Pair(#{x}, #{y})|] tl
 
-nestOrdChoice :: [Doc ann] -> Doc ann
-nestOrdChoice l = 
-        [di|ord_choice!(#{hsep . punctuate comma $ l})|]
+mkNestCombTy :: [Doc ann] -> Doc ann
+mkNestCombTy l =
+        case l of
+            [] -> pretty ""
+            [x] -> x
+            x:y:tl -> foldl (\acc v -> [di|Pair<#{acc}, #{v}>|]) [di|Pair<#{x}, #{y}>|] tl
 
--- injOrdChoice i l x macro prints the macro call for x in a list of length l at index i
-injOrdChoice :: Int -> Int -> Doc ann -> Doc ann -> Doc ann
-injOrdChoice i l x macro =
-    let starstr = hsep . punctuate comma $ [if j == i then [di|#{x}|] else [di|*|] | j <- [0 .. l-1]] in
-    [di|#{macro}(#{starstr})|]   
+-- Enums are an ordered choice (Vest 2.0 `Choice`, nested to the right) between the
+-- cases, each prefixed by a one-byte tag. Parsed values are nested `Sum`s.
+nestChoiceTy :: [Doc ann] -> Doc ann
+nestChoiceTy l =
+    case l of
+        [] -> pretty ""
+        [x] -> x
+        x:tl -> [di|Choice<#{x}, #{nestChoiceTy tl}>|]
+
+nestChoice :: [Doc ann] -> Doc ann
+nestChoice l =
+    case l of
+        [] -> pretty ""
+        [x] -> x
+        x:tl -> [di|Choice(#{x}, #{nestChoice tl})|]
+
+-- injSum i l x is the value (or pattern) for x in case i of a nested choice of l cases
+injSum :: Int -> Int -> Doc ann -> Doc ann
+injSum i l x
+    | l <= 1 = x
+    | i == 0 = [di|Sum::Inl(#{x})|]
+    | otherwise = [di|Sum::Inr(#{injSum (i - 1) (l - 1) x})|]
 
 listIdxToInjPat :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
-listIdxToInjPat i l x = return $ injOrdChoice i l x [di|inj_ord_choice_pat!|]   
+listIdxToInjPat i l x = return $ injSum i l x
 
 listIdxToInjResult :: Int -> Int -> Doc ann -> ExtractionMonad t (Doc ann)
-listIdxToInjResult i l x = return $ injOrdChoice i l x [di|inj_ord_choice_result!|]   
+listIdxToInjResult i l x = return $ injSum i l x
 
 
 withJustNothing :: (a -> ExtractionMonad t (Maybe b)) -> Maybe a -> ExtractionMonad t (Maybe (Maybe b))
@@ -472,16 +502,16 @@ compareByFieldNames (a, _) (b, _) = compare a b
 
 specCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
 specCombTyOf' (FBuf BufSecret (Just flen)) = do
-    return $ Just [di|Variable|]
+    return $ Just [di|Varied<usize>|]
 specCombTyOf' (FBuf BufSecret Nothing) = do
     return $ Just [di|Tail|]
-specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Variable|]
+specCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Varied<usize>|]
 specCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 specCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (specCombTyOf' . snd) fs
     case sequence fs' of
         Just fs'' -> do
-            let nest = mkNestPattern fs''
+            let nest = mkNestCombTy fs''
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
 specCombTyOf' (FEnum _ csStart) = do
@@ -489,10 +519,8 @@ specCombTyOf' (FEnum _ csStart) = do
     cs' <- mapM (withJustNothing specCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
-            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Variable|]) cs''
-            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
-            let nest = nestOrdChoiceTy constCs
+            let cs''' = map (fromMaybe [di|Varied<usize>|]) cs''
+            let nest = nestChoiceTy [ [di|PrefixTagged<U8, u8, #{c}>|] | c <- cs''' ]
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
 specCombTyOf' (FHexConst s) = do
@@ -504,15 +532,15 @@ specCombTyOf :: FormatTy -> ExtractionMonad t (Doc ann)
 specCombTyOf = liftFromJust specCombTyOf'
 
 execCombTyOf' :: FormatTy -> ExtractionMonad t (Maybe (Doc ann))
-execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Variable|]
+execCombTyOf' (FBuf BufSecret (Just flen)) = return $ Just [di|Varied<usize>|]
 execCombTyOf' (FBuf BufSecret Nothing) = return $ Just [di|Tail|]
-execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Variable|]
+execCombTyOf' (FBuf BufPublic (Just flen)) = return $ Just [di|Varied<usize>|]
 execCombTyOf' (FBuf BufPublic Nothing) = return $ Just [di|Tail|]
 execCombTyOf' (FStruct _ fs) = do
     fs' <- mapM (execCombTyOf' . snd) fs
     case sequence fs' of
         Just fs'' -> do
-            let nest = mkNestPattern fs''
+            let nest = mkNestCombTy fs''
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
 execCombTyOf' (FEnum _ csStart) = do
@@ -520,10 +548,8 @@ execCombTyOf' (FEnum _ csStart) = do
     cs' <- mapM (withJustNothing execCombTyOf' . snd) cs
     case sequence cs' of
         Just cs'' -> do
-            let consts = [[di|Tag<U8, u8>|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Variable|]) cs''
-            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
-            let nest = nestOrdChoiceTy constCs
+            let cs''' = map (fromMaybe [di|Varied<usize>|]) cs''
+            let nest = nestChoiceTy [ [di|PrefixTagged<U8, u8, #{c}>|] | c <- cs''' ]
             return $ Just [di|#{nest}|]
         Nothing -> return Nothing
 execCombTyOf' (FHexConst s) = do
@@ -538,18 +564,18 @@ execCombTyOf = liftFromJust execCombTyOf'
 specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 specCombOf' _ (FBuf BufSecret (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Variable(#{l})|]
+    return $ noconst [di|Varied(#{l}usize)|]
 specCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 specCombOf' _ (FBuf BufPublic (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Variable(#{l})|]
+    return $ noconst [di|Varied(#{l}usize)|]
 specCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 specCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (specCombOf' constSuffix . snd) fs
     case sequence fcs of
         Just fcs' -> do
             let (fs', consts) = unzip fcs'
-            let nest = mkNestPattern fs'
+            let nest = mkNestComb fs'
             -- We don't return the consts here, since they would already have been
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
@@ -564,10 +590,9 @@ specCombOf' constSuffix (FEnum _ csStart) = do
                             Just (c, const) -> Just c : cs
                             Nothing -> Nothing : cs
                     ) [] ccs''
-            let consts = [[di|Tag::spec_new(U8, #{i})|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Variable(0)|]) cs''
-            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs'''
-            let nest = nestOrdChoice constCs
+            let cs''' = map (fromMaybe [di|Varied(0usize)|]) cs''
+            let constCs = zipWith (\i c -> [di|PrefixTagged(U8, #{i}u8, #{c})|]) [1 :: Int ..] cs'''
+            let nest = nestChoice constCs
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
 specCombOf' constSuffix (FHexConst s) = do
@@ -585,18 +610,18 @@ specCombOf s = liftFromJust (specCombOf' s)
 execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 execCombOf' _ (FBuf BufSecret (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Variable(#{l})|]
+    return $ noconst [di|Varied(#{l}usize)|]
 execCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 execCombOf' _ (FBuf BufPublic (Just flen)) = do
     l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Variable(#{l})|]
+    return $ noconst [di|Varied(#{l}usize)|]
 execCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 execCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (execCombOf' constSuffix . snd) fs
     case sequence fcs of
         Just fcs' -> do
             let (fs', consts) = unzip fcs'
-            let nest = mkNestPattern fs'
+            let nest = mkNestComb fs'
             -- We don't return the consts here, since they would already have been
             -- returned and printed when the nested struct was defined
             return $ noconst [di|#{nest}|]
@@ -611,10 +636,9 @@ execCombOf' constSuffix (FEnum _ csStart) = do
                             Just (c, const) -> Just c : cs
                             Nothing -> Nothing : cs
                     ) [] ccs''
-            let consts = [[di|Tag::new(U8, #{i})|] | i <- [1 .. length cs'']]
-            let cs''' = map (fromMaybe [di|Variable(0)|]) cs''
-            let constCs = zipWith (\c i -> [di|(#{c}, #{i})|]) consts cs''' 
-            let nest = nestOrdChoice constCs
+            let cs''' = map (fromMaybe [di|Varied(0usize)|]) cs''
+            let constCs = zipWith (\i c -> [di|PrefixTagged(U8, #{i}u8, #{c})|]) [1 :: Int ..] cs'''
+            let nest = nestChoice constCs
             return $ noconst [di|#{nest}|]
         Nothing -> return Nothing
 execCombOf' constSuffix (FHexConst s) = do

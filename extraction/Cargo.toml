@@ -12,27 +12,25 @@ path = "src/lib.rs"
 # path = "src/main.rs"
 
 [dependencies]
-aead = {version = "0.5.1"} # , optional = true}
-aes-gcm = {version = "0.10.1"} # , optional = true}
-chacha20poly1305 = {version = "0.10.1"} # , optional = true}
-blake2 = {version = "0.10.6"} # , optional = true}
-crypto = "0.4.0"
-digest = "0.10.5"
-hkdf = "0.12.3"
-hmac = "0.12.1"
-p256 = { version = "0.11.1", features = ["ecdh", "bits", "serde"] }
-rand = "0.8.5"
-rsa = "0.7.2"
-sha1 = "0.10.5"
-sha2 = "0.10.6"
-libcrux = { git = "https://github.com/cryspen/libcrux", features = ["rand"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
-builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
-builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
-vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
-vest = { git = "https://github.com/secure-foundations/vest", rev = "39876557b9776b17dabcbbf0385742c94d038597" }
+aead = "=0.5.2"
+aes-gcm = "=0.10.3"
+chacha20poly1305 = "=0.10.1"
+blake2 = "=0.10.6"
+crypto = "=0.4.0"
+digest = "=0.10.7"
+hkdf = "=0.12.4"
+hmac = "=0.12.1"
+p256 = { version = "=0.11.1", features = ["ecdh", "bits", "serde"] }
+rand = "=0.8.5"
+rsa = "=0.7.2"
+sha1 = "=0.10.6"
+sha2 = "=0.10.8"
+libcrux = { git = "https://github.com/cryspen/libcrux", rev = "879bab2ebc3df985dae0c9db119c033f38c516dd", features = ["rand"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+x25519-dalek = { version = "=2.0.1", features = ["static_secrets"] }
+vstd = "=0.0.0-2026-09-06-0133"
+vest_lib = "=0.2.1"
 
 [features]
 default = [] # ["nonverif-crypto"]
@@ -40,3 +38,6 @@ nonverif-crypto = []
 
 [package.metadata.verus]
 verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_only)', 'cfg(verus_keep_ghost)'] }

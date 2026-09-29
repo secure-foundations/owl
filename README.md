@@ -49,7 +49,9 @@ To build and run, type `cabal run owl -- path/to/protocol.owl`. For more options
 To compile a protocol to Verus using Owl's secure compiler, use the `--extract` argument: `cabal run owl -- --extract path/to/protocol.owl`.
 Then, in the `extraction/` directory, run `./run_verus.sh $PWD` to verify the generated code with Verus. 
 The `run_verus` script assumes you have [`verus`](https://github.com/verus-lang/verus/) and [`verusfmt`](https://github.com/verus-lang/verusfmt/)
-in your `PATH`.
+in your `PATH`. The extracted code has been tested with Verus release
+[`0.2026.09.06.8dea4a2`](https://github.com/verus-lang/verus/releases/tag/release%2F0.2026.09.06.8dea4a2)
+using Rust toolchain `1.98.0` and `verusfmt` `0.7.4`.
 
 ## Syntax highlighting
 
