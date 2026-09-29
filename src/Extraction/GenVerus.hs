@@ -605,9 +605,14 @@ genVerusCExpr info expr = do
             let rustX = execName . show $ x
             e' <- genVerusCExpr (info { inK = False }) e
             k' <- genVerusCExpr info k
-            let needsItreeLhs = case e of
+            -- A call returns the itree token with its result, also when it ends a
+            -- let/block chain (e.g. an event call after a ghost assert)
+            let tailIsCall ex = case ex of
                     Typed _ (CCall _ _ _) -> True
+                    Typed _ (CLet _ _ xk') -> tailIsCall (snd $ unsafeUnbind xk')
+                    Typed _ (CBlock b) -> tailIsCall b
                     _ -> False
+            let needsItreeLhs = tailIsCall e
             -- Cast here, if necessary
             if e' ^. eTy /= e ^. tty || needsToplevelCast (e' ^. eTy) then do
                 castE' <- ([di|tmp_#{rustX}|], e' ^. eTy) `cast` (e ^. tty)

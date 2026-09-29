@@ -551,14 +551,17 @@ concretifyExpr e = do
       EAssert _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAssume _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAdmit -> return $ noLets $ Typed FGhost $ CRet ghostUnit
+      ECrypt (CLemma _) _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       ECrypt cop aes -> do
           (cs, argLets) <- concretifyAExprs aes
           addLets argLets <$> concretifyCryptOp aes cop cs
       ECall p _ aes -> do
             s <- concretifyPath p
-            (cs, argLets) <- concretifyAExprs aes
             (argtys, t) <- tySigOfCall p
-            cs' <- ghostifyArgs argtys cs
+            -- Do not concretify ghost args to calls
+            csLets <- forM (zip argtys aes) $ \(at, a) ->
+                if at == FGhost then return $ noLets ghostUnit else concretifyAExpr a
+            let (cs', argLets) = (map fst csLets, concatMap snd csLets)
             argsWithLets <- forM (zip argtys cs') $ \(t, a) -> do
                         unifyFormatTy t (a ^. tty) -- check types are compatible
                         bufcast a t
