@@ -392,18 +392,21 @@ genVerusCAExpr ae = do
             return $ GenRustExpr (ae ^. tty) [di|{ let x = mk_vec_u8![#{s'}]; #{castX} }|]
         CASerializeWith (RTStruct n fs) args -> do
             let ftys = map snd fs
+            -- Vest 2.0 has no builder combinator: a builder (in-place AEAD encryption) is
+            -- materialized and serialized as a byte field of its length
             let printComb arg comb = case comb of
                     PCTail -> return [di|Tail|]
                     PCBytes l -> do
                         l' <- concreteLength $ lowerFLen l
-                        return [di|Variable(#{l'})|]
+                        return [di|Varied(#{l'}usize)|]
                     PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
-                    PCBuilder -> return [di|BuilderCombinator(#{arg})|]
+                    PCBuilder -> return [di|Varied(#{arg}.length())|]
             let mkCombArg ((arg, comb), fty) = do
                     arg' <- genVerusCAExpr arg
                     let fty' = if comb == PCBuilder then RTUnit else fty
                     arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty'
-                    argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
+                    argForSer <- if comb == PCBuilder then return [di|OwlBuf::from_vec(#{arg''}.into_fresh_vec())|]
+                                 else if fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
                     viewArg <- if fty == RTUnit then return [di|()|] else do
                         return [di|#{arg' ^. code}.view()|]
                     comb' <- printComb arg'' comb
@@ -418,7 +421,7 @@ genVerusCAExpr ae = do
             (combs, arglens) <- unzip <$> mapM mkCombArg acfs
             let (argsViews, lens) = unzip arglens
             let (args, viewArgs) = unzip argsViews
-            let execcomb = mkNestPattern combs
+            let execcomb = mkNestComb combs
             let execargs = mkNestPattern args
             let specSerInner = [di|serialize_#{specNameOfExecName n}_inner|]
             let specSer = [di|serialize_#{specNameOfExecName n}|]
@@ -426,11 +429,13 @@ genVerusCAExpr ae = do
             let specMkStruct = [di|#{unExecName n}(#{hsep . punctuate comma $ viewArgs})|]
             let ser_body = [__di|    
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
-                    let mut ser_buf = vec_u8_of_len(#{(hsep . punctuate (pretty "+")) lens});
                     let exec_comb = #{execcomb};
                     #{reveals}
-                    let ser_result = exec_comb.serialize(#{execargs}, &mut ser_buf, 0);
-                    if let Ok((num_written)) = ser_result {
+                    let ser_val = #{execargs};
+                    if let Ok(_len) = exec_comb.prepare(&ser_val) {
+                        let mut ser_buf = Vec::new();
+                        exec_comb.serialize_into(&ser_val, &mut ser_buf);
+                        assert(ser_buf.view() =~= exec_comb.spec_serialize(ser_val.deep_view()));
                         assert(ser_buf.view() == #{specSer}(#{specMkStruct}));
                         ser_buf
                     } else {
@@ -529,19 +534,15 @@ genVerusCExpr info expr = do
                             PCTail -> return [di|Tail|]
                             PCBytes l -> do
                                 l' <- concreteLength $ lowerFLen l
-                                return [di|Variable(#{l'})|]
+                                return [di|Varied(#{l'}usize)|]
                             PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
-                            PCBuilder -> return [di|BuilderCombinator(#{arg})|]
-                    let printCombTy comb = case comb of
-                            PCTail -> [di|Tail|]
-                            PCBytes l -> [di|Variable|]
-                            PCConstBytes l _ -> [di|OwlConstBytes<#{l}>|]
-                            PCBuilder -> [di|BuilderCombinator<OwlStAEADBuilder>|]
+                            PCBuilder -> return [di|Varied(#{arg}.length())|]
                     let mkCombArg ((arg, comb), fty) = do
                             arg' <- genVerusCAExpr arg
                             let fty' = if comb == PCBuilder then RTUnit else fty
                             arg'' <- if comb == PCBuilder then return $ arg' ^. code else castGRE arg' fty'
-                            argForSer <- if comb == PCBuilder || fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
+                            argForSer <- if comb == PCBuilder then return [di|OwlBuf::from_vec(#{arg''}.into_fresh_vec())|]
+                                         else if fty' == RTUnit then return [di|()|] else (arg'', fty') `cast` owlBuf
                             comb' <- printComb arg'' comb
                             len <- case comb of
                                 PCBytes l -> do
@@ -553,8 +554,7 @@ genVerusCExpr info expr = do
                     let acfs = zip args ftys
                     (combs, arglens) <- unzip <$> mapM mkCombArg acfs
                     let (verusArgs, lens) = unzip arglens
-                    let execcomb = mkNestPattern combs
-                    let combTy = mkNestPattern $ map (printCombTy . snd) args
+                    let execcomb = mkNestComb combs
                     let execargs = mkNestPattern verusArgs
                     let specSerInner = [di|serialize_#{specNameOfExecName n}_inner|]
                     let specSer = [di|serialize_#{specNameOfExecName n}|]
@@ -562,10 +562,14 @@ genVerusCExpr info expr = do
                     let serout_body = [__di|    
                         let exec_comb = #{execcomb};
                         #{reveals}
-                        effects.owl_output_serialize_fused::<#{itreeTy}, OwlBuf<'_>, #{combTy}>(
+                        let ser_val = #{execargs};
+                        if let Err(_) = exec_comb.prepare(&ser_val) {
+                            return Err(OwlError::IntegerOverflow);
+                        }
+                        effects.owl_output_serialize_fused::<#{itreeTy}, _, _>(
                             Tracked(&mut itree),
                             exec_comb,
-                            #{execargs}, 
+                            ser_val,
                             #{dst'}, 
                             #{myAddr}
                         );
@@ -1005,7 +1009,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
             {
                 reveal(#{specParse});
                 let exec_comb = exec_combinator_#{verusName}();
-                if let Ok((_, parsed)) = <_ as Combinator<OwlBuf<'_>, Vec<u8>>>::parse(&exec_comb, arg) {
+                if let Ok((_, parsed)) = <_ as Parser<OwlBuf<'_>>>::parse(&exec_comb, &arg) {
                     let #{tupPatFields} = parsed;
                     Some (#{verusName} { #{mkStructFields} })
                 } else {
@@ -1024,7 +1028,7 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                     {
                         reveal(#{specParse});
                         let exec_comb = exec_combinator_#{verusName}();
-                        if let Ok((_, parsed)) = <_ as Combinator<SecretBuf<'_>, SecretOutputBuf>>::parse(&exec_comb, arg) {
+                        if let Ok((_, parsed)) = <_ as Parser<SecretBuf<'_>>>::parse(&exec_comb, &arg) {
                             let #{tupPatFields} = parsed;
                             Some (#{verusName} { #{mkStructFieldsSec} })
                         } else {
@@ -1053,13 +1057,13 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
             (outTy, obufConstructor, castObuf) <-
                     if isSecretSer then return
                         ( [di|SecretBuf<'#{lifetimeConst}>|]
-                        , [di|SecretOutputBuf::new_obuf|]
+                        , [di|SecretOutputBuf::new_obuf()|]
                         , [di|obuf.into_secret_buf()|]
                         )
                     else do
                         castObuf <- ([di|obuf|], vecU8) `cast` RTOwlBuf (Lifetime lifetimeConst)
                         return  ( [di|OwlBuf<'#{lifetimeConst}>|]
-                                , [di|vec_u8_of_len|]
+                                , [di|Vec::new()|]
                                 , castObuf
                                 )
 
@@ -1072,9 +1076,11 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
                 reveal(#{specSerInner});
                 if no_usize_overflows![ #{(hsep . punctuate comma) lens} ] {
                     let exec_comb = exec_combinator_#{verusName}();
-                    let mut obuf = #{obufConstructor}(#{(hsep . punctuate (pretty "+")) lens});
-                    let ser_result = exec_comb.serialize(#{fieldsAsInner}, &mut obuf, 0);
-                    if let Ok((num_written)) = ser_result {
+                    let ser_val = #{fieldsAsInner};
+                    if let Ok(_len) = exec_comb.prepare(&ser_val) {
+                        let mut obuf = #{obufConstructor};
+                        exec_comb.serialize_into(&ser_val, &mut obuf);
+                        assert(obuf.view() =~= exec_comb.spec_serialize(ser_val.deep_view()));
                         assert(obuf.view() == #{specSerInner}(arg.view())->Some_0);
                         Some(#{castObuf})
                     } else {
@@ -1248,7 +1254,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
             let l = length cases
             let mkParseBranch ((caseName, topt), i) = do
                     let (lhsX, rhsX) = case topt of
-                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Just _ -> ([di|x|], [di|x|])
                             Nothing -> ([di|_|], [di||])
                     lhs <- listIdxToInjPat i l lhsX
                     rhs <- case topt of
@@ -1261,7 +1267,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
             parseBranches <- mapM mkParseBranch (zip (M.elems cases) [0..])
             let mkParseBranchVec ((caseName, topt), i) = do
                     let (lhsX, rhsX) = case topt of
-                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Just _ -> ([di|x|], [di|x|])
                             Nothing -> ([di|_|], [di||])
                     lhs <- listIdxToInjPat i l lhsX
                     rhs <- case topt of
@@ -1278,7 +1284,7 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
             {
                 reveal(#{specParse});
                 let exec_comb = #{execComb};
-                if let Ok((_, parsed)) = <_ as Combinator<OwlBuf<'_>, Vec<u8>>>::parse(&exec_comb, arg) {
+                if let Ok((_, parsed)) = <_ as Parser<OwlBuf<'_>>>::parse(&exec_comb, &arg) {
                     let v = match parsed {
                         #{vsep parseBranches}
                     };

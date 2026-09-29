@@ -90,8 +90,8 @@ extractCStruct (CStruct n fs isVest _ _) = do
             let specname = specName owlN
             let execname = execName owlN
             let ftys = map snd fs
-            specCombTy <- mkNestPattern <$> mapM specCombTyOf ftys
-            execCombTy <- mkNestPattern <$>  mapM execCombTyOf ftys
+            specCombTy <- mkNestCombTy <$> mapM specCombTyOf ftys
+            execCombTy <- mkNestCombTy <$>  mapM execCombTyOf ftys
             let constSuffix = owlN
             (specCombs, specConsts) <- unzip <$> mapM (specCombOf constSuffix) ftys
             (execCombs, execConsts) <- unzip <$> mapM (execCombOf constSuffix) ftys
@@ -99,7 +99,7 @@ extractCStruct (CStruct n fs isVest _ _) = do
             let mkComb fvar comb = [di|let #{fvar} = #{comb};|]
             let mkSpecCombs = zipWith mkComb fieldVars specCombs
             let mkExecCombs = zipWith mkComb fieldVars execCombs
-            let nest = mkNestPattern $ map pretty fieldVars
+            let nest = mkNestComb $ map pretty fieldVars
             let specCombFnName = [di|spec_combinator_#{specname}|]
             let execCombFnName = [di|exec_combinator_#{execname}|]
             let combDefs = [__di|
@@ -108,7 +108,7 @@ extractCStruct (CStruct n fs isVest _ _) = do
                 #{nest}
             }
             exec fn #{execCombFnName}() -> (res: #{execCombTy})
-                ensures res.view() == #{specCombFnName}()
+                ensures res == #{specCombFnName}()
             {
                 #{vsep mkExecCombs}
                 #{nest}
@@ -125,7 +125,7 @@ extractCStruct (CStruct n fs isVest _ _) = do
             \#[verifier::opaque]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
                 let spec_comb = spec_combinator_#{specname}();
-                if let Ok((_,parsed)) = spec_comb.spec_parse(x) {
+                if let Some((_,parsed)) = spec_comb.spec_parse(x) {
                     let (#{fieldNamesNestPattern}) = parsed;
                     Some(#{specname} { #{fieldNamesCommaSep} })
                 } else {
@@ -144,9 +144,9 @@ extractCStruct (CStruct n fs isVest _ _) = do
             pub closed spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>> {
                 if no_usize_overflows_spec![ #{hsep . punctuate comma $ fieldLens} ] {
                     let spec_comb = spec_combinator_#{specname}();
-                    if let Ok(serialized) = spec_comb.spec_serialize((#{mkNestPattern fieldSels})) 
-                    {
-                        Some(serialized)
+                    let v = (#{mkNestPattern fieldSels});
+                    if spec_comb.consistent(v) {
+                        Some(spec_comb.spec_serialize(v))
                     } else {
                         None
                     }
@@ -262,7 +262,7 @@ extractCEnum (CEnum n cs isVest _ _) = do
             let l = length speccases
             let mkParseBranch ((caseName, topt), i) = do
                     let (lhsX, rhsX) = case topt of
-                            Just _ -> ([di|(_,x)|], [di|x|])
+                            Just _ -> ([di|x|], [di|x|])
                             Nothing -> ([di|_|], [di||])
                     lhs <- listIdxToInjPat i l lhsX
                     return [__di|
@@ -273,7 +273,7 @@ extractCEnum (CEnum n cs isVest _ _) = do
             \#[verifier::opaque]
             pub closed spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}> {
                 let spec_comb = #{specComb};
-                if let Ok((_,parsed)) = spec_comb.spec_parse(x) {
+                if let Some((_,parsed)) = spec_comb.spec_parse(x) {
                     let v = match parsed {
                         #{vsep parseBranches}
                     };
@@ -285,14 +285,15 @@ extractCEnum (CEnum n cs isVest _ _) = do
             |]
             let mkSerBranch ((caseName, topt), i) = do
                     let (lhsX, lhsXLen, rhsX) = case topt of
-                            Just _ -> ([di|x|], [di|x.len()|], [di|((), x)|])
-                            Nothing -> ([di||], [di|0|], [di|((), seq![])|])
+                            Just _ -> ([di|x|], [di|x.len()|], [di|x|])
+                            Nothing -> ([di||], [di|0|], [di|empty_seq_u8()|])
                     rhs <- listIdxToInjResult i l rhsX
                     return [__di|
                     #{specname}::#{caseName}(#{lhsX}) => {
                         if no_usize_overflows_spec![ 1, #{lhsXLen} ] {
-                            if let Ok(serialized) = spec_comb.spec_serialize(#{rhs}) {
-                                Some(serialized)
+                            let v = #{rhs};
+                            if spec_comb.consistent(v) {
+                                Some(spec_comb.spec_serialize(v))
                             } else {
                                 None
                             }
