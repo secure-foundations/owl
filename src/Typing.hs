@@ -3086,7 +3086,8 @@ checkKDFScope scope ds cont = do
         DeclName n b -> case snd (unsafeUnbind b) of
                           DeclBaseName (Spanned _ NT_DH) _ -> return ()
                           DeclBaseName (Spanned _ NT_KDF) _ -> return ()
-                          DeclBaseName _ _ -> typeError $ "Only DH and kdfkey names are allowed in kdf_scope (bad type for '" ++ n ++ "')"
+                          DeclBaseName (Spanned _ (NT_KEM (Spanned _ NT_KDF))) _ -> return ()
+                          DeclBaseName _ _ -> typeError $ "Only DH, kdfkey, and kemkey kdfkey names are allowed in kdf_scope (bad type for '" ++ n ++ "')"
                           DeclAbstractName -> typeError $ "Abstract name declarations not allowed in kdf_scope: " ++ n
                           DeclAbbrev _ -> typeError $ "Name abbreviations not allowed in kdf_scope: " ++ n
         DeclDef _ _ -> typeError "def not allowed inside kdf_scope"
@@ -3113,10 +3114,15 @@ checkKDFScope scope ds cont = do
         checkKDFRulesWellFounded rules
         go ds
 
--- Is ne a kdfkey of the scope: a base name declared in it, or derived by one of its rules
+-- Is ne a kdfkey of the scope: a base name declared in it, derived by one of
+-- its rules, or a shared secret of a KEM key declared in it
 kdfIsScopeKey :: String -> NameExp -> Check Bool
 kdfIsScopeKey scope ne = 
     case ne^.val of
+      KEMName k _ -> do
+          b <- kdfIsScopeName scope k
+          nt <- getNameType ne
+          return $ b && (nt^.val) `aeq` NT_KDF
       KDFName (KDFRuleRef l _ _) nks j -> do
           rd <- lookupKDFRule l
           return $ _kdfRuleScope rd == scope && j < length nks && nks !! j == NK_KDF
@@ -3625,8 +3631,9 @@ crossDHLemma n args = do
     return $ tLemma p
 
 -- For public y, a base DH name s, and a base name n (whose indices may be
--- omitted, and are then quantified): if s is secret and n is not s, then y^s
--- is not n. If n is secret it is uniform; if it is public, this is inverse DH.
+-- omitted, and are then quantified) or a KEM shared secret KEMName<k, i>: if s
+-- is secret and n is not s, then y^s is not n. If n is secret it is uniform;
+-- if it is public, this is inverse DH.
 dhExpLemma :: NameExp -> NameExp -> [(AExpr, Ty)] -> Check Ty
 dhExpLemma s n args = do
     assert ("Wrong number of arguments to dh_exp_lemma") $ length args == 1
@@ -3649,7 +3656,9 @@ dhExpLemma s n args = do
                   return (is' ++ ps', mkSpanned $ NameConst (map mkIVar is', map mkIVar ps') pth [])
               Nothing -> typeError $ show $ ErrUnknownName pth
         NameConst _ _ [] -> return ([], n)
-        _ -> typeError $ "The target of dh_exp_lemma must be a base name: " ++ show (owlpretty n)
+        -- A KEM shared secret: uniform if secret, and inverse DH if public, as for a base name
+        KEMName (Spanned _ (NameConst _ _ [])) _ -> return ([], n)
+        _ -> typeError $ "The target of dh_exp_lemma must be a base name or a KEM shared secret: " ++ show (owlpretty n)
     local (set tcScope $ TcGhost False) $ withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) qs) $ do
         _ <- getNameType n'
         return ()

@@ -144,6 +144,12 @@ setupNameEnvRO = do
                                 [sApp (sn : (map fst ivs))]
                                 ("kdfTag_" ++ (T.unpack $ renderSExp sn))
 
+                        -- A base name is not a KEM shared secret
+                        emitAssertion $ sForall ivs
+                            (sNot $ SApp [SAtom "NameIsKEM", sApp (sn : (map fst ivs))])
+                            [sApp (sn : (map fst ivs))]
+                            ("notKEM_" ++ (T.unpack $ renderSExp sn))
+
                         lAxs <- nameDefFlows nameExp nt
                         emitAssertion $ sForall (ivs)
                             lAxs
@@ -215,6 +221,7 @@ setupKDFRules = do
                 let nm = sKDFName sl params (SAtom $ show j)
                 nk <- liftCheck $ smtNameKindOf nt
                 ax "kdf_kind" (SApp [SAtom "HasNameKind", nm, nk]) j
+                ax "kdf_not_kem" (sNot $ SApp [SAtom "NameIsKEM", nm]) j
                 -- Only an applicable instance is secret
                 vcorr <- symLabel (nameLbl ne) >>= \l -> sFlows l <$> symLabel advLbl
                 ax "kdf_label" (case strictness of
@@ -410,7 +417,7 @@ lookupIndex x xs = go 0 xs
                            | otherwise = go (i + 1) ys
 
 builtInSMTFuncs :: [String]
-builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "crh", "xor", "Some?", "None?"]
+builtInSMTFuncs = ["length", "eq", "plus", "mult", "UNIT", "true", "false", "andb", "concat", "zero", "dh_combine", "dhpk", "is_group_elem", "kem_pk", "crh", "xor", "Some?", "None?"]
 
 
 setupFunc :: (ResolvedPath, Int) -> Sym ()

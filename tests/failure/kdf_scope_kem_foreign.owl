@@ -1,0 +1,10 @@
+// A KEM shared secret is a key of the scope only if its KEM key is declared
+// in the scope.
+locality alice
+
+name pq : kemkey (kdfkey) @ alice
+
+kdf_scope G {
+    name k : kdfkey @ alice
+    kdf L<i> : k, get(KEMName<pq, i>), 0x -> strict kdfkey
+}

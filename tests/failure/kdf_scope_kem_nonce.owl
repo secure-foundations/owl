@@ -1,0 +1,8 @@
+// A KEM key in a kdf_scope must have shared secrets of name type kdfkey.
+locality alice
+
+kdf_scope G {
+    name X : DH @ alice
+    name pq : kemkey (nonce) @ alice
+    kdf L<i> : 0x, get(KEMName<pq, i>), 0x -> strict kdfkey
+}

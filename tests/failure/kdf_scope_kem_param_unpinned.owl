@@ -1,0 +1,26 @@
+// A secret KEM shared secret of the scope passed for a parameter in a key
+// position makes the instance applicable: with c corrupt, L1(ss) names a
+// secret key when KEMName<pq, i> is secret. A call with the same inputs under
+// another hint is not a match, and not out of bounds either, since L1 cannot
+// be refuted. (Were only base kdfkeys counted, the call would be typed public.)
+locality alice
+locality bob
+
+name m : nonce @ alice
+
+kdf_scope G {
+    name c : kdfkey @ alice
+    name pq : kemkey (kdfkey) @ bob
+    kdf L1(x) : c, x, 0x -> strict enckey Name(m)
+    kdf L2 : c, 0x, 0x01 -> strict enckey Name(m)
+}
+
+corr adv ==> [c]
+
+def alice_main(pk: kempk(pq)) @ alice : Unit =
+    kem_encaps ss, ct <- pk in
+    unpack i, ss = ss in
+    corr_case KEMName<pq, i> in
+    let r2 = kdf<L2; enckey; 0>(get(c), ss, 0x) in
+    output r2;
+    ()

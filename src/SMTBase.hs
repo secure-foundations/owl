@@ -608,6 +608,7 @@ lengthConstant s =
       "mackey" ->  SApp [SAtom "NameKindLength", SAtom "MACkey"]
       "signature" -> SAtom "SignatureLen"
       "kem_cipherlen" -> SAtom "KEMCipherLen"
+      "kem_pk" -> SAtom "KEMPKLen"
       "group" -> SAtom "GroupLen"
       "vk" -> SAtom "VKLen"
       "pke_pk" -> SAtom "PKEPubLen"
