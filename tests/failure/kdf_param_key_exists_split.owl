@@ -1,0 +1,21 @@
+// The applicability of L(x) through its parameter is
+// exists i'. x == get(k<i'>) /\ sec(k<i'>). With k<i> corrupt and k<j>
+// secret, L(get(k<i>)) is not applicable through x (nor through the corrupt
+// salt c), so its name is not secret. Distributing the existential over the
+// conjunction would wrongly make it applicable.
+locality alice
+
+name m : nonce @ alice
+
+kdf_scope G {
+    name c : kdfkey @ alice
+    name k<i> : kdfkey @ alice
+    kdf L(x) : c, x, 0x -> strict enckey Name(m)
+}
+
+corr adv ==> [c]
+
+def alice_main<i, j>() @ alice : Unit =
+    kdf_label_lemma<KDF<L(get(k<i>)); enckey; 0>>();
+    assert ((!sec(k<i>) /\ sec(k<j>)) ==> sec(KDF<L(get(k<i>)); enckey; 0>));
+    ()
