@@ -1737,7 +1737,7 @@ tryFlowsTo l1' l2' = do
     l2 <- normalizeLabel l2'
     if trivialFlow l1 l2 then return (Just True) else tryFlowsTo' (l1, l2)
 
-tryFlowsTo' = withMemoize (memotryFlowsTo') $ \(l1, l2) -> do
+tryFlowsTo' = withMemoizeDecided (memotryFlowsTo') $ \(l1, l2) -> do
     (fn, b) <- SMT.checkFlows l1 l2
     return b
 
@@ -1747,8 +1747,8 @@ decideProp p = do
     case p'^.val of
       PTrue -> return $ Just True
       PFalse -> return $ Just False
-      _ -> do 
-        (fn, r) <- SMT.symDecideProp p'
+      _ -> flip (withMemoizeDecided memoDecideProp) p' $ \q -> do
+        (fn, r) <- SMT.symDecideProp q
         return r
 
 flowCheck :: Label -> Label -> Check ()

@@ -179,7 +179,8 @@ data MemoEntry senv = MemoEntry {
     _memoTyFlowsTo' :: IORef (M.Map (AlphaOrd (Ty, Label)) Bool),
     _memoCoveringLabel' :: IORef (M.Map (AlphaOrd Ty) Label),
     _memogetNameInfo :: IORef (M.Map (AlphaOrd NameExp) (Maybe (NameType, Maybe (ResolvedPath, [Locality])))),
-    _memoSolverEnv :: IORef (Maybe senv)
+    _memoSolverEnv :: IORef (Maybe senv),
+    _memoDecideProp :: IORef (M.Map (AlphaOrd Prop) (Maybe Bool))
 }
 
 -- Key type to uniquely identify the current module environment, for caching SMT query setup.
@@ -557,7 +558,8 @@ mkMemoEntry = do
     r7 <- newIORef M.empty
     r8 <- newIORef M.empty
     r9 <- newIORef Nothing
-    return $ MemoEntry r r2 r3 r4 r5 r6 r7 r8 r9
+    r10 <- newIORef M.empty
+    return $ MemoEntry r r2 r3 r4 r5 r6 r7 r8 r9 r10
 
 withNewMemo :: (MonadIO m, MonadReader (Env senv) m) => m a -> m a
 withNewMemo k = do
@@ -1027,6 +1029,32 @@ withMemoize lns k x = do
       Nothing -> do
           v <- k x
           liftIO $ modifyIORef memo $ M.insert (AlphaOrd x) v
+          return v
+
+-- Like withMemoize, for a decision procedure whose decided answers (Just b) stay
+-- valid in every nested scope: a scope only adds variables, indices and path
+-- conditions (withVars, withIndices, pushPathCondition), so whatever SMT proved
+-- in an enclosing scope is still provable. Decided answers are therefore looked
+-- up in the enclosing scopes' memos too; Nothing is reused only in its own scope.
+withMemoizeDecided :: Alpha a => (Lens' (MemoEntry senv) (IORef (M.Map (AlphaOrd a) (Maybe Bool)))) -> (a -> Check' senv (Maybe Bool)) -> a -> Check' senv (Maybe Bool)
+withMemoizeDecided lns k x = do
+    memos <- view memoStack
+    let cur = head memos ^. lns
+    let look [] = return Nothing
+        look (m : ms) = do
+            mp <- readIORef (m ^. lns)
+            case M.lookup (AlphaOrd x) mp of
+              Just (Just b) -> return (Just b)
+              _ -> look ms
+    curMp <- liftIO $ readIORef cur
+    case M.lookup (AlphaOrd x) curMp of
+      Just v -> return v
+      Nothing -> do
+          found <- liftIO $ look (tail memos)
+          v <- case found of
+                 Just b -> return (Just b)
+                 Nothing -> k x
+          liftIO $ modifyIORef cur $ M.insert (AlphaOrd x) v
           return v
 
 lengthConstants :: [String]
