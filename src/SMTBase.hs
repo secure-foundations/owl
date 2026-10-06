@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-} 
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiParamTypeClasses #-} 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-} 
 {-# LANGUAGE TypeSynonymInstances #-} 
@@ -46,6 +47,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Builder as TB
+import System.IO.Unsafe (unsafePerformIO)
+import qualified Control.Exception as CE
 
 
 data SExp = 
@@ -334,9 +337,62 @@ withZ3Process cp k = bracket (createProcess cp) cleanup (\(mi, mo, me, ph) -> k 
             forM_ (catMaybes [mi, mo, me]) $ \h -> (try (hClose h) :: IO (Either SomeException ()))
             void $ forkIO $ void (try (waitForProcess ph) :: IO (Either SomeException ExitCode))
 
+-- With --reuse-z3, idle z3 processes are kept and reused. Each query is followed
+-- by (reset), so every query starts from a fresh solver state, as with one process
+-- per query; only the process start-up is saved. A query whose thread is killed
+-- (the loser of raceSMT) terminates its process. The pool is shared by the whole
+-- run (all tests of --test).
+data Z3Worker = Z3Worker Handle Handle ProcessHandle
+
+z3IdleWorkers :: MVar [Z3Worker]
+z3IdleWorkers = unsafePerformIO $ newMVar []
+{-# NOINLINE z3IdleWorkers #-}
+
+spawnZ3Worker :: IO Z3Worker
+spawnZ3Worker = do
+    (mhin, mhout, _, ph) <- createProcess (proc "z3" ["-smt2", "-in"]) { std_in = CreatePipe, std_out = CreatePipe }
+    case (mhin, mhout) of
+      (Just hin, Just hout) -> do
+          forM_ [hin, hout] $ \h -> hSetEncoding h utf8
+          return $ Z3Worker hin hout ph
+      _ -> error "spawnZ3Worker: missing pipe"
+
+z3QueryEnd :: T.Text
+z3QueryEnd = T.pack "owl-query-end"
+
+runZ3Reused :: SMTQuery -> IO (Either String T.Text)
+runZ3Reused q = CE.mask $ \restore -> do
+    ow <- modifyMVar z3IdleWorkers $ \ws -> return $ case ws of
+            (w:ws') -> (ws', Just w)
+            [] -> ([], Nothing)
+    w@(Z3Worker hin hout ph) <- maybe spawnZ3Worker return ow
+    r <- CE.try $ restore $ do
+        hPutSMTQuery hin (T.pack "\n") q
+        T.hPutStr hin $ T.pack "\n(echo \"" <> z3QueryEnd <> T.pack "\")\n(reset)\n"
+        hFlush hin
+        let loop acc = do
+              l <- T.hGetLine hout
+              if l == z3QueryEnd then return (reverse acc) else loop (l : acc)
+        loop []
+    case r of
+      Left (e :: CE.SomeException) -> do
+          terminateProcess ph
+          _ <- CE.try (hClose hin) :: IO (Either CE.SomeException ())
+          _ <- CE.try (hClose hout) :: IO (Either CE.SomeException ())
+          _ <- forkIO $ void (CE.try (waitForProcess ph) :: IO (Either CE.SomeException ExitCode))
+          CE.throwIO e
+      Right ls -> do
+          modifyMVar_ z3IdleWorkers (return . (w :))
+          let out = T.unlines ls
+          -- z3 reports errors on stdout; there is no statistics block (no -st)
+          return $ if any (T.isPrefixOf (T.pack "(error")) ls then Left (T.unpack out)
+                   else Right (out <> T.pack "()")
+
 -- A failed run returns z3's stdout, which is where z3 reports errors.
-runZ3 :: SMTQuery -> IO (Either String T.Text)
-runZ3 q =
+-- Queries that set their own options get a fresh process.
+runZ3 :: Bool -> SMTQuery -> IO (Either String T.Text)
+runZ3 reuse q | reuse && T.null (sqOptions q) = runZ3Reused q
+runZ3 _ q =
     withZ3Process (proc "z3" ["-smt2", "-st", "-in"]) { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe } $
         \mhin mhout mherr ph -> do
             let (hin, hout, herr) = case (mhin, mhout, mherr) of
@@ -358,8 +414,8 @@ runZ3 q =
 trimnl :: String -> String
 trimnl = reverse . dropWhile (=='\n') . reverse
 
-queryZ3 :: Bool -> String -> IORef (Map String P.Z3Result) -> IORef (M.Map Int Bool) -> SMTQuery -> IO (Either String (Bool, Maybe String))
-queryZ3 logsmt filepath z3results mp q = do
+queryZ3 :: Bool -> Bool -> String -> IORef (Map String P.Z3Result) -> IORef (M.Map Int Bool) -> SMTQuery -> IO (Either String (Bool, Maybe String))
+queryZ3 reuse logsmt filepath z3results mp q = do
     let hq = hash (smtQueryChunks q)
     m <- readIORef mp
     case M.lookup hq m of
@@ -370,7 +426,7 @@ queryZ3 logsmt filepath z3results mp q = do
                     True -> do
                         b <- logSMT filepath q
                         return $ Just b
-          resp <- runZ3 q
+          resp <- runZ3 reuse q
           case resp of
             Right sT -> do
               let s = T.unpack sT
@@ -397,10 +453,11 @@ fromSMT senv s setup k = pushRoutine ("fromSMT: " ++ s) $ do
       Nothing -> return (Nothing, True)
       Just q -> do 
           logsmt <- view $ envFlags . fLogSMT
+          reuse <- view $ envFlags . fReuseZ3
           filepath <- view $ envFlags . fFilePath
           z3mp <- view smtCache
           z3rs <- view z3Results
-          resp <- liftIO $ queryZ3 logsmt filepath z3rs z3mp q
+          resp <- liftIO $ queryZ3 reuse logsmt filepath z3rs z3mp q
           case resp of
             Right (b, fn) -> return (fn, b)
             Left err -> typeError $ "Z3 error: " ++ err   
@@ -417,10 +474,11 @@ raceSMT senv setup k1 k2 = do
           sem <- liftIO $ newEmptyMVar 
           z3mp <- view smtCache
           logsmt <- view $ envFlags . fLogSMT
+          reuse <- view $ envFlags . fReuseZ3
           filepath <- view $ envFlags . fFilePath
           z3rs <- view z3Results
           let side q which = do
-                  resp <- try (queryZ3 logsmt filepath z3rs z3mp q) :: IO (Either SomeException (Either String (Bool, Maybe String)))
+                  resp <- try (queryZ3 reuse logsmt filepath z3rs z3mp q) :: IO (Either SomeException (Either String (Bool, Maybe String)))
                   case resp of
                       Right (Right (True, fn)) -> putMVar sem $ Right (Just (fn, which))
                       Right (Right (False, _)) -> putMVar sem $ Right Nothing
