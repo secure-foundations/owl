@@ -39,6 +39,8 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import System.FilePath ((</>))
 import System.IO
 import qualified Parse as P
+import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
+import qualified Control.Exception as CE
 
 
 member :: Eq a => a -> [(a, b)] -> Bool
@@ -201,6 +203,9 @@ data Env senv = Env {
     _interpUserFuncs :: ResolvedPath -> ModBody -> UserFunc -> Check' senv (Int, [FuncParam] -> [(AExpr, Ty)] -> Check' senv TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
+    -- Number of further case-split branches that may run in a forked thread
+    -- (--parallelize-splits); shared by all threads, see parBoth.
+    _parSlots :: IORef Int,
     _smtCache :: IORef (M.Map Int Bool),
     _memoStack :: [MemoEntry senv],
     _globalSMTSetupCache :: IORef (Maybe (ModuleFingerprint, senv)),
@@ -328,11 +333,15 @@ makeModDefConcrete (MAlias p) = do
     md <- getModDef p
     makeModDefConcrete md
 
+-- The counter is shared by the threads of parBoth, so it is bumped atomically.
+nextFresh :: Check' senv Integer
+nextFresh = do
+    r <- view freshCtr
+    liftIO $ atomicModifyIORef' r (\n -> (n + 1, n))
+
 instance Fresh (Check' senv) where
     fresh (Fn s _) = do
-        r <- view freshCtr
-        n <- liftIO $ readIORef r
-        liftIO $ writeIORef r (n + 1)
+        n <- nextFresh
         return $ (Fn s n)
     fresh nm@(Bn {}) = return nm
 
@@ -424,24 +433,56 @@ warn msg = liftIO $ putStrLn $ "Warning: " ++ msg
 
 freshVar :: Check' senv String
 freshVar = do
-    r <- view freshCtr
-    i <- liftIO $ readIORef r
-    liftIO $ writeIORef r (i + 1)
+    i <- nextFresh
     return $ ".x" ++ show i
 
 freshIdx :: Check' senv String
 freshIdx = do
-    r <- view freshCtr
-    i <- liftIO $ readIORef r
-    liftIO $ writeIORef r (i + 1)
+    i <- nextFresh
     return $ ".i" ++ show i
 
 freshLbl :: Check' senv String
 freshLbl = do
-    r <- view freshCtr
-    i <- liftIO $ readIORef r
-    liftIO $ writeIORef r (i + 1)
+    i <- nextFresh
     return $ ".l" ++ show i
+
+-- An error hook that does not print: the error is only thrown.
+silentTypeError :: String -> Check' senv a
+silentTypeError _ = do
+    e <- ask
+    Check $ lift $ throwError e
+
+-- parBoth k1 k2 has the result of running k1, then k2, for two independent
+-- sub-derivations (the two branches of a case split). When a slot is free
+-- (--parallelize-splits), k2 runs in a forked thread with an error hook that does
+-- not print; if it fails, it is run again here, so errors are reported exactly as
+-- in a sequential run. If k1 fails, the forked thread is killed. With no free slot
+-- both run here in sequence, so nested splits cannot deadlock.
+parBoth :: forall senv a b. Check' senv a -> Check' senv b -> Check' senv (a, b)
+parBoth k1 k2 = do
+    slots <- view parSlots
+    ok <- liftIO $ atomicModifyIORef' slots $ \n -> if n > 0 then (n - 1, True) else (n, False)
+    if not ok then (,) <$> k1 <*> k2 else do
+        env <- ask
+        let env2 = env { _typeErrorHook = silentTypeError }
+        mv <- liftIO newEmptyMVar
+        tid <- liftIO $ forkIO $ do
+            r <- CE.try (runExceptT (runReaderT (unCheck k2) env2))
+            atomicModifyIORef' slots $ \n -> (n + 1, ())
+            putMVar mv (r :: Either CE.SomeException (Either (Env senv) b))
+        let cancel = void $ forkIO $ killThread tid
+        a <- Check $ ReaderT $ \e -> ExceptT $ do
+                r <- runExceptT (runReaderT (unCheck k1) e) `CE.onException` cancel
+                case r of
+                  Left _ -> cancel
+                  Right _ -> return ()
+                return r
+        r <- liftIO $ takeMVar mv
+        case r of
+          Right (Right b) -> return (a, b)
+          _ -> do
+              b <- k2
+              return (a, b)
 
 -- Convenience functions for adding to the environment 
 

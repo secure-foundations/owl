@@ -15,7 +15,7 @@ import Data.IORef
 import System.Process
 import System.IO
 import System.Exit
-import Control.Exception (try, SomeException)
+import Control.Exception (try, SomeException, bracket)
 import CmdArgs
 import Data.Default (Default, def)
 import System.Directory
@@ -322,10 +322,22 @@ getSMTQuery senv setup k = do
             setup
             k
 
+-- Like withCreateProcess, but the background reaping of the process ignores
+-- errors. When a query is killed (the loser of raceSMT), the threaded runtime
+-- can interrupt waitForProcess after z3 has been reaped; the reaper thread of
+-- withCreateProcess then fails with ECHILD and the error is printed.
+withZ3Process :: CreateProcess -> (Maybe Handle -> Maybe Handle -> Maybe Handle -> ProcessHandle -> IO a) -> IO a
+withZ3Process cp k = bracket (createProcess cp) cleanup (\(mi, mo, me, ph) -> k mi mo me ph)
+    where
+        cleanup (mi, mo, me, ph) = do
+            terminateProcess ph
+            forM_ (catMaybes [mi, mo, me]) $ \h -> (try (hClose h) :: IO (Either SomeException ()))
+            void $ forkIO $ void (try (waitForProcess ph) :: IO (Either SomeException ExitCode))
+
 -- A failed run returns z3's stdout, which is where z3 reports errors.
 runZ3 :: SMTQuery -> IO (Either String T.Text)
 runZ3 q =
-    withCreateProcess (proc "z3" ["-smt2", "-st", "-in"]) { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe } $
+    withZ3Process (proc "z3" ["-smt2", "-st", "-in"]) { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe } $
         \mhin mhout mherr ph -> do
             let (hin, hout, herr) = case (mhin, mhout, mherr) of
                                       (Just a, Just b, Just c) -> (a, b, c)

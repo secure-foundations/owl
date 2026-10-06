@@ -68,8 +68,9 @@ emptyEnv f = do
     rs <- newIORef []
     memo <- mkMemoEntry 
     gsetup <- newIORef Nothing
+    slots <- newIORef $ f^.fParallelizeSplits
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] gsetup mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
+        interpUserFunc r slots m [memo] gsetup mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -2193,7 +2194,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- fresh $ s2n "%caseProp"
-              otTrue <- case doTrue of
+              let checkTrue = case doTrue of
                          True -> 
                              withVars [(x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ pushPathCondition p $ do
                                   logTypecheck $ owlpretty "Case split: " <> owlpretty p
@@ -2201,7 +2202,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                                       (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
                                       if b then return Nothing else Just <$> checkExpr ot k
                          False -> return $ Just tAdmit
-              otFalse <- case doFalse of
+              let checkFalse = case doFalse of
                          True -> 
                              withVars [(x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ pushPathCondition (pNot p) $ do
                                   logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
@@ -2209,6 +2210,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                                       (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
                                       if b then return Nothing else Just <$> checkExpr ot k
                          False -> return $ Just tAdmit
+              (otTrue, otFalse) <- parBoth checkTrue checkFalse
               -- A pruned branch is infeasible on this path, so the other
               -- branch's type alone is the type of the split. This keeps
               -- Admit out of the type of a let-bound split.
