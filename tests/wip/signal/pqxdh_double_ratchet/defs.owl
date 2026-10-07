@@ -100,7 +100,9 @@ kdf_scope Signal {
       // the adversary cannot compute the master secret iff some DH pair has
       // both keys secret
       ((sec(bs) /\ sec(long_skA)) \/ (sec(long_skB) /\ sec(ae1))
-        \/ (sec(bs) /\ sec(ae1)) \/ (sec(bo) /\ sec(ae1)))
+        \/ (sec(bs) /\ sec(ae1)) \/ (sec(bo) /\ sec(ae1))
+        // or k is the shared secret of an honest encapsulation to pqbo, and secret
+        \/ (exists q:idx. (k == get(KEMName<pqbo, q>) /\ sec(KEMName<pqbo, q>))))
 
 
 
