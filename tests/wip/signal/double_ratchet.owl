@@ -1,204 +1,128 @@
 /*
 
-Signal double ratchet, one message per DH epoch, as two mutually recursive
-rules.
+Signal double ratchet, one message per direction per round. Declarations
+are in defs.owl; the handshake is X3DH (x3dh.owl), which calls bob_send_0 and
+alice_recv_0 below.
 
-Epoch i: Bob sends first, then Alice replies. Each message performs one DH
-ratchet step combining the sender's fresh key with the peer's current key:
+In round i, Bob sends, then Alice replies (because Alice's first
+message was sent in X3DH). Each message takes one DH ratchet
+step, combining the sender's fresh key with the peer's current one:
 
-    Bob,   epoch i : rk_B<i> || kb<i> = kdf(rk_A<i-1>, dh(a<i>,   b<i>), 0x)   (rule LB<i>)
-    Alice, epoch i : rk_A<i> || ka<i> = kdf(rk_B<i>,   dh(a<i+1>, b<i>), 0x)   (rule LA<i>)
+    Bob,   round i : rk_B<i> || kb<i> = kdf(rk_A<i-1>, dh(a<i>,   b<i>), 0x)   (rule LB<i>)
+    Alice, round i : rk_A<i> || ka<i> = kdf(rk_B<i>,   dh(a<i+1>, b<i>), 0x)   (rule LA<i>)
 
-with rk_A<-1> = r0. Bob's epoch-i message carries dhpk(b<i>) under kb<i>;
-Alice's reply carries dhpk(a<i+1>) under ka<i>. So b<i> and a<i+1> are each
-used in two steps. LB<succ(i')> is salted by LA<i'> (a later rule at a smaller
-index) and LA<i> by LB<i> (an earlier rule at the same index).
+with rk_A<-1> = RK_1 = KDF<LA_init; ..; 0>, the X3DH root key; a<0> is
+Alice's X3DH ratchet key. There are no corr flows for the ratchet: the
+labels of RK_1 and of every chain key follow from rule applicability.
 
-r0 is RK_1 of X3DH (rule LA_init of x3dh_no_artifacts.owl), so a<0> is
-Alice's X3DH ratchet key and Bob sends first. The two scopes are not
-composed: the flows corr [long_sk*] ==> [r0] stand in for X3DH's compromise
-condition.
+Defs. A receive def decrypts the peer's message, recomputes the peer's step,
+and takes its own step with a fresh key. A send def encrypts under the
+resulting message key. bob_send_0 is Bob's first send.
 
-State invariant. A party's chain key is the honest chain name (secret or
-corrupt), or a public value with its provenance, as a type-level case on a
-ghost copy of the parameter:
+State. Each def hands on its chain and message keys as either the honest
+chain name or a public value with its gkdf provenance, split on a ghost copy
+(ra_g, ka_g). A send def's plaintext is secret only if the sender holds the
+honest message key and that key is secret:
 
-    ra_g : Ghost,
-    ra   : if ra_g == get(KDF<LA<i>; ..>) then Name(KDF<LA<i>; ..>)
-           else (x:Data<adv> ||kdfkey||
-                 { x == ra_g
-                   /\ x == gkdf<..>(wsalt, dh_combine(wpk, get(a<succ(i)>)), 0x)
-                   /\ corr(KDF<LA<i>; ..>) })
+    pt : if ka_g == get(KDF<LA<i>; ..; 1>) /\ sec(KDF<LA<i>; ..; 1>)
+         then Name(ma<i>) else Data<adv>
 
-wpk is the share received in the previous def and wsalt the previous salt
-(itself a KDF value over wsalt2 in the public case). Every def ends by
-ascribing the state it hands on to the next def's parameter types, so the
-invariant is checked at both ends of every def and nothing is assumed. Facts
-about the label of a chain name come from kdf_label_lemma.
+Each receive def ends by calling the next receive def at the next index
+(bob_send_0 calls bob_recv_1), so the state it hands on is checked against
+that def's parameter types. The same holds for the handshake: bob_x3dh and
+alice_x3dh call bob_send_0 and alice_recv_0, whose parameter types (in
+defs.owl) state what X3DH hands on. Send defs are not called, since their
+plaintext comes from the application; a receive def ascribes the message key
+to the send def's parameter type instead.
 
-What is proven:
+Proven (each site is marked PROVEN [Pn] below):
+  - [P1] Secrecy of mb<i> and ma<i> (the st_aead_enc in each send def).
+  - [P2] Post-compromise security (locally in the recovery case): 
+    after a chain key was corrupted, a step whose two DH keys are secret
+    gives a secret chain key again (alice_recv_succ, bob_recv_1,
+    bob_recv_succ).
+  - [P3] Agreement and key authenticity (the asserts after each receive
+    def's decryption): under a secret incoming chain key, the
+    receiver asserts the peer's sent event and gets the peer's honest
+    ratchet key.
 
-  - Secrecy of mb<i> and ma<i> when the chain key entering the step is
-    secret. Under the corr flows, sec(r0) keeps every later chain key secret
-    however many ratchet ephemerals leak (PRF-chain secrecy).
-  - Not healing. The flows corr<i> [KDF<LA<i>>] ==> [a<succ(i)>] (and for LB)
-    make everything after a corrupt chain key corrupt. Against an active
-    adversary this is the most that holds ([DR] 8.2): a corrupt chain key
-    followed by a forged share leaves the party with an adversary-known state.
-    Without these flows the induction step fails at the next encryption.
-  - Agreement: under a secret incoming chain key, every receive def asserts
-    happened(bob_sent<i>(m)) / happened(alice_sent<i>(m)) for the decrypted m.
-  - Key authenticity: under the same hypothesis, the received ratchet public
-    key is the peer's honest one.
-
-Hypotheses, besides the corr flows: both parties know the peer's identity key
-whenever the chain is secret (as in X3DH); one message per DH epoch; no
-skipped or out-of-order messages.
+Assumed: no skipped or out-of-order messages. The identity keys in the AADs
+come from X3DH's out-of-band authentication.
 
 */
 
-locality alice
-locality bob
-
-// Long-term DH keys are kept outside the scope: they appear only in AADs,
-// not in any dh_ss(...) rule body. In the full model they will come from X3DH.
-name long_skA : DH @ alice
-name long_skB : DH @ bob
-
-counter N_c_alice @ alice
-counter N_c_bob   @ bob
-
-// Plaintext secrets, one per epoch and direction
-name mb<i> : nonce @ bob    // Bob's message in epoch i
-name ma<i> : nonce @ alice  // Alice's message in epoch i
-
-// Cleanliness predicate used in function signatures
-predicate bob_good() = sec(long_skB) \/ sec(long_skA)
-
-// The sender records its plaintext before encrypting; the receiver asserts
-// the event after a successful decryption.
-def bob_sent<i> @ bob
-def alice_sent<i> @ alice
-
-kdf_scope DR {
-
-    // Ratchet DH keys. a<0> comes from the handshake; a<succ(i)> is
-    // generated by Alice in epoch i, b<i> by Bob in epoch i.
-    name a<i> : DH @ alice
-    name b<i> : DH @ bob
-
-    // The handshake output acts as the initial ratchet chain key shared by
-    // both parties.
-    name r0 : kdfkey @ alice, bob
-
-    // AEAD nametypes for Bob's epoch-i message
-    nametype mb_enc<i> = st_aead (m:Name(mb<i>){happened(bob_sent<i>(m))})
-          aad x. (x == dhpk(get(long_skA)) ++ dhpk(get(long_skB)))
-          nonce N_c_bob
-    nametype mb_corr<i> = st_aead (y:Name(mb<i>){False})
-          aad x. true
-          nonce N_c_bob
-
-    // AEAD nametypes for Alice's epoch-i message (carries her next key)
-    nametype ma_enc<i> = st_aead (m:Name(ma<i>){happened(alice_sent<i>(m))})
-          aad x. (x == dhpk(get(long_skA)) ++ dhpk(get(long_skB)))
-          nonce N_c_alice
-    nametype ma_corr<i> = st_aead (y:Name(ma<i>){False})
-          aad x. true
-          nonce N_c_alice
-
-    // Bob's step. Output 0 = chain key; 1 = Bob's AEAD key.
-    rec_odh<i> LB<i>
-        | 0        : r0,                                dh_ss(a<0>, b<0>), 0x
-        | succ(i') : KDF<LA<i'>; kdfkey || enckey; 0>,  dh_ss(a<i>, b<i>), 0x
-        -> strict kdfkey || strict mb_enc<i>
-
-    rec_odh<i> LB_bad<i>(s) where (s != dh_combine(dhpk(get(a<i>)), get(b<i>)))
-        | 0        : r0,                                s, 0x
-        | succ(i') : KDF<LA<i'>; kdfkey || enckey; 0>,  s, 0x
-        -> strict kdfkey || strict mb_corr<i>
-
-    // Alice's step. Output 0 = chain key; 1 = Alice's AEAD key.
-    rec_odh<i> LA<i>
-        | 0        : KDF<LB<0>; kdfkey || enckey; 0>,   dh_ss(a<succ(0)>, b<0>), 0x
-        | succ(i') : KDF<LB<i>; kdfkey || enckey; 0>,   dh_ss(a<succ(i)>, b<i>), 0x
-        -> strict kdfkey || strict ma_enc<i>
-
-    rec_odh<i> LA_bad<i>(s) where (s != dh_combine(dhpk(get(a<succ(i)>)), get(b<i>)))
-        | 0        : KDF<LB<0>; kdfkey || enckey; 0>,   s, 0x
-        | succ(i') : KDF<LB<i>; kdfkey || enckey; 0>,   s, 0x
-        -> strict kdfkey || strict ma_corr<i>
-}
-
-// ------------ CORR AXIOMS ------------
-
-// The relationship between the long-term keys and the handshake output
-corr [long_skA] ==> [r0]
-corr [long_skB] ==> [r0]
-
-// Authenticity of Alice's keys: a<0> travels in the handshake, a<succ(i)>
-// in Alice's epoch-i message under a key of LA<i>.
-corr [r0] ==> [a<0>]
-// Once the chain key entering a step is corrupt, an active adversary can
-// replace the share Alice receives, and her state is lost (see the header).
-corr<i> [KDF<LA<i>; kdfkey || enckey; 0>] ==> [a<succ(i)>]
-corr<i> [KDF<LB<i>; kdfkey || enckey; 0>] ==> [a<succ(i)>]
-
-// When the chain key entering a step and Alice's key for that step are both
-// corrupt, Bob's key for the step is treated as corrupt.
-corr [r0] /\ [a<0>] ==> [b<0>]
-corr<i> [KDF<LA<i>; kdfkey || enckey; 0>] /\ [a<succ(i)>] ==> [b<succ(i)>]
-corr<i> [KDF<LB<i>; kdfkey || enckey; 0>] /\ [a<succ(i)>] ==> [b<i>]
-
-// A plaintext is lost when the chain key entering its step and one of the
-// step's DH keys are both corrupt.
-corr [r0] /\ [a<0>] ==> [mb<0>]
-corr [r0] /\ [b<0>] ==> [mb<0>]
-corr<i> [KDF<LA<i>; kdfkey || enckey; 0>] /\ [a<succ(i)>] ==> [mb<succ(i)>]
-corr<i> [KDF<LA<i>; kdfkey || enckey; 0>] /\ [b<succ(i)>] ==> [mb<succ(i)>]
-corr<i> [KDF<LB<i>; kdfkey || enckey; 0>] /\ [a<succ(i)>] ==> [ma<i>]
-corr<i> [KDF<LB<i>; kdfkey || enckey; 0>] /\ [b<i>] ==> [ma<i>]
+include "defs.owl"
 
 // ------------ EVENTS ------------
 
 def bob_sent<i>(x : Ghost) @ bob : Unit = ()
 def alice_sent<i>(x : Ghost) @ alice : Unit = ()
 
-// ------------ STRUCTS ------------
+// ------------ SIGNATURES ------------
 
-struct bob_message<i> {
-  _b_pk: dhpk(b<i>),
-  _b_ctxt: Data<adv>
-}
+// Each receive def ends by calling the next one at the next index, and
+// bob_send_0 calls bob_recv_1. These abstract signatures let a def call one
+// defined later in the file, or itself; Owl checks that each concrete def
+// below has the same signature.
+def bob_recv_1(
+  wpk: (x:Data<adv> ||group||{ is_group_elem(x) }),
+  wsalt: Ghost,
+  rb_g: Ghost,
+  rb: if rb_g == get(KDF<LB<0>; kdfkey || enckey; 0>) then Name(KDF<LB<0>; kdfkey || enckey; 0>)
+      else (x:Data<adv> ||kdfkey||
+            { x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(b<0>)), 0x) }),
+  a3: dhpk(long_skA)
+) @ bob: Option Unit
 
-struct alice_message<i> {
-  _a_pk: dhpk(a<succ(i)>),
-  _a_ctxt: Data<adv>
-}
+def bob_recv_succ<i>(
+  wpk: (x:Data<adv> ||group||{ is_group_elem(x) }),
+  wsalt2: Ghost,
+  rb_g: Ghost,
+  wsalt: if rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) then Ghost
+         else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(wsalt2, dh_combine(wpk, get(b<i>)), 0x) }),
+  rb: if rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) then Name(KDF<LB<succ(i)>; kdfkey || enckey; 0>)
+      else (x:Data<adv> ||kdfkey||
+            { x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(b<succ(i)>)), 0x) }),
+  a3: dhpk(long_skA)
+) @ bob: Option Unit
 
-// ------------ PREDICATES ------------
+def alice_recv_succ<i>(
+  wpk: (x:Data<adv> ||group||{ is_group_elem(x) }),
+  wsalt2: Ghost,
+  ra_g: Ghost,
+  wsalt: if ra_g == get(KDF<LA<i>; kdfkey || enckey; 0>) then Ghost
+         else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(wsalt2, dh_combine(wpk, get(a<i>)), 0x) }),
+  ra: if ra_g == get(KDF<LA<i>; kdfkey || enckey; 0>) then Name(KDF<LA<i>; kdfkey || enckey; 0>)
+      else (x:Data<adv> ||kdfkey||
+            { x == ra_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(a<succ(i)>)), 0x) }),
+  b3: dhpk(long_skB)
+) @ alice: Option Unit
 
-// The chain key after Bob's / Alice's step of epoch i is secret
-predicate chain_b<i>() = sec(KDF<LB<i>; kdfkey || enckey; 0>)
-predicate chain_a<i>() = sec(KDF<LA<i>; kdfkey || enckey; 0>)
+// ------------ ROUND 0 ------------
 
-// ------------ EPOCH 0 ------------
-
-// Bob's first send. He holds Alice's first key from the handshake.
+// Bob's first send, called by bob_x3dh (parameters: see defs.owl). He holds
+// his X3DH root key and Alice's X3DH ratchet key.
 def bob_send_0(
-  rb: if bob_good[] then Name(r0) else Data<adv> ||kdfkey||,
-  gae: if bob_good[] then dhpk(a<0>) else (x:Data<adv> ||group||{corr(a<0>)}),
-  a3: if bob_good[] then dhpk(long_skA) else Data<adv> ||group||
+  bdh: Ghost,
+  bm: (x:Ghost{ x == gkdf<kdfkey; 0>(0x, bdh, 0x) }),
+  rb_g: Ghost,
+  gae: (x:Data<adv> ||group||{
+          (rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ sec(KDF<LA_init; kdfkey || enckey; 0>))
+            ==> x == dhpk(get(a<0>)) }),
+  rb: if rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ sec(KDF<LA_init; kdfkey || enckey; 0>)
+      then Name(KDF<LA_init; kdfkey || enckey; 0>)
+      else (x:Data<adv> ||kdfkey||{ x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(bm, dh_combine(gae, get(bs)), 0x) }),
+  a3: dhpk(long_skA),
+  // GOOD STATE: Bob holds the honest message key and it is secret.
+  pt: if rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ gae == dhpk(get(a<0>))
+         /\ sec(KDF<LB<0>; kdfkey || enckey; 1>)
+      then Name(mb<0>) else Data<adv>
 ) @ bob: Option Unit =
-  pcase sec(r0) in
-  pcase bob_good[] in
-  pcase sec(a<0>) in
+  guard is_group_elem(gae) in
+  pcase sec(KDF<LA_init; kdfkey || enckey; 0>) in
+  // rb may be RK_1 even when it is public.
+  pcase rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) in
   pcase sec(b<0>) in
-  pcase sec(mb<0>) in
-  pcase sec(long_skA) in
-  pcase sec(long_skB) in
-  pcase gae == dhpk(get(a<0>)) in
-  pcase a3 == dhpk(get(long_skA)) in
   // The label of a chain name follows the applicability of its rule instance.
   kdf_label_lemma<KDF<LB<0>; kdfkey || enckey; 0>>();
   false_elim in
@@ -206,47 +130,55 @@ def bob_send_0(
   let gbe = dhpk(get(b<0>)) in
   let gae': if (gae == dhpk(get(a<0>))) then dhpk(a<0>) else (x:Data<adv> ||group||{x == gae}) = gae in
   cross_dh_lemma<b<0>>(gae');
+  // rb is RK_1 or public: it is not a secret chain name of any step.
+  forall j:idx { secret_neq_lemma(rb, get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+  forall j:idx { secret_neq_lemma(rb, get(KDF<LB<j>; kdfkey || enckey; 0>)) };
   false_elim in
   let s = dh_combine(gae', get(b<0>)) in
   let rb' = kdf<LB<0>, LB_bad<0>(s); kdfkey || enckey; 0>(rb, s, 0x) in
   let kb  = kdf<LB<0>, LB_bad<0>(s); kdfkey || enckey; 1>(rb, s, 0x) in
 
-  // PROVENANCE: bob_recv_send_1 receives rb' as its state (rb_g := rb',
-  // wsalt := rb, wpk := gae'); the ascriptions check its parameter types.
-  let wpk_chk : Data<adv> ||group|| = gae' in
-  let wsalt_chk : (x:Ghost{ x == get(r0) \/ !bob_good[] }) = rb in
-  let rb_chk : (if rb' == get(KDF<LB<0>; kdfkey || enckey; 0>) then Name(KDF<LB<0>; kdfkey || enckey; 0>)
-                else (x:Data<adv> ||kdfkey||{ x == rb' /\ x == gkdf<kdfkey || enckey; 0>(rb, dh_combine(gae', get(b<0>)), 0x)
-                                              /\ corr(r0) })) = rb' in
-  call bob_sent<0>(get(mb<0>));
-  let x = st_aead_enc<N_c_bob>(kb, get(mb<0>), a3 ++ dhpk(get(long_skB))) in
+  call bob_sent<0>(pt);
+  // PROVEN [P1]: pt is Name(mb<0>) only under the honest, secret key.
+  let x = st_aead_enc<N_c_bob>(kb, pt, a3 ++ dhpk(get(long_skB))) in
   let msg = bob_message<0>(gbe, x) in
   let _ = output msg to endpoint(alice) in
-  Some(())
+  // PROVENANCE: Bob continues in bob_recv_1 with rb' as his state.
+  call bob_recv_1(gae', rb, rb', rb', a3)
 
-// Alice receives Bob's epoch-0 message and replies with her epoch-0 step.
-def alice_recv_send_0(
-  ra: if bob_good[] then Name(r0) else Data<adv> ||kdfkey||,
-  b3: if bob_good[] then dhpk(long_skB) else Data<adv> ||group||
+// Alice receives Bob's round-0 message and performs her round-0 step.
+// ra is Alice's X3DH root key (parameters: see defs.owl).
+def alice_recv_0(
+  adh: Ghost,
+  am: (x:Ghost{ x == gkdf<kdfkey; 0>(0x, adh, 0x) }),
+  ags: Ghost,
+  ra_g: Ghost,
+  ra_y: Ghost,
+  ra: if ra_g == get(KDF<LA_init; kdfkey || enckey; 0>) then Name(KDF<LA_init; kdfkey || enckey; 0>)
+      else if is_group_elem(ra_y) /\ ra_y != dhpk(get(bo))
+              /\ ra_g == get(KDF<LA_init_badA(ra_y); kdfkey || enckey; 0>)
+      then Name(KDF<LA_init_badA(ra_y); kdfkey || enckey; 0>)
+      else (x:Data<adv> ||kdfkey||{ x == ra_g /\ x == gkdf<kdfkey || enckey; 0>(am, dh_combine(ags, get(a<0>)), 0x) }),
+  b3: dhpk(long_skB)
 ) @ alice: Option Unit =
   input i2, _ in
   parse i2 as bob_message<0>(gbe, ctxt) in {
     guard is_group_elem(gbe) in
-    pcase sec(r0) in
-    pcase bob_good[] in
+    pcase sec(KDF<LA_init; kdfkey || enckey; 0>) in
+    // ra may be RK_1 even when it is public.
+    pcase ra_g == get(KDF<LA_init; kdfkey || enckey; 0>) in
     pcase sec(a<0>) in
     pcase sec(b<0>) in
-    pcase sec(mb<0>) in
-    pcase sec(long_skA) in
-    pcase sec(long_skB) in
-    pcase b3 == dhpk(get(long_skB)) in
     pcase gbe == dhpk(get(b<0>)) in
     cross_dh_lemma<a<0>>(gbe);
     kdf_label_lemma<KDF<LB<0>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LA<0>; kdfkey || enckey; 0>>();
     false_elim in
 
-    // Bob's step of epoch 0, recomputed by Alice
+    // ra is public or a chain name: it is not a secret chain name of another step.
+    forall j:idx { secret_neq_lemma(ra, get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+    forall j:idx { secret_neq_lemma(ra, get(KDF<LB<j>; kdfkey || enckey; 0>)) };
+    // Bob's step of round 0, recomputed by Alice
     let s_b = dh_combine<name b<0>, name a<0>>(gbe, get(a<0>)) in
     let rb' = kdf<LB<0>, LB_bad<0>(s_b); kdfkey || enckey; 0>(ra, s_b, 0x) in
     let kb  = kdf<LB<0>, LB_bad<0>(s_b); kdfkey || enckey; 1>(ra, s_b, 0x) in
@@ -256,51 +188,80 @@ def alice_recv_send_0(
     case mb_opt {
       | None => None()
       | Some m => {
-        // Agreement and key authenticity: with a secret initial chain key,
-        // the decrypted message was sent by Bob in epoch 0 and the received
-        // ratchet key is his honest b<0>.
-        assert (sec(r0) ==> happened(bob_sent<0>(m)));
-        assert (sec(r0) ==> gbe == dhpk(get(b<0>)));
-        // Alice's step of epoch 0: fresh a<succ(0)> against Bob's b<0>
-        pcase sec(ma<0>) in
+        // PROVEN [P3]: agreement and key authenticity. With the honest, secret
+        // root key RK_1, the decrypted message was sent by Bob in round 0 and
+        // the received ratchet key is his honest b<0>.
+        assert ((ra_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ sec(KDF<LA_init; kdfkey || enckey; 0>))
+                ==> (happened(bob_sent<0>(m)) /\ gbe == dhpk(get(b<0>))));
+        // Alice's step of round 0: fresh a<succ(0)> against Bob's b<0>
         pcase sec(a<succ(0)>) in
         cross_dh_lemma<a<succ(0)>>(gbe);
         false_elim in
+        // rb' is public or a chain name: it is not a secret chain name of another step.
+        forall j:idx { secret_neq_lemma(rb', get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+        forall j:idx { secret_neq_lemma(rb', get(KDF<LB<j>; kdfkey || enckey; 0>)) };
         let s_a = dh_combine<name b<0>, name a<succ(0)>>(gbe, get(a<succ(0)>)) in
         let ra' = kdf<LA<0>, LA_bad<0>(s_a); kdfkey || enckey; 0>(rb', s_a, 0x) in
         let ka  = kdf<LA<0>, LA_bad<0>(s_a); kdfkey || enckey; 1>(rb', s_a, 0x) in
-        // PROVENANCE: alice_recv_send_succ<0> receives ra' as its state
-        // (ra_g := ra', wsalt := rb', wsalt2 := ra, wpk := gbe).
-        let wpk_chk : (x:Data<adv> ||group||{ is_group_elem(x) }) = gbe in
-        let wsalt_chk : (if ra' == get(KDF<LA<0>; kdfkey || enckey; 0>) then Ghost
-                         else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(ra, dh_combine(gbe, get(a<0>)), 0x) })) = rb' in
-        let ra_chk : (if ra' == get(KDF<LA<0>; kdfkey || enckey; 0>) then Name(KDF<LA<0>; kdfkey || enckey; 0>)
-                      else (x:Data<adv> ||kdfkey||{ x == ra' /\ x == gkdf<kdfkey || enckey; 0>(rb', dh_combine(gbe, get(a<succ(0)>)), 0x)
-                                                    /\ corr(KDF<LA<0>; kdfkey || enckey; 0>) })) = ra' in
-        call alice_sent<0>(get(ma<0>));
-        let x = st_aead_enc<N_c_alice>(ka, get(ma<0>), dhpk(get(long_skA)) ++ b3) in
-        let msg = alice_message<0>(dhpk(get(a<succ(0)>)), x) in
-        let _ = output msg to endpoint(bob) in
-        Some(())
+        // MESSAGE KEY: alice_send<0> receives ka (ka_g := ka).
+        let ka_chk : (if ka == get(KDF<LA<0>; kdfkey || enckey; 1>) then Name(KDF<LA<0>; kdfkey || enckey; 1>)
+                      else Data<adv> ||enckey||) = ka in
+        // PROVENANCE: Alice continues in alice_recv_succ<0> with ra' as her
+        // state (wpk := gbe, wsalt2 := ra, ra_g := ra', wsalt := rb').
+        call alice_recv_succ<0>(gbe, ra, ra', rb', ra', b3)
       }
     }
   } otherwise None()
 
-// ------------ GENERIC STEP (epoch succ(i)) ------------
+// ------------ SEND ------------
 
-// Bob receives Alice's epoch-0 message, then sends his epoch-1 message.
-// He holds the chain key after his own epoch-0 step.
-def bob_recv_send_1(
-  wpk: Data<adv> ||group||,
-  // PROVENANCE: the salt Bob used in bob_send_0 was r0 itself, or the
-  // handshake was lost (bob_send_0's rb parameter).
-  wsalt: (x:Ghost{ x == get(r0) \/ !bob_good[] }),
+// Alice sends her round-i message under the message key of her LA<i> step.
+// The plaintext is secret only in the good state, when she holds the honest
+// message key and it is secret; otherwise it is public.
+def alice_send<i>(
+  ka_g: Ghost,
+  ka: if ka_g == get(KDF<LA<i>; kdfkey || enckey; 1>) then Name(KDF<LA<i>; kdfkey || enckey; 1>)
+      else Data<adv> ||enckey||,
+  b3: if ka_g == get(KDF<LA<i>; kdfkey || enckey; 1>) then dhpk(long_skB) else Data<adv> ||group||,
+  pt: if ka_g == get(KDF<LA<i>; kdfkey || enckey; 1>) /\ sec(KDF<LA<i>; kdfkey || enckey; 1>) then Name(ma<i>) else Data<adv>
+) @ alice: Unit =
+  call alice_sent<i>(pt);
+  // PROVEN [P1]: pt is Name(ma<i>) only under the honest, secret key.
+  let x = st_aead_enc<N_c_alice>(ka, pt, dhpk(get(long_skA)) ++ b3) in
+  let msg = alice_message<idx i>(dhpk(get(a<succ(i)>)), x) in
+  let _ = output msg to endpoint(bob) in
+  ()
+
+// Bob sends his round-succ(i) message under the message key of his
+// LB<succ(i)> step (round 0 is bob_send_0).
+def bob_send_succ<i>(
+  kb_g: Ghost,
+  kb: if kb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 1>) then Name(KDF<LB<succ(i)>; kdfkey || enckey; 1>)
+      else Data<adv> ||enckey||,
+  a3: if kb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 1>) then dhpk(long_skA) else Data<adv> ||group||,
+  pt: if kb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 1>) /\ sec(KDF<LB<succ(i)>; kdfkey || enckey; 1>) then Name(mb<succ(i)>) else Data<adv>
+) @ bob: Unit =
+  call bob_sent<succ(i)>(pt);
+  // PROVEN [P1]: pt is Name(mb<succ(i)>) only under the honest, secret key.
+  let x = st_aead_enc<N_c_bob>(kb, pt, a3 ++ dhpk(get(long_skB))) in
+  let msg = bob_message<succ(i)>(dhpk(get(b<succ(i)>)), x) in
+  let _ = output msg to endpoint(alice) in
+  ()
+
+// ------------ GENERIC STEP (round succ(i)) ------------
+
+// Bob receives Alice's round-0 message and performs his round-1 step.
+// He holds the chain key after his own round-0 step.
+def bob_recv_1(
+  // PROVENANCE: Bob's chain key is his LB<0> step over the root key wsalt
+  // and the share wpk he used in bob_send_0.
+  wpk: (x:Data<adv> ||group||{ is_group_elem(x) }),
+  wsalt: Ghost,
   rb_g: Ghost,
   rb: if rb_g == get(KDF<LB<0>; kdfkey || enckey; 0>) then Name(KDF<LB<0>; kdfkey || enckey; 0>)
       else (x:Data<adv> ||kdfkey||
-            { x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(b<0>)), 0x)
-              /\ corr(r0) }),
-  a3: if chain_b<0>[] then dhpk(long_skA) else Data<adv> ||group||
+            { x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(b<0>)), 0x) }),
+  a3: dhpk(long_skA)
 ) @ bob: Option Unit =
   input i2, _ in
   parse i2 as alice_message<0>(gae, ctxt) in {
@@ -309,79 +270,76 @@ def bob_recv_send_1(
     pcase sec(a<succ(0)>) in
     pcase sec(b<0>) in
     pcase sec(b<succ(0)>) in
-    pcase sec(ma<0>) in
-    pcase sec(long_skA) in
-    pcase sec(long_skB) in
-    pcase a3 == dhpk(get(long_skA)) in
     pcase gae == dhpk(get(a<succ(0)>)) in
     // PROVENANCE: does Bob hold the honest chain name?
     pcase rb_g == get(KDF<LB<0>; kdfkey || enckey; 0>) in
     cross_dh_lemma<b<0>>(gae);
     cross_dh_lemma<b<0>>(wpk);
-    // A chain key with a secret input never equals the base salt r0.
-    secret_neq_lemma(rb, get(r0));
     kdf_label_lemma<KDF<LB<0>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LA<0>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LB<succ(0)>; kdfkey || enckey; 0>>();
     false_elim in
 
-    // Alice's step of epoch 0, recomputed by Bob
+    // rb is public or a chain name: it is not a secret chain name of another step.
+    forall j:idx { secret_neq_lemma(rb, get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+    forall j:idx { secret_neq_lemma(rb, get(KDF<LB<j>; kdfkey || enckey; 0>)) };
+    // Alice's step of round 0, recomputed by Bob
     let s_a = dh_combine<name a<succ(0)>, name b<0>>(gae, get(b<0>)) in
     let ra' = kdf<LA<0>, LA_bad<0>(s_a); kdfkey || enckey; 0>(rb, s_a, 0x) in
     let ka  = kdf<LA<0>, LA_bad<0>(s_a); kdfkey || enckey; 1>(rb, s_a, 0x) in
-    secret_neq_lemma(ra', get(r0));
 
     let N_c = get_counter N_c_bob in
     let ma_opt = st_aead_dec(ka, ctxt, a3 ++ dhpk(get(long_skB)), N_c) in
     case ma_opt {
       | None => None()
       | Some m => {
-        // Agreement and key authenticity under a secret incoming chain key
+        // PROVEN [P3]: agreement and key authenticity under a secret incoming chain key
         assert ((rb_g == get(KDF<LB<0>; kdfkey || enckey; 0>) /\ chain_b<0>[]) ==> happened(alice_sent<0>(m)));
         assert ((rb_g == get(KDF<LB<0>; kdfkey || enckey; 0>) /\ chain_b<0>[]) ==> gae == dhpk(get(a<succ(0)>)));
-        // Bob's step of epoch 1: fresh b<succ(0)> against a<succ(0)>
-        pcase sec(mb<succ(0)>) in
+        // Bob's step of round 1: fresh b<succ(0)> against a<succ(0)>
         cross_dh_lemma<b<succ(0)>>(gae);
         false_elim in
-        let gbe = dhpk(get(b<succ(0)>)) in
+        // ra' is public or a chain name: it is not a secret chain name of another step.
+        forall j:idx { secret_neq_lemma(ra', get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+        forall j:idx { secret_neq_lemma(ra', get(KDF<LB<j>; kdfkey || enckey; 0>)) };
         let s_b = dh_combine<name a<succ(0)>, name b<succ(0)>>(gae, get(b<succ(0)>)) in
         let rb' = kdf<LB<succ(0)>, LB_bad<succ(0)>(s_b); kdfkey || enckey; 0>(ra', s_b, 0x) in
         let kb  = kdf<LB<succ(0)>, LB_bad<succ(0)>(s_b); kdfkey || enckey; 1>(ra', s_b, 0x) in
-        // PROVENANCE: bob_recv_send_succ<0> receives rb' as its state
-        // (rb_g := rb', wsalt := ra', wsalt2 := rb, wpk := gae).
-        let wpk_chk : (x:Data<adv> ||group||{ is_group_elem(x) }) = gae in
-        let wsalt_chk : (if rb' == get(KDF<LB<succ(0)>; kdfkey || enckey; 0>) then Ghost
-                         else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(rb, dh_combine(gae, get(b<0>)), 0x) })) = ra' in
-        let rb_chk : (if rb' == get(KDF<LB<succ(0)>; kdfkey || enckey; 0>) then Name(KDF<LB<succ(0)>; kdfkey || enckey; 0>)
-                      else (x:Data<adv> ||kdfkey||{ x == rb' /\ x == gkdf<kdfkey || enckey; 0>(ra', dh_combine(gae, get(b<succ(0)>)), 0x)
-                                                    /\ corr(KDF<LB<succ(0)>; kdfkey || enckey; 0>) })) = rb' in
-        call bob_sent<succ(0)>(get(mb<succ(0)>));
-        let x = st_aead_enc<N_c_bob>(kb, get(mb<succ(0)>), a3 ++ dhpk(get(long_skB))) in
-        let msg = bob_message<succ(0)>(gbe, x) in
-        let _ = output msg to endpoint(alice) in
-        Some(())
+        // PROVEN [P2]: if Bob's incoming chain key is corrupt but both DH keys
+        // of Alice's step LA<0> are secret, his next chain key is secret again.
+        assert(
+          !chain_b<0>[]
+          /\ (sec(a<succ(0)>) /\ sec(b<0>))
+            ==> chain_b<succ(0)>[]
+        );
+
+        // MESSAGE KEY: bob_send_succ<0> receives kb (kb_g := kb).
+        let kb_chk : (if kb == get(KDF<LB<succ(0)>; kdfkey || enckey; 1>) then Name(KDF<LB<succ(0)>; kdfkey || enckey; 1>)
+                      else Data<adv> ||enckey||) = kb in
+        // PROVENANCE: Bob continues in bob_recv_succ<0> with rb' as his state
+        // (wpk := gae, wsalt2 := rb, rb_g := rb', wsalt := ra').
+        call bob_recv_succ<0>(gae, rb, rb', ra', rb', a3)
       }
     }
   } otherwise None()
 
-// Bob receives Alice's epoch-succ(i) message, then sends his epoch-succ(succ(i))
-// message. He holds the chain key after his own epoch-succ(i) step. (A rule
-// hint at a bare index variable selects no case, so the generic step is
-// written one epoch up.)
-def bob_recv_send_succ<i>(
+// Bob receives Alice's round-succ(i) message and performs his
+// round-succ(succ(i)) step. He holds the chain key after his own
+// round-succ(i) step. (A rule hint at a bare index variable selects no case,
+// so the generic step is written one round up.)
+def bob_recv_succ<i>(
   wpk: (x:Data<adv> ||group||{ is_group_elem(x) }),
   wsalt2: Ghost,
   // PROVENANCE, two levels: Bob's chain key is his LB<succ(i)> step over his
   // recomputation of Alice's LA<i> step, both against the share wpk received
-  // in the previous def (the state of bob_recv_send_1 / bob_recv_send_succ<i'>).
+  // in the previous def (the state of bob_recv_1 / bob_recv_succ<i'>).
   rb_g: Ghost,
   wsalt: if rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) then Ghost
          else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(wsalt2, dh_combine(wpk, get(b<i>)), 0x) }),
   rb: if rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) then Name(KDF<LB<succ(i)>; kdfkey || enckey; 0>)
       else (x:Data<adv> ||kdfkey||
-            { x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(b<succ(i)>)), 0x)
-              /\ corr(KDF<LB<succ(i)>; kdfkey || enckey; 0>) }),
-  a3: if chain_b<succ(i)>[] then dhpk(long_skA) else Data<adv> ||group||
+            { x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(b<succ(i)>)), 0x) }),
+  a3: dhpk(long_skA)
 ) @ bob: Option Unit =
   input i2, _ in
   parse i2 as alice_message<succ(i)>(gae, ctxt) in {
@@ -390,65 +348,63 @@ def bob_recv_send_succ<i>(
     pcase sec(a<succ(succ(i))>) in
     pcase sec(b<succ(i)>) in
     pcase sec(b<succ(succ(i))>) in
-    pcase sec(ma<succ(i)>) in
-    pcase sec(long_skA) in
-    pcase sec(long_skB) in
-    pcase a3 == dhpk(get(long_skA)) in
     pcase gae == dhpk(get(a<succ(succ(i))>)) in
     // PROVENANCE: does Bob hold the honest chain name?
     pcase rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) in
     cross_dh_lemma<b<succ(i)>>(gae);
     cross_dh_lemma<b<succ(i)>>(wpk);
-    secret_neq_lemma(rb, get(r0));
     kdf_label_lemma<KDF<LA<i>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LB<succ(i)>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LA<succ(i)>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LB<succ(succ(i))>; kdfkey || enckey; 0>>();
     false_elim in
 
-    // Alice's step of epoch succ(i), recomputed by Bob
+    // rb is public or a chain name: it is not a secret chain name of another step.
+    forall j:idx { secret_neq_lemma(rb, get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+    forall j:idx { secret_neq_lemma(rb, get(KDF<LB<j>; kdfkey || enckey; 0>)) };
+    // Alice's step of round succ(i), recomputed by Bob
     let s_a = dh_combine<name a<succ(succ(i))>, name b<succ(i)>>(gae, get(b<succ(i)>)) in
     let ra' = kdf<LA<succ(i)>, LA_bad<succ(i)>(s_a); kdfkey || enckey; 0>(rb, s_a, 0x) in
     let ka  = kdf<LA<succ(i)>, LA_bad<succ(i)>(s_a); kdfkey || enckey; 1>(rb, s_a, 0x) in
-    secret_neq_lemma(ra', get(r0));
 
     let N_c = get_counter N_c_bob in
     let ma_opt = st_aead_dec(ka, ctxt, a3 ++ dhpk(get(long_skB)), N_c) in
     case ma_opt {
       | None => None()
       | Some m => {
-        // Agreement and key authenticity under a secret incoming chain key
+        // PROVEN [P3]: agreement and key authenticity under a secret incoming chain key
         assert ((rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) /\ chain_b<succ(i)>[]) ==> happened(alice_sent<succ(i)>(m)));
         assert ((rb_g == get(KDF<LB<succ(i)>; kdfkey || enckey; 0>) /\ chain_b<succ(i)>[]) ==> gae == dhpk(get(a<succ(succ(i))>)));
-        // Bob's step of epoch succ(succ(i)): fresh b<succ(succ(i))> against a<succ(succ(i))>
-        pcase sec(mb<succ(succ(i))>) in
+        // Bob's step of round succ(succ(i)): fresh b<succ(succ(i))> against a<succ(succ(i))>
         cross_dh_lemma<b<succ(succ(i))>>(gae);
         false_elim in
-
-        let gbe = dhpk(get(b<succ(succ(i))>)) in
+        // ra' is public or a chain name: it is not a secret chain name of another step.
+        forall j:idx { secret_neq_lemma(ra', get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+        forall j:idx { secret_neq_lemma(ra', get(KDF<LB<j>; kdfkey || enckey; 0>)) };
         let s_b = dh_combine<name a<succ(succ(i))>, name b<succ(succ(i))>>(gae, get(b<succ(succ(i))>)) in
         let rb' = kdf<LB<succ(succ(i))>, LB_bad<succ(succ(i))>(s_b); kdfkey || enckey; 0>(ra', s_b, 0x) in
         let kb  = kdf<LB<succ(succ(i))>, LB_bad<succ(succ(i))>(s_b); kdfkey || enckey; 1>(ra', s_b, 0x) in
-        // PROVENANCE: bob_recv_send_succ<succ(i)> receives rb' as its state
-        // (rb_g := rb', wsalt := ra', wsalt2 := rb, wpk := gae).
-        let wpk_chk : (x:Data<adv> ||group||{ is_group_elem(x) }) = gae in
-        let wsalt_chk : (if rb' == get(KDF<LB<succ(succ(i))>; kdfkey || enckey; 0>) then Ghost
-                         else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(rb, dh_combine(gae, get(b<succ(i)>)), 0x) })) = ra' in
-        let rb_chk : (if rb' == get(KDF<LB<succ(succ(i))>; kdfkey || enckey; 0>) then Name(KDF<LB<succ(succ(i))>; kdfkey || enckey; 0>)
-                      else (x:Data<adv> ||kdfkey||{ x == rb' /\ x == gkdf<kdfkey || enckey; 0>(ra', dh_combine(gae, get(b<succ(succ(i))>)), 0x)
-                                                    /\ corr(KDF<LB<succ(succ(i))>; kdfkey || enckey; 0>) })) = rb' in
-        call bob_sent<succ(succ(i))>(get(mb<succ(succ(i))>));
-        let x = st_aead_enc<N_c_bob>(kb, get(mb<succ(succ(i))>), a3 ++ dhpk(get(long_skB))) in
-        let msg = bob_message<succ(succ(i))>(gbe, x) in
-        let _ = output msg to endpoint(alice) in
-        Some(())
+        // PROVEN [P2]: if Bob's incoming chain key is corrupt but both DH keys
+        // of Alice's step LA<succ(i)> are secret, his next chain key is secret again.
+        assert(
+          !chain_b<succ(i)>[]
+          /\ (sec(a<succ(succ(i))>) /\ sec(b<succ(i)>))
+            ==> chain_b<succ(succ(i))>[]
+        );
+
+        // MESSAGE KEY: bob_send_succ<succ(i)> receives kb (kb_g := kb).
+        let kb_chk : (if kb == get(KDF<LB<succ(succ(i))>; kdfkey || enckey; 1>) then Name(KDF<LB<succ(succ(i))>; kdfkey || enckey; 1>)
+                      else Data<adv> ||enckey||) = kb in
+        // PROVENANCE: Bob continues in bob_recv_succ<succ(i)> with rb' as his
+        // state (wpk := gae, wsalt2 := rb, rb_g := rb', wsalt := ra').
+        call bob_recv_succ<succ(i)>(gae, rb, rb', ra', rb', a3)
       }
     }
   } otherwise None()
 
-// Alice receives Bob's epoch-succ(i) message, then sends her epoch-succ(i)
-// message. She holds the chain key after her own epoch-i step.
-def alice_recv_send_succ<i>(
+// Alice receives Bob's round-succ(i) message and performs her round-succ(i)
+// step. She holds the chain key after her own round-i step.
+def alice_recv_succ<i>(
   wpk: (x:Data<adv> ||group||{ is_group_elem(x) }),
   wsalt2: Ghost,
   // PROVENANCE, two levels: Alice's chain key is her LA<i> step over her
@@ -459,9 +415,8 @@ def alice_recv_send_succ<i>(
          else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(wsalt2, dh_combine(wpk, get(a<i>)), 0x) }),
   ra: if ra_g == get(KDF<LA<i>; kdfkey || enckey; 0>) then Name(KDF<LA<i>; kdfkey || enckey; 0>)
       else (x:Data<adv> ||kdfkey||
-            { x == ra_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(a<succ(i)>)), 0x)
-              /\ corr(KDF<LA<i>; kdfkey || enckey; 0>) }),
-  b3: if chain_a<i>[] then dhpk(long_skB) else Data<adv> ||group||
+            { x == ra_g /\ x == gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(a<succ(i)>)), 0x) }),
+  b3: dhpk(long_skB)
 ) @ alice: Option Unit =
   input i2, _ in
   parse i2 as bob_message<succ(i)>(gbe, ctxt) in {
@@ -469,10 +424,6 @@ def alice_recv_send_succ<i>(
     pcase chain_a<i>[] in
     pcase sec(a<succ(i)>) in
     pcase sec(b<succ(i)>) in
-    pcase sec(mb<succ(i)>) in
-    pcase sec(long_skA) in
-    pcase sec(long_skB) in
-    pcase b3 == dhpk(get(long_skB)) in
     pcase gbe == dhpk(get(b<succ(i)>)) in
     // PROVENANCE: does Alice hold the honest chain name? (If so and it is
     // corrupt, this is the ODH "healing" case.)
@@ -482,47 +433,53 @@ def alice_recv_send_succ<i>(
     // Stated on the provenance term (ra in the corrupt branch): ra itself
     // is Name(KDF<LA<i>>) in the secret branch, which does not unfold at a
     // bare index.
-    secret_neq_lemma(gkdf<kdfkey || enckey; 0>(wsalt, dh_combine(wpk, get(a<succ(i)>)), 0x), get(r0));
     kdf_label_lemma<KDF<LA<i>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LB<succ(i)>; kdfkey || enckey; 0>>();
     kdf_label_lemma<KDF<LA<succ(i)>; kdfkey || enckey; 0>>();
     false_elim in
 
-    // Bob's step of epoch succ(i), recomputed by Alice
+    // ra is public or a chain name: it is not a secret chain name of another step.
+    forall j:idx { secret_neq_lemma(ra, get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+    forall j:idx { secret_neq_lemma(ra, get(KDF<LB<j>; kdfkey || enckey; 0>)) };
+    // Bob's step of round succ(i), recomputed by Alice
     let s_b = dh_combine<name b<succ(i)>, name a<succ(i)>>(gbe, get(a<succ(i)>)) in
     let rb' = kdf<LB<succ(i)>, LB_bad<succ(i)>(s_b); kdfkey || enckey; 0>(ra, s_b, 0x) in
     let kb  = kdf<LB<succ(i)>, LB_bad<succ(i)>(s_b); kdfkey || enckey; 1>(ra, s_b, 0x) in
-    secret_neq_lemma(rb', get(r0));
 
     let N_c = get_counter N_c_alice in
     let mb_opt = st_aead_dec(kb, ctxt, dhpk(get(long_skA)) ++ b3, N_c) in
     case mb_opt {
       | None => None()
       | Some m => {
-        // Agreement and key authenticity under a secret incoming chain key
+        // PROVEN [P3]: agreement and key authenticity under a secret incoming chain key
         assert ((ra_g == get(KDF<LA<i>; kdfkey || enckey; 0>) /\ chain_a<i>[]) ==> happened(bob_sent<succ(i)>(m)));
         assert ((ra_g == get(KDF<LA<i>; kdfkey || enckey; 0>) /\ chain_a<i>[]) ==> gbe == dhpk(get(b<succ(i)>)));
-        // Alice's step of epoch succ(i): fresh a<succ(succ(i))> against b<succ(i)>
-        pcase sec(ma<succ(i)>) in
+        // Alice's step of round succ(i): fresh a<succ(succ(i))> against b<succ(i)>
         pcase sec(a<succ(succ(i))>) in
         cross_dh_lemma<a<succ(succ(i))>>(gbe);
         false_elim in
+        // rb' is public or a chain name: it is not a secret chain name of another step.
+        forall j:idx { secret_neq_lemma(rb', get(KDF<LA<j>; kdfkey || enckey; 0>)) };
+        forall j:idx { secret_neq_lemma(rb', get(KDF<LB<j>; kdfkey || enckey; 0>)) };
         let s_a = dh_combine<name b<succ(i)>, name a<succ(succ(i))>>(gbe, get(a<succ(succ(i))>)) in
         let ra' = kdf<LA<succ(i)>, LA_bad<succ(i)>(s_a); kdfkey || enckey; 0>(rb', s_a, 0x) in
         let ka  = kdf<LA<succ(i)>, LA_bad<succ(i)>(s_a); kdfkey || enckey; 1>(rb', s_a, 0x) in
-        // PROVENANCE: alice_recv_send_succ<succ(i)> receives ra' as its state
-        // (ra_g := ra', wsalt := rb', wsalt2 := ra, wpk := gbe).
-        let wpk_chk : (x:Data<adv> ||group||{ is_group_elem(x) }) = gbe in
-        let wsalt_chk : (if ra' == get(KDF<LA<succ(i)>; kdfkey || enckey; 0>) then Ghost
-                         else (x:Data<adv> ||kdfkey||{ x == gkdf<kdfkey || enckey; 0>(ra, dh_combine(gbe, get(a<succ(i)>)), 0x) })) = rb' in
-        let ra_chk : (if ra' == get(KDF<LA<succ(i)>; kdfkey || enckey; 0>) then Name(KDF<LA<succ(i)>; kdfkey || enckey; 0>)
-                      else (x:Data<adv> ||kdfkey||{ x == ra' /\ x == gkdf<kdfkey || enckey; 0>(rb', dh_combine(gbe, get(a<succ(succ(i))>)), 0x)
-                                                    /\ corr(KDF<LA<succ(i)>; kdfkey || enckey; 0>) })) = ra' in
-        call alice_sent<succ(i)>(get(ma<succ(i)>));
-        let x = st_aead_enc<N_c_alice>(ka, get(ma<succ(i)>), dhpk(get(long_skA)) ++ b3) in
-        let msg = alice_message<succ(i)>(dhpk(get(a<succ(succ(i))>)), x) in
-        let _ = output msg to endpoint(bob) in
-        Some(())
+
+        // PROVEN [P2]: local "post-compromise security" for the recovery case: if we had a bad chain key, but this round's DH keys are both secret,
+        // and we get Bob's actual public key for this round, then the next round's chain key is secret again.
+        assert(
+          !chain_a<i>[] 
+          /\ (sec(a<succ(i)>) /\ sec(b<succ(i)>)) 
+          // /\ (gbe == dhpk(get(b<succ(i)>))) 
+            ==> chain_a<succ(i)>[]
+        );
+
+        // MESSAGE KEY: alice_send<succ(i)> receives ka (ka_g := ka).
+        let ka_chk : (if ka == get(KDF<LA<succ(i)>; kdfkey || enckey; 1>) then Name(KDF<LA<succ(i)>; kdfkey || enckey; 1>)
+                      else Data<adv> ||enckey||) = ka in
+        // PROVENANCE: Alice continues in alice_recv_succ<succ(i)> with ra' as
+        // her state (wpk := gbe, wsalt2 := ra, ra_g := ra', wsalt := rb').
+        call alice_recv_succ<succ(i)>(gbe, ra, ra', rb', ra', b3)
       }
     }
   } otherwise None()

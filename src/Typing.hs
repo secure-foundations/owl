@@ -571,7 +571,8 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PQuantBV q sx xp -> do
                          (x, p') <- unbind xp
                          case p'^.val of
-                           PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
+                           -- forall distributes over /\ (exists does not)
+                           PAnd p1' p2' | Forall <- q -> normalizeProp $ Spanned (p^.spanOf) $ 
                                             PAnd 
                                                 (mkSpanned $ PQuantBV q sx $ bind x p1') 
                                                 (mkSpanned $ PQuantBV q sx $ bind x p2') 
@@ -581,7 +582,8 @@ normalizeProp = withMemoize (memoNormalizeProp) $ \p -> do
                      PQuantIdx q sx xp -> do
                          (x, p') <- unbind xp
                          case p'^.val of
-                           PAnd p1' p2' -> normalizeProp $ Spanned (p^.spanOf) $ 
+                           -- forall distributes over /\ (exists does not)
+                           PAnd p1' p2' | Forall <- q -> normalizeProp $ Spanned (p^.spanOf) $ 
                                             PAnd 
                                                 (mkSpanned $ PQuantIdx q sx $ bind x p1') 
                                                 (mkSpanned $ PQuantIdx q sx $ bind x p2') 

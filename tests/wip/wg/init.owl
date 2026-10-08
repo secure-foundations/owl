@@ -126,6 +126,10 @@ def init_stage2<i@n,m>
         let ss = dh_combine(msg2_ephemeral, e_init) in
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
         // Derive C5 via ODH L4 (E_init x E_resp)
+        // A public c4 is not the salt of any secret off-chain L4_corr instance.
+        forall i':idx, n':idx, m':idx { forall x:bv {
+            secret_neq_lemma(c4, get(KDF<L3_corr<i'@n',m'>(x); kdfkey||enckey; 0>))
+        } };
         let c5 : if on_chain<m>[msg2_ephemeral] then
                      (if c5_sec<i,j,n,m>[] then SecName(KDF<L4<i,j@n,n,m>;kdfkey;0>)
                       else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey;0>(c4, ss, 0x)}))
@@ -139,6 +143,10 @@ def init_stage2<i@n,m>
         // Derive C6 via ODH L5 (S_init x E_resp)
         let ss_msg2_eph_s_init = dh_combine(msg2_ephemeral, get(S_init<@n>)) in
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
+        // A public c5 is not the salt of any secret off-chain L5_corr instance.
+        forall i':idx, n':idx, m':idx { forall x:bv {
+            secret_neq_lemma(c5, get(KDF<L4_corr<i'@n',m'>(x); kdfkey; 0>))
+        } };
         let c6 : if on_chain<m>[msg2_ephemeral] then
                      (if c6_sec<i,j,n,m>[] then SecName(KDF<L5<i,j@n,n,m>;kdfkey;0>)
                       else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey;0>(c5, ss_msg2_eph_s_init, 0x)}))
