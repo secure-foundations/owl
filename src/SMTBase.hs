@@ -477,15 +477,24 @@ raceSMT senv setup k1 k2 = do
           reuse <- view $ envFlags . fReuseZ3
           filepath <- view $ envFlags . fFilePath
           z3rs <- view z3Results
+          -- Each side puts exactly one result into sem, unless it is killed
+          -- because the race is over. A failure must reach sem too: if it
+          -- were dropped while the other side's result is waiting there, the
+          -- second takeMVar would block forever.
           let side q which = do
-                  resp <- try (queryZ3 reuse logsmt filepath z3rs z3mp q) :: IO (Either SomeException (Either String (Bool, Maybe String)))
+                  resp <- try $ do
+                      r <- queryZ3 reuse logsmt filepath z3rs z3mp q
+                      case r of
+                        Right (True, fn) -> return $ Right (Just (fn, which))
+                        Right (False, _) -> return $ Right Nothing
+                        Left err -> do
+                            b <- logSMT filepath q
+                            return $ Left $ "Z3 error: " ++ err ++ " logged to " ++ b
                   case resp of
-                      Right (Right (True, fn)) -> putMVar sem $ Right (Just (fn, which))
-                      Right (Right (False, _)) -> putMVar sem $ Right Nothing
-                      Right (Left err) -> do
-                          b <- logSMT filepath q
-                          putMVar sem $ Left $ "Z3 error: " ++ err ++ " logged to " ++ b
-                      Left exn -> void $ tryPutMVar sem $ Left $ "Z3 error: " ++ show exn
+                      Right res -> putMVar sem res
+                      Left exn -> case CE.fromException exn of
+                          Just CE.ThreadKilled -> return ()
+                          _ -> putMVar sem $ Left $ "Z3 error: " ++ show (exn :: SomeException)
           p1 <- liftIO $ forkIO $ side q1 False
           p2 <- liftIO $ forkIO $ side q2 True
           o1 <- liftIO $ takeMVar sem
