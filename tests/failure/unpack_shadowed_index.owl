@@ -1,0 +1,22 @@
+// The inner unpack shadows j1, so r'' : Name(N<outer j1, inner j1>), not Name(N<j1, j1>).
+// Must fail: the two indices are distinct even though they share a source name.
+locality A
+
+name N<i, j> : nonce @ A
+
+name K : enckey (exists i. exists j. Name(N<i, j>)) @ A
+
+def bob() @ A
+: Unit =
+    input inp in
+    let k = get(K) in
+    corr_case K in
+    case adec(k, inp) {
+        | None => ()
+        | Some r =>
+            unpack j1, r' = r in
+            let x2: if sec(K) then (exists i. Name(N<j1, i>)) else Data<adv> = r' in
+            unpack j1, r'' = r' in
+            let x3: if sec(K) then Name(N<j1, j1>) else Data<adv> = r'' in
+            ()
+    }
