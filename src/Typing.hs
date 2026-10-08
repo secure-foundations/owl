@@ -62,14 +62,14 @@ doAssertFalse = do
 emptyEnv :: Flags -> IO (Env SMT.SolverEnv)
 emptyEnv f = do
     r <- newIORef 0
-    r' <- newIORef 0
     r'' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
     memo <- mkMemoEntry 
     gsetup <- newIORef Nothing
+    slots <- newIORef $ f^.fParallelizeSplits
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r m [memo] gsetup mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
+        interpUserFunc r slots m [memo] gsetup mempty rs 0 r'' Nothing (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -1183,11 +1183,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
                               bdy'' <- ANF.anf bdy'
                               logTypecheck $ owlpretty $ "Type checking " ++ n
                               t0 <- liftIO $ getCurrentTime
-                              pushLogTypecheckScope
                               local (set tcScope $ TcDef l) $ local (set curDef $ Just n) $ 
                                   withVars [(s2n x, (ignore x, Nothing, mkSpanned $ TRefined tUnit ".req" (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
-                                  _ <- checkExpr (Just tyAnn) bdy''
-                                  popLogTypecheckScope
+                                  _ <- withPushLog $ checkExpr (Just tyAnn) bdy''
                                   t1 <- liftIO $ getCurrentTime
                                   logTypecheck $ owlpretty $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
                           return $ (preReq, tyAnn, Just bdy')
@@ -1736,7 +1734,7 @@ tryFlowsTo l1' l2' = do
     l2 <- normalizeLabel l2'
     if trivialFlow l1 l2 then return (Just True) else tryFlowsTo' (l1, l2)
 
-tryFlowsTo' = withMemoize (memotryFlowsTo') $ \(l1, l2) -> do
+tryFlowsTo' = withMemoizeDecided (memotryFlowsTo') $ \(l1, l2) -> do
     (fn, b) <- SMT.checkFlows l1 l2
     return b
 
@@ -1746,8 +1744,8 @@ decideProp p = do
     case p'^.val of
       PTrue -> return $ Just True
       PFalse -> return $ Just False
-      _ -> do 
-        (fn, r) <- SMT.symDecideProp p'
+      _ -> flip (withMemoizeDecided memoDecideProp) p' $ \q -> do
+        (fn, r) <- SMT.symDecideProp q
         return r
 
 flowCheck :: Label -> Label -> Check ()
@@ -1898,10 +1896,10 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           liftPutDoc $ owlprettyTyContext tC'
           getOutTy ot $ tUnit
       (EDebug (DebugPrintExpr e)) -> do
-          liftIO $ putStrLn $ show $ owlpretty e
+          logPutStrLn $ show $ owlpretty e
           getOutTy ot $ tUnit
       (EDebug (DebugPrintLabel l)) -> do
-          liftIO $ putStrLn $ show $ owlpretty l
+          logPutStrLn $ show $ owlpretty l
           getOutTy ot $ tUnit
       (EBlock k p) -> do
           tc <- view tcScope
@@ -2193,7 +2191,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- fresh $ s2n "%caseProp"
-              otTrue <- case doTrue of
+              let checkTrue = case doTrue of
                          True -> 
                              withVars [(x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ pushPathCondition p $ do
                                   logTypecheck $ owlpretty "Case split: " <> owlpretty p
@@ -2201,7 +2199,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                                       (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
                                       if b then return Nothing else Just <$> checkExpr ot k
                          False -> return $ Just tAdmit
-              otFalse <- case doFalse of
+              let checkFalse = case doFalse of
                          True -> 
                              withVars [(x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ pushPathCondition (pNot p) $ do
                                   logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
@@ -2209,6 +2207,7 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                                       (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
                                       if b then return Nothing else Just <$> checkExpr ot k
                          False -> return $ Just tAdmit
+              (otTrue, otFalse) <- parBoth checkTrue checkFalse
               -- A pruned branch is infeasible on this path, so the other
               -- branch's type alone is the type of the split. This keeps
               -- Admit out of the type of a let-bound split.

@@ -26,6 +26,8 @@ data Flags = Flags {
     _fOnlyCheck :: Maybe String,
     _fNoColor :: Bool,
     _fTestWithCache :: Bool,
+    _fParallelizeSplits :: Int,
+    _fReuseZ3 :: Bool,
     _fFileContents :: String
                    }
 
@@ -68,6 +70,11 @@ parseArgs =
           ( long "no-color-output" <> help "Print errors without ANSI color codes" )
       <*> switch
           ( long "test-with-smtcache" <> help "Do tests without clearing the SMT cache" )
+      <*> option auto
+          ( long "parallelize-splits" <> metavar "N" <> value 0
+            <> help "Check the branches of case splits (pcase, corr_case) in parallel, with at most N branches running at a time (default 0: sequential)" )
+      <*> switch
+          ( long "reuse-z3" <> help "Reuse z3 processes across SMT queries; each query is followed by (reset)" )
       <*> (pure "")
     where
         extractAllFlag = switch (long "extract" <> short 'e' <> help "Extract all specs and code")

@@ -39,6 +39,8 @@ import Unbound.Generics.LocallyNameless.Unsafe
 import System.FilePath ((</>))
 import System.IO
 import qualified Parse as P
+import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
+import qualified Control.Exception as CE
 
 
 member :: Eq a => a -> [(a, b)] -> Bool
@@ -177,7 +179,8 @@ data MemoEntry senv = MemoEntry {
     _memoTyFlowsTo' :: IORef (M.Map (AlphaOrd (Ty, Label)) Bool),
     _memoCoveringLabel' :: IORef (M.Map (AlphaOrd Ty) Label),
     _memogetNameInfo :: IORef (M.Map (AlphaOrd NameExp) (Maybe (NameType, Maybe (ResolvedPath, [Locality])))),
-    _memoSolverEnv :: IORef (Maybe senv)
+    _memoSolverEnv :: IORef (Maybe senv),
+    _memoDecideProp :: IORef (M.Map (AlphaOrd Prop) (Maybe Bool))
 }
 
 -- Key type to uniquely identify the current module environment, for caching SMT query setup.
@@ -201,13 +204,20 @@ data Env senv = Env {
     _interpUserFuncs :: ResolvedPath -> ModBody -> UserFunc -> Check' senv (Int, [FuncParam] -> [(AExpr, Ty)] -> Check' senv TyX),
     -- in scope atomic localities, eg "alice", "bob"; localities :: S.Set String -- ok
     _freshCtr :: IORef Integer,
+    -- Number of further case-split branches that may run in a forked thread
+    -- (--parallelize-splits); shared by all threads, see parBoth.
+    _parSlots :: IORef Int,
     _smtCache :: IORef (M.Map Int Bool),
     _memoStack :: [MemoEntry senv],
     _globalSMTSetupCache :: IORef (Maybe (ModuleFingerprint, senv)),
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
-    _typeCheckLogDepth :: IORef Int,
+    -- Indentation of --log-typecheck output. Local to each thread of parBoth.
+    _typeCheckLogDepth :: Int,
     _debugLogDepth :: IORef Int,
+    -- Log output of a branch forked by parBoth, newest first; Nothing prints
+    -- directly. See emitLog.
+    _logBuffer :: Maybe (IORef [IO ()]),
     _typeErrorHook :: (forall a. String -> Check' senv a),
     _checkNameTypeHook :: (NameType -> Check' senv ()),
     _normalizeTyHook :: Ty -> Check' senv Ty,
@@ -328,11 +338,15 @@ makeModDefConcrete (MAlias p) = do
     md <- getModDef p
     makeModDefConcrete md
 
+-- The counter is shared by the threads of parBoth, so it is bumped atomically.
+nextFresh :: Check' senv Integer
+nextFresh = do
+    r <- view freshCtr
+    liftIO $ atomicModifyIORef' r (\n -> (n + 1, n))
+
 instance Fresh (Check' senv) where
     fresh (Fn s _) = do
-        r <- view freshCtr
-        n <- liftIO $ readIORef r
-        liftIO $ writeIORef r (n + 1)
+        n <- nextFresh
         return $ (Fn s n)
     fresh nm@(Bn {}) = return nm
 
@@ -412,36 +426,74 @@ timeCheck threshold s k = do
     res <- k
     t' <- liftIO $ getCurrentTime
     let dt = diffUTCTime t' t
-    when (dt > realToFrac threshold) $ liftIO $ putStrLn $ "Time for " ++ s ++ ": " ++ show dt
+    when (dt > realToFrac threshold) $ logPutStrLn $ "Time for " ++ s ++ ": " ++ show dt
     return res
 
 
 
 warn :: String -> Check' senv ()
-warn msg = liftIO $ putStrLn $ "Warning: " ++ msg
+warn msg = logPutStrLn $ "Warning: " ++ msg
 
 --instance (Monad m, MonadIO m, MonadReader (Env senv) m) => Fresh m where
 
 freshVar :: Check' senv String
 freshVar = do
-    r <- view freshCtr
-    i <- liftIO $ readIORef r
-    liftIO $ writeIORef r (i + 1)
+    i <- nextFresh
     return $ ".x" ++ show i
 
 freshIdx :: Check' senv String
 freshIdx = do
-    r <- view freshCtr
-    i <- liftIO $ readIORef r
-    liftIO $ writeIORef r (i + 1)
+    i <- nextFresh
     return $ ".i" ++ show i
 
 freshLbl :: Check' senv String
 freshLbl = do
-    r <- view freshCtr
-    i <- liftIO $ readIORef r
-    liftIO $ writeIORef r (i + 1)
+    i <- nextFresh
     return $ ".l" ++ show i
+
+-- An error hook that does not print: the error is only thrown.
+silentTypeError :: String -> Check' senv a
+silentTypeError _ = do
+    e <- ask
+    Check $ lift $ throwError e
+
+-- parBoth k1 k2 has the result of running k1, then k2, for two independent
+-- sub-derivations (the two branches of a case split). When a slot is free
+-- (--parallelize-splits), k2 runs in a forked thread with an error hook that does
+-- not print; if it fails, it is run again here, so errors are reported exactly as
+-- in a sequential run. If k1 fails, the forked thread is killed. With no free slot
+-- both run here in sequence, so nested splits cannot deadlock. The forked thread's
+-- log output (emitLog) is buffered and replayed after k1, or dropped if k2 is
+-- killed or run again.
+parBoth :: forall senv a b. Check' senv a -> Check' senv b -> Check' senv (a, b)
+parBoth k1 k2 = do
+    slots <- view parSlots
+    ok <- liftIO $ atomicModifyIORef' slots $ \n -> if n > 0 then (n - 1, True) else (n, False)
+    if not ok then (,) <$> k1 <*> k2 else do
+        env <- ask
+        buf <- liftIO $ newIORef []
+        let env2 = env { _typeErrorHook = silentTypeError, _logBuffer = Just buf }
+        mv <- liftIO newEmptyMVar
+        tid <- liftIO $ forkIO $ do
+            r <- CE.try (runExceptT (runReaderT (unCheck k2) env2))
+            atomicModifyIORef' slots $ \n -> (n + 1, ())
+            putMVar mv (r :: Either CE.SomeException (Either (Env senv) b))
+        let cancel = void $ forkIO $ killThread tid
+        a <- Check $ ReaderT $ \e -> ExceptT $ do
+                r <- runExceptT (runReaderT (unCheck k1) e) `CE.onException` cancel
+                case r of
+                  Left _ -> cancel
+                  Right _ -> return ()
+                return r
+        r <- liftIO $ takeMVar mv
+        case r of
+          Right (Right b) -> do
+              acts <- liftIO $ readIORef buf
+              mapM_ emitLog $ reverse acts
+              return (a, b)
+          _ -> do
+              b <- k2
+              return (a, b)
 
 -- Convenience functions for adding to the environment 
 
@@ -516,7 +568,8 @@ mkMemoEntry = do
     r7 <- newIORef M.empty
     r8 <- newIORef M.empty
     r9 <- newIORef Nothing
-    return $ MemoEntry r r2 r3 r4 r5 r6 r7 r8 r9
+    r10 <- newIORef M.empty
+    return $ MemoEntry r r2 r3 r4 r5 r6 r7 r8 r9 r10
 
 withNewMemo :: (MonadIO m, MonadReader (Env senv) m) => m a -> m a
 withNewMemo k = do
@@ -841,43 +894,39 @@ getNameType ne = do
         Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
         Just nt -> return nt
 
-pushLogTypecheckScope :: Check' senv ()
-pushLogTypecheckScope = do
-    r <- view $ typeCheckLogDepth
-    n <- liftIO $ readIORef r
-    liftIO $ writeIORef r (n+1)
-
-popLogTypecheckScope :: Check' senv ()
-popLogTypecheckScope = do
-    r <- view $ typeCheckLogDepth
-    n <- liftIO $ readIORef r
-    liftIO $ writeIORef r (n-1)
-
 withPushLog :: Check' senv a -> Check' senv a
-withPushLog k = do
-    pushLogTypecheckScope
-    r <- k
-    popLogTypecheckScope
-    return r
+withPushLog = local (over typeCheckLogDepth (+1))
+
+-- Runs an output action now, or, in a branch forked by parBoth, saves it in the
+-- branch's buffer; parBoth replays the buffer once the branches before it are
+-- done, so the output is in the same order as in a sequential run.
+emitLog :: IO () -> Check' senv ()
+emitLog act = do
+    buf <- view logBuffer
+    case buf of
+      Nothing -> liftIO act
+      Just r -> liftIO $ modifyIORef' r (act :)
+
+logPutStrLn :: String -> Check' senv ()
+logPutStrLn s = emitLog $ putStrLn s
 
 liftPutDoc :: OwlDoc -> Check' senv ()
 liftPutDoc doc = do
     noColor <- view $ envFlags . fNoColor
-    liftIO $ if noColor then putDoc (unAnnotate doc) else putDoc doc
+    emitLog $ if noColor then putDoc (unAnnotate doc) else putDoc doc
 
 logTypecheck :: OwlDoc -> Check' senv ()
 logTypecheck s = do
     b <- view $ envFlags . fLogTypecheck
     when b $ do
-        r <- view $ typeCheckLogDepth
-        n <- liftIO $ readIORef r
+        n <- view $ typeCheckLogDepth
         liftPutDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
     bd <- view $ envFlags . fDebug
     case bd of
       Just fname -> do 
           r <- view $ debugLogDepth
           n <- liftIO $ readIORef r
-          liftIO $ appendFile fname $ replicate (n) ' ' ++ show s ++ "\n"
+          emitLog $ appendFile fname $ replicate (n) ' ' ++ show s ++ "\n"
       Nothing -> return ()
 
 getTyDef :: Path -> Check' senv TyDef
@@ -986,6 +1035,32 @@ withMemoize lns k x = do
       Nothing -> do
           v <- k x
           liftIO $ modifyIORef memo $ M.insert (AlphaOrd x) v
+          return v
+
+-- Like withMemoize, for a decision procedure whose decided answers (Just b) stay
+-- valid in every nested scope: a scope only adds variables, indices and path
+-- conditions (withVars, withIndices, pushPathCondition), so whatever SMT proved
+-- in an enclosing scope is still provable. Decided answers are therefore looked
+-- up in the enclosing scopes' memos too; Nothing is reused only in its own scope.
+withMemoizeDecided :: Alpha a => (Lens' (MemoEntry senv) (IORef (M.Map (AlphaOrd a) (Maybe Bool)))) -> (a -> Check' senv (Maybe Bool)) -> a -> Check' senv (Maybe Bool)
+withMemoizeDecided lns k x = do
+    memos <- view memoStack
+    let cur = head memos ^. lns
+    let look [] = return Nothing
+        look (m : ms) = do
+            mp <- readIORef (m ^. lns)
+            case M.lookup (AlphaOrd x) mp of
+              Just (Just b) -> return (Just b)
+              _ -> look ms
+    curMp <- liftIO $ readIORef cur
+    case M.lookup (AlphaOrd x) curMp of
+      Just v -> return v
+      Nothing -> do
+          found <- liftIO $ look (tail memos)
+          v <- case found of
+                 Just b -> return (Just b)
+                 Nothing -> k x
+          liftIO $ modifyIORef cur $ M.insert (AlphaOrd x) v
           return v
 
 lengthConstants :: [String]

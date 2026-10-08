@@ -17,6 +17,7 @@ executable owl
   hs-source-dirs:      src, src/Extraction, src/Pass
   ghc-options:         
     -Wunused-top-binds
+    -threaded -rtsopts "-with-rtsopts=-N4 -qg"
   main-is:             Main.hs
   default-language:    Haskell2010
   other-modules: Parse, AST, Typing, LabelChecking, SMT, CmdArgs, Test, TypingBase, SMTBase, ConcreteAST, ANFPass, PathResolution, ModuleFlattening, Pretty, Verus, PrettyVerus, ExtractionBase, ExtractionTop, Concretify, LowerImmut, GenVerus, SpecExtraction, LowerBufOpt
