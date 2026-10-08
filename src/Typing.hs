@@ -1966,19 +1966,20 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
                 if y `elem` toListOf fv to then stripTy y to else return to
       (EUnpack a (si, sx) ixk) -> do
           t0 <- inferAExpr a
-          ((i, x), e_) <- unbind ixk
-          let e = subst i (mkIVar (s2n si)) e_
+          -- i is fresh from unbind; binding the index under the source name si
+          -- instead would let a nested unpack with the same name capture it.
+          ((i, x), e) <- unbind ixk
           tyOfX <- openTy t0 $ \t -> do
               case (stripRefinements t)^.val of
                 TExistsIdx _ jt' -> do
                     (j, t') <- unbind jt'
-                    return $ tRefined (subst j (mkIVar $ s2n si) t') ".res" (pEq (aeVar ".res") a)
+                    return $ tRefined (subst j (mkIVar i) t') ".res" (pEq (aeVar ".res") a)
                 _ -> return t
-          to <- withIndices [(s2n si, (ignore si, IdxGhost))] $ do
+          to <- withIndices [(i, (ignore si, IdxGhost))] $ do
               withVars [(x, (ignore $ sx, Nothing, tyOfX))] $ do
                   checkExpr ot e
           to' <- stripTy x to
-          return $ if (s2n si) `elem` getTyIdxVars to' then (tExistsIdx si (bind i to')) else to'
+          return $ if i `elem` getTyIdxVars to' then (tExistsIdx si (bind i to')) else to'
       (ETLookup pth@(PRes (PDot p n)) a) -> do
           md <- openModule p
           case lookup n (md^.tableEnv) of 
