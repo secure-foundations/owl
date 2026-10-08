@@ -2193,23 +2193,30 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
             True -> do 
               let pcase_line = fst $ begin $ unignore $ e^.spanOf
               x <- fresh $ s2n "%caseProp"
-              tTrue <- case doTrue of
+              otTrue <- case doTrue of
                          True -> 
                              withVars [(x, (ignore $ "pcase_true (line " ++ show pcase_line ++ ")", Nothing, tLemma p))] $ pushPathCondition p $ do
                                   logTypecheck $ owlpretty "Case split: " <> owlpretty p
                                   withPushLog $ do 
                                       (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                                      if b then return tAdmit else checkExpr ot k
-                         False -> return tAdmit
-              tFalse <- case doFalse of
+                                      if b then return Nothing else Just <$> checkExpr ot k
+                         False -> return $ Just tAdmit
+              otFalse <- case doFalse of
                          True -> 
                              withVars [(x, (ignore $ "pcase_false (line " ++ show pcase_line ++ ")", Nothing, tLemma (pNot p)))] $ pushPathCondition (pNot p) $ do
                                   logTypecheck $ owlpretty "Case split: " <> owlpretty (pNot p)
                                   withPushLog $ do 
                                       (_, b) <- SMT.smtTypingQuery "case split prune" $ SMT.symAssert $ mkSpanned PFalse
-                                      if b then return tAdmit else checkExpr ot k
-                         False -> return tAdmit
-              tMerge <- normalizeTy $ mkSpanned $ TCase p tTrue tFalse
+                                      if b then return Nothing else Just <$> checkExpr ot k
+                         False -> return $ Just tAdmit
+              -- A pruned branch is infeasible on this path, so the other
+              -- branch's type alone is the type of the split. This keeps
+              -- Admit out of the type of a let-bound split.
+              tMerge <- case (otTrue, otFalse) of
+                          (Nothing, Nothing) -> return tAdmit
+                          (Nothing, Just tFalse) -> normalizeTy tFalse
+                          (Just tTrue, Nothing) -> normalizeTy tTrue
+                          (Just tTrue, Just tFalse) -> normalizeTy $ mkSpanned $ TCase p tTrue tFalse
               getOutTy ot tMerge
       EParse a t ok bk -> do
           retT <- case ot of

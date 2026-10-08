@@ -17,6 +17,31 @@ predicate init_safe<i,n,m>() =
     \/
     (sec(S_resp<@m>) /\ sec(S_init<@n>))
 
+// Is eph the ephemeral of an honest responder session for m? (The initiator's
+// chain is on L3..L7 if so, and on the off-chain L3_corr..L6_corr if not.)
+predicate on_chain<m>(eph) =
+    exists j:idx. eph == dhpk(get(E_resp<j@m>))
+
+// When the initiator's chain keys C5, C6, C7 are secret: these are the
+// conditions under which the kdf call for each matches its hint, rather than
+// having only public inputs. They let init_stage2 give each chain key a
+// conditional type, so that the corruption case splits needed for each kdf
+// call stay local to that call.
+predicate psk_sec<n,m>(haspsk) =
+    haspsk == true /\ sec(psk<@n,m>)
+
+predicate c5_sec<i,j,n,m>() =
+    init_safe<i,n,m>[] \/ (sec(E_init<i@n>) /\ sec(E_resp<j@m>))
+
+predicate c6_sec<i,j,n,m>() =
+    c5_sec<i,j,n,m>[] \/ (sec(S_init<@n>) /\ sec(E_resp<j@m>))
+
+predicate c7_sec<i,j,n,m>(haspsk) =
+    c6_sec<i,j,n,m>[] \/ psk_sec<n,m>[haspsk]
+
+predicate c7_corr_sec<i,n,m>(haspsk) =
+    init_safe<i,n,m>[] \/ psk_sec<n,m>[haspsk]
+
 def key_confirm_initiator_send<@n>(k : Ghost) @ Initiator<n> : Unit = ()
 def key_confirm_initiator_recv<@n>(k : Ghost) @ Initiator<n> : Unit = ()
 
@@ -82,16 +107,16 @@ def init_stage2<i@n,m>
     parse st as init_sent_state<session i, pid n, pid m>(opsk, static_ss, h4, c3)
     in
     input i in
-    pcase
-        init_safe<i,n,m>[]
-    in
     parse i as msg2(msg2_tag, msg2_sender, msg2_receiver, msg2_ephemeral, msg2_empty_enc, msg2_mac1, msg2_mac2) in
     {
         // This guard is a runtime check
         guard andb(eq(length(msg2_sender), 4), eq(length(msg2_receiver), 4)) in
         guard is_group_elem(msg2_ephemeral) in
         let e_init = get(E_init<i@n>) in
-        pcase (exists j:idx. msg2_ephemeral == dhpk(get(E_resp<j@m>))) in 
+        // This is the only case split over the rest of the def. Every
+        // corruption case split below is local to one kdf call: its result
+        // gets a conditional type, which later calls split on locally.
+        pcase on_chain<m>[msg2_ephemeral] in
         choose_idx j | msg2_ephemeral == dhpk(get(E_resp<j@m>)) in
 
         // the L*_corr hints apply when msg2_ephemeral is not an honest responder ephemeral
@@ -100,16 +125,29 @@ def init_stage2<i@n,m>
         let h5 = crh(h4 ++ msg2_ephemeral) in
         let ss = dh_combine(msg2_ephemeral, e_init) in
         cross_dh_lemma<E_init<i@n>>(msg2_ephemeral);
-        corr_case E_init<i@n> in
-        corr_case E_resp<j@m> in
-        let c5 = kdf<L4<i,j@n,n,m>, L4_corr<i@n,m>(msg2_ephemeral); kdfkey; 0>(c4, ss, 0x) in
+        // Derive C5 via ODH L4 (E_init x E_resp)
+        let c5 : if on_chain<m>[msg2_ephemeral] then
+                     (if c5_sec<i,j,n,m>[] then SecName(KDF<L4<i,j@n,n,m>;kdfkey;0>)
+                      else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey;0>(c4, ss, 0x)}))
+                 else
+                     (if init_safe<i,n,m>[] then SecName(KDF<L4_corr<i@n,m>(msg2_ephemeral);kdfkey;0>)
+                      else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey;0>(c4, ss, 0x)})) =
+            corr_case E_init<i@n> in
+            corr_case E_resp<j@m> in
+            kdf<L4<i,j@n,n,m>, L4_corr<i@n,m>(msg2_ephemeral); kdfkey; 0>(c4, ss, 0x) in
 
         // Derive C6 via ODH L5 (S_init x E_resp)
-        corr_case S_init<@n> in
         let ss_msg2_eph_s_init = dh_combine(msg2_ephemeral, get(S_init<@n>)) in
         cross_dh_lemma<S_init<@n>>(msg2_ephemeral);
-        corr_case KDF<L4<i,j@n,n,m>;kdfkey;0> when !init_safe<i,n,m>[] in
-        let c6 = kdf<L5<i,j@n,n,m>, L5_corr<i@n,m>(msg2_ephemeral); kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x) in
+        let c6 : if on_chain<m>[msg2_ephemeral] then
+                     (if c6_sec<i,j,n,m>[] then SecName(KDF<L5<i,j@n,n,m>;kdfkey;0>)
+                      else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey;0>(c5, ss_msg2_eph_s_init, 0x)}))
+                 else
+                     (if init_safe<i,n,m>[] then SecName(KDF<L5_corr<i@n,m>(msg2_ephemeral);kdfkey;0>)
+                      else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey;0>(c5, ss_msg2_eph_s_init, 0x)})) =
+            corr_case S_init<@n> in
+            corr_case E_resp<j@m> in
+            kdf<L5<i,j@n,n,m>, L5_corr<i@n,m>(msg2_ephemeral); kdfkey; 0>(c5, ss_msg2_eph_s_init, 0x) in
 
         // Derive C7 and tau and k0 from C6 using the PSK.
         let psk : if HasPSK?(opsk) then Name(psk<@n,m>) else ty_zeros_32 =
@@ -117,14 +155,27 @@ def init_stage2<i@n,m>
                    | HasPSK v => v
                    | NoPSK => zeros_32()
         } in
-        pcase HasPSK?(opsk) in
-        corr_case KDF<L5<i,j@n,n,m>;kdfkey;0> when !init_safe<i,n,m>[] in
-        corr_case psk<@n,m> in
         // L6 in the honest branch; L6_corr in the off-chain branch with a
         // secret PSK. With no PSK, or a corrupt PSK, the call is all public.
-        let c7  = kdf<L6<i,j@n,n,m>(psk), L6_corr<i@n,m>(msg2_ephemeral, psk); kdfkey || nonce || enckey; 0>(c6, psk, 0x) in
-        let tau = kdf<L6<i,j@n,n,m>(psk), L6_corr<i@n,m>(msg2_ephemeral, psk); kdfkey || nonce || enckey; 1>(c6, psk, 0x) in
-        let k0  = kdf<L6<i,j@n,n,m>(psk), L6_corr<i@n,m>(msg2_ephemeral, psk); kdfkey || nonce || enckey; 2>(c6, psk, 0x) in
+        let c7 : if on_chain<m>[msg2_ephemeral] then
+                     (if c7_sec<i,j,n,m>[HasPSK?(opsk)] then SecName(KDF<L6<i,j@n,n,m>(psk);kdfkey||nonce||enckey;0>)
+                      else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey||nonce||enckey;0>(c6, psk, 0x)}))
+                 else
+                     (if c7_corr_sec<i,n,m>[HasPSK?(opsk)] then SecName(KDF<L6_corr<i@n,m>(msg2_ephemeral, psk);kdfkey||nonce||enckey;0>)
+                      else (x:Data<adv> ||kdfkey||{x == gkdf<kdfkey||nonce||enckey;0>(c6, psk, 0x)})) =
+            corr_case psk<@n,m> in
+            kdf<L6<i,j@n,n,m>(psk), L6_corr<i@n,m>(msg2_ephemeral, psk); kdfkey || nonce || enckey; 0>(c6, psk, 0x) in
+        let tau =
+            corr_case psk<@n,m> in
+            kdf<L6<i,j@n,n,m>(psk), L6_corr<i@n,m>(msg2_ephemeral, psk); kdfkey || nonce || enckey; 1>(c6, psk, 0x) in
+        let k0 : if on_chain<m>[msg2_ephemeral] then
+                     (if c7_sec<i,j,n,m>[HasPSK?(opsk)] then SecName(KDF<L6<i,j@n,n,m>(psk);kdfkey||nonce||enckey;2>)
+                      else (x:Data<adv> ||enckey||{x == gkdf<kdfkey||nonce||enckey;2>(c6, psk, 0x)}))
+                 else
+                     (if c7_corr_sec<i,n,m>[HasPSK?(opsk)] then SecName(KDF<L6_corr<i@n,m>(msg2_ephemeral, psk);kdfkey||nonce||enckey;2>)
+                      else (x:Data<adv> ||enckey||{x == gkdf<kdfkey||nonce||enckey;2>(c6, psk, 0x)})) =
+            corr_case psk<@n,m> in
+            kdf<L6<i,j@n,n,m>(psk), L6_corr<i@n,m>(msg2_ephemeral, psk); kdfkey || nonce || enckey; 2>(c6, psk, 0x) in
         let h6 = crh(h5 ++ tau) in
         case st_aead_dec(k0, msg2_empty_enc, h6, 0x)
         as Option (Data<adv>|0|) {
