@@ -471,6 +471,8 @@ raceSMT senv setup k1 k2 = do
       (Nothing, _) -> return (Nothing, Just False)
       (_, Nothing) -> return (Nothing, Just True)
       (Just q1, Just q2) -> do 
+          -- Render both queries here, to avoid a race on the shared setup text between the two Z3 threads
+          liftIO $ forM_ (smtQueryChunks q1 ++ smtQueryChunks q2) $ \c -> CE.evaluate (T.length c)
           sem <- liftIO $ newEmptyMVar 
           z3mp <- view smtCache
           logsmt <- view $ envFlags . fLogSMT
