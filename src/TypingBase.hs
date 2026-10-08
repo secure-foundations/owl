@@ -212,8 +212,12 @@ data Env senv = Env {
     _globalSMTSetupCache :: IORef (Maybe (ModuleFingerprint, senv)),
     _z3Options :: M.Map String String, 
     _z3Results :: IORef (Map String P.Z3Result),
-    _typeCheckLogDepth :: IORef Int,
+    -- Indentation of --log-typecheck output. Local to each thread of parBoth.
+    _typeCheckLogDepth :: Int,
     _debugLogDepth :: IORef Int,
+    -- Log output of a branch forked by parBoth, newest first; Nothing prints
+    -- directly. See emitLog.
+    _logBuffer :: Maybe (IORef [IO ()]),
     _typeErrorHook :: (forall a. String -> Check' senv a),
     _checkNameTypeHook :: (NameType -> Check' senv ()),
     _normalizeTyHook :: Ty -> Check' senv Ty,
@@ -422,13 +426,13 @@ timeCheck threshold s k = do
     res <- k
     t' <- liftIO $ getCurrentTime
     let dt = diffUTCTime t' t
-    when (dt > realToFrac threshold) $ liftIO $ putStrLn $ "Time for " ++ s ++ ": " ++ show dt
+    when (dt > realToFrac threshold) $ logPutStrLn $ "Time for " ++ s ++ ": " ++ show dt
     return res
 
 
 
 warn :: String -> Check' senv ()
-warn msg = liftIO $ putStrLn $ "Warning: " ++ msg
+warn msg = logPutStrLn $ "Warning: " ++ msg
 
 --instance (Monad m, MonadIO m, MonadReader (Env senv) m) => Fresh m where
 
@@ -458,14 +462,17 @@ silentTypeError _ = do
 -- (--parallelize-splits), k2 runs in a forked thread with an error hook that does
 -- not print; if it fails, it is run again here, so errors are reported exactly as
 -- in a sequential run. If k1 fails, the forked thread is killed. With no free slot
--- both run here in sequence, so nested splits cannot deadlock.
+-- both run here in sequence, so nested splits cannot deadlock. The forked thread's
+-- log output (emitLog) is buffered and replayed after k1, or dropped if k2 is
+-- killed or run again.
 parBoth :: forall senv a b. Check' senv a -> Check' senv b -> Check' senv (a, b)
 parBoth k1 k2 = do
     slots <- view parSlots
     ok <- liftIO $ atomicModifyIORef' slots $ \n -> if n > 0 then (n - 1, True) else (n, False)
     if not ok then (,) <$> k1 <*> k2 else do
         env <- ask
-        let env2 = env { _typeErrorHook = silentTypeError }
+        buf <- liftIO $ newIORef []
+        let env2 = env { _typeErrorHook = silentTypeError, _logBuffer = Just buf }
         mv <- liftIO newEmptyMVar
         tid <- liftIO $ forkIO $ do
             r <- CE.try (runExceptT (runReaderT (unCheck k2) env2))
@@ -480,7 +487,10 @@ parBoth k1 k2 = do
                 return r
         r <- liftIO $ takeMVar mv
         case r of
-          Right (Right b) -> return (a, b)
+          Right (Right b) -> do
+              acts <- liftIO $ readIORef buf
+              mapM_ emitLog $ reverse acts
+              return (a, b)
           _ -> do
               b <- k2
               return (a, b)
@@ -884,43 +894,39 @@ getNameType ne = do
         Nothing -> typeError $ show $ ErrNameStillAbstract $ show $ owlpretty ne
         Just nt -> return nt
 
-pushLogTypecheckScope :: Check' senv ()
-pushLogTypecheckScope = do
-    r <- view $ typeCheckLogDepth
-    n <- liftIO $ readIORef r
-    liftIO $ writeIORef r (n+1)
-
-popLogTypecheckScope :: Check' senv ()
-popLogTypecheckScope = do
-    r <- view $ typeCheckLogDepth
-    n <- liftIO $ readIORef r
-    liftIO $ writeIORef r (n-1)
-
 withPushLog :: Check' senv a -> Check' senv a
-withPushLog k = do
-    pushLogTypecheckScope
-    r <- k
-    popLogTypecheckScope
-    return r
+withPushLog = local (over typeCheckLogDepth (+1))
+
+-- Runs an output action now, or, in a branch forked by parBoth, saves it in the
+-- branch's buffer; parBoth replays the buffer once the branches before it are
+-- done, so the output is in the same order as in a sequential run.
+emitLog :: IO () -> Check' senv ()
+emitLog act = do
+    buf <- view logBuffer
+    case buf of
+      Nothing -> liftIO act
+      Just r -> liftIO $ modifyIORef' r (act :)
+
+logPutStrLn :: String -> Check' senv ()
+logPutStrLn s = emitLog $ putStrLn s
 
 liftPutDoc :: OwlDoc -> Check' senv ()
 liftPutDoc doc = do
     noColor <- view $ envFlags . fNoColor
-    liftIO $ if noColor then putDoc (unAnnotate doc) else putDoc doc
+    emitLog $ if noColor then putDoc (unAnnotate doc) else putDoc doc
 
 logTypecheck :: OwlDoc -> Check' senv ()
 logTypecheck s = do
     b <- view $ envFlags . fLogTypecheck
     when b $ do
-        r <- view $ typeCheckLogDepth
-        n <- liftIO $ readIORef r
+        n <- view $ typeCheckLogDepth
         liftPutDoc $ owlpretty (replicate (n*2) ' ') <> align s <> line
     bd <- view $ envFlags . fDebug
     case bd of
       Just fname -> do 
           r <- view $ debugLogDepth
           n <- liftIO $ readIORef r
-          liftIO $ appendFile fname $ replicate (n) ' ' ++ show s ++ "\n"
+          emitLog $ appendFile fname $ replicate (n) ' ' ++ show s ++ "\n"
       Nothing -> return ()
 
 getTyDef :: Path -> Check' senv TyDef

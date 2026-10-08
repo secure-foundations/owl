@@ -62,7 +62,6 @@ doAssertFalse = do
 emptyEnv :: Flags -> IO (Env SMT.SolverEnv)
 emptyEnv f = do
     r <- newIORef 0
-    r' <- newIORef 0
     r'' <- newIORef 0
     m <- newIORef $ M.empty
     rs <- newIORef []
@@ -70,7 +69,7 @@ emptyEnv f = do
     gsetup <- newIORef Nothing
     slots <- newIORef $ f^.fParallelizeSplits
     return $ Env mempty mempty mempty Nothing f initDetFuncs (TcGhost False) mempty [(Nothing, emptyModBody ModConcrete)] mempty 
-        interpUserFunc r slots m [memo] gsetup mempty rs r' r'' (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
+        interpUserFunc r slots m [memo] gsetup mempty rs 0 r'' Nothing (typeError') checkNameType normalizeTy normalizeProp decideProp Nothing Nothing [] False False def
 
 
 assertEmptyParams :: [FuncParam] -> String -> Check ()
@@ -1184,11 +1183,9 @@ checkDecl d cont = withSpan (d^.spanOf) $
                               bdy'' <- ANF.anf bdy'
                               logTypecheck $ owlpretty $ "Type checking " ++ n
                               t0 <- liftIO $ getCurrentTime
-                              pushLogTypecheckScope
                               local (set tcScope $ TcDef l) $ local (set curDef $ Just n) $ 
                                   withVars [(s2n x, (ignore x, Nothing, mkSpanned $ TRefined tUnit ".req" (bind (s2n ".req") (pAnd preReq happenedProp))))] $ do
-                                  _ <- checkExpr (Just tyAnn) bdy''
-                                  popLogTypecheckScope
+                                  _ <- withPushLog $ checkExpr (Just tyAnn) bdy''
                                   t1 <- liftIO $ getCurrentTime
                                   logTypecheck $ owlpretty $ "Finished checking " ++ n ++ " in " ++ show (diffUTCTime t1 t0)
                           return $ (preReq, tyAnn, Just bdy')
@@ -1899,10 +1896,10 @@ checkExpr ot e = withSpan (e^.spanOf) $ pushRoutine ("checkExpr") $ local (set e
           liftPutDoc $ owlprettyTyContext tC'
           getOutTy ot $ tUnit
       (EDebug (DebugPrintExpr e)) -> do
-          liftIO $ putStrLn $ show $ owlpretty e
+          logPutStrLn $ show $ owlpretty e
           getOutTy ot $ tUnit
       (EDebug (DebugPrintLabel l)) -> do
-          liftIO $ putStrLn $ show $ owlpretty l
+          logPutStrLn $ show $ owlpretty l
           getOutTy ot $ tUnit
       (EBlock k p) -> do
           tc <- view tcScope
