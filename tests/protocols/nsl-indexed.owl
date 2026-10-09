@@ -1,0 +1,176 @@
+/*
+ * Needham-Schroeder-Lowe, multi-party.
+ * Reference: G. Lowe, "Breaking and Fixing the Needham-Schroeder Public-Key
+ * Protocol using FDR", TACAS 1996.
+ *
+ * 1. A -> B : {nA, A}_pkB
+ * 2. B -> A : {nA, nB, B}_pkA
+ * 3. A -> B : {nB}_pkB
+ *
+ * There are arbitrarily many initiators alice<a> and responders bob<b>, each
+ * with its own (corruptible) key pair, running arbitrarily many sessions.
+ * Initiator session i of alice<a> talks to an adversarially chosen peer b, and
+ * responder session j of bob<b> talks to an adversarially chosen peer a. A
+ * party's identity is a public per-party value, and each session is
+ * given its peer's identity and public key (a PKI), as get_encpk is not
+ * available for indexed names.
+ *
+ * Nonces are indexed by the intended peer: nA<i@a,b> is the nonce alice<a>
+ * picks in session i to talk to bob<b>. It is only ever encrypted under the
+ * keys of a and b, so it leaks only if one of those keys (or the nonce itself)
+ * is corrupt, and symmetrically for nB<j@b,a>. The corr declarations below say
+ * exactly this, and Owl checks the protocol against them.
+ *
+ * Lowe's fix is the identity B in message 2. Without it, alice<a> cannot tell
+ * which responder produced message 2, and message 3 would encrypt bob<b'>'s
+ * nonce under the key of the (possibly corrupt) peer b; that pkenc is then
+ * ill-typed. See the comment in alice_main.
+ */
+
+locality alice : 1
+locality bob : 1
+
+// Public identities
+name idA<@a> : nonce @ alice<a>
+name idB<@b> : nonce @ bob<b>
+corr adv ==> /\_a [idA<@a>]
+corr adv ==> /\_b [idB<@b>]
+
+name nA<i@a,b> : nonce @ alice<a>
+name nB<j@b,a> : nonce @ bob<b>
+
+// Event: initiator session i of alice<a>, talking to bob<b>, accepted nb as
+// the responder's nonce
+def alice_finish<i@a,b> @ alice<a>
+
+// ************************************************************************
+// Messages to bob<b>, encrypted under pkB<b>
+
+struct msg1<i,a,b> {
+    m1_nA : Name(nA<i@a,b>),
+    m1_id : Name(idA<@a>)
+}
+
+enum bob_msg<b> {
+    | Msg1 (exists i. exists a. msg1<idx i, idx a, idx b>)
+    | Msg3 (exists j. exists a.
+                (x:Name(nB<j@b,a>){exists i:idx. happened(alice_finish<i@a,b>(x))}))
+}
+
+name skB<@b> : pkekey bob_msg<idx b> @ bob<b>
+
+// ************************************************************************
+// Messages to alice<a>, encrypted under pkA<a>
+
+// The responder replies to message 1 even when it was forged, in which case
+// the nonce it echoes is adversarial. m2_c1 is the (ghost) message 1 it
+// decrypted, so the type records when the echoed nonce is real.
+struct msg2<i,j,a,b> {
+    m2_c1 : Ghost,
+    m2_nA : if sec(skB<@b>) /\ honest_pk_enc<skB<@b>>(m2_c1) then Name(nA<i@a,b>) else Data<adv>,
+    m2_nB : Name(nB<j@b,a>),
+    m2_id : Name(idB<@b>)
+}
+
+name skA<@a> : pkekey (exists i. exists j. exists b. msg2<idx i, idx j, idx a, idx b>) @ alice<a>
+
+// What may leak: a nonce is only ever encrypted under the keys of its two
+// parties
+corr<i,a,b> [skA<@a>] ==> [nA<i@a,b>]
+corr<i,a,b> [skB<@b>] ==> [nA<i@a,b>]
+corr<j,a,b> [skA<@a>] ==> [nB<j@b,a>]
+corr<j,a,b> [skB<@b>] ==> [nB<j@b,a>]
+
+// ************************************************************************
+// Initiator
+
+// If the session's own nonce is secret (in particular, both keys are honest),
+// the accepted nonce is the one bob<b> picked for alice<a>. (Names may also
+// be corrupted directly, so this is stated in terms of nA, not the keys.)
+struct alice_result<i,j,a,b> {
+    ar_nA : Name(nA<i@a,b>),
+    ar_nB : if sec(nA<i@a,b>) then Name(nB<j@b,a>) else Data<adv /\ [nB<j@b,a>], |adv|>
+}
+
+def alice_finish<i@a,b>(nb : Ghost) @ alice<a> : Unit = ()
+
+def alice_main<i@a,b>(pkB : encpk(skB<@b>), idB_b : Name(idB<@b>)) @ alice<a>
+    : Option (exists j. alice_result<idx i, idx j, idx a, idx b>) =
+    let m1 = pack<i>(pack<a>(msg1<idx i, idx a, idx b>(get(nA<i@a,b>), get(idA<@a>)))) in
+    let c1 = pkenc(pkB, Msg1<idx b>(m1)) in
+    output c1 to endpoint(bob<b>);
+    input c2 in
+    corr_case skA<@a> in
+    corr_case nA<i@a,b> in
+    case pkdec(get(skA<@a>), c2) {
+    | None => None()
+    | Some p =>
+        pcase (honest_pk_enc<skA<@a>>(c2)) in
+        unpack i', p1 = p in
+        unpack j, p2 = p1 in
+        unpack b', p3 = p2 in
+        parse p3 as msg2<idx i', idx j, idx a, idx b'>(c1', nA', nB', idB') in
+        if checknonce(nA', get(nA<i@a,b>)) then
+            false_elim in
+            // Lowe's fix. Without this check, b' may differ from b, and the
+            // pkenc below would put bob<b'>'s nonce nB<j@b',a> under pkB<b>
+            // (which the adversary holds if b is corrupt): a type error.
+            if eq(idB', idB_b) then
+                let _ = call alice_finish<i@a,b>(nB') in
+                let m3 = pack<j>(pack<a>(nB')) in
+                let c3 = pkenc(pkB, Msg3<idx b>(m3)) in
+                output c3 to endpoint(bob<b>);
+                let res = pack<j>(alice_result<idx i, idx j, idx a, idx b>(get(nA<i@a,b>), nB')) in
+                Some(res)
+            else None()
+        else None()
+        otherwise None()
+    }
+
+// ************************************************************************
+// Responder
+
+// If the session's own nonce is secret (in particular, both keys are honest),
+// some initiator session of alice<a> talking to bob<b> accepted it.
+struct bob_result<j,a,b> {
+    br_nB : x:Name(nB<j@b,a>){sec(nB<j@b,a>) ==> exists i:idx. happened(alice_finish<i@a,b>(x))}
+}
+
+def bob_main<j@b,a>(pkA : encpk(skA<@a>), idA_a : Name(idA<@a>)) @ bob<b> : Option (bob_result<idx j, idx a, idx b>) =
+    input c1 in
+    corr_case skB<@b> in
+    corr_case nB<j@b,a> in
+    case pkdec(get(skB<@b>), c1) {
+    | None => None()
+    | Some p =>
+        case p as bob_msg<idx b> {
+        | Msg1 m1 =>
+            unpack i, m1' = m1 in
+            unpack a', m1'' = m1' in
+            parse m1'' as msg1<idx i, idx a', idx b>(nA', idA') in
+            if eq(idA', idA_a) then
+                let m2 = pack<i>(pack<j>(pack<b>(msg2<idx i, idx j, idx a, idx b>(c1, nA', get(nB<j@b,a>), get(idB<@b>))))) in
+                let c2 = pkenc(pkA, m2) in
+                output c2 to endpoint(alice<a>);
+                input c3 in
+                case pkdec(get(skB<@b>), c3) {
+                | None => None()
+                | Some p' =>
+                    case p' as bob_msg<idx b> {
+                    | Msg1 _ => None()
+                    | Msg3 m3 =>
+                        unpack j', m3' = m3 in
+                        unpack a'', nB' = m3' in
+                        if checknonce(nB', get(nB<j@b,a>)) then
+                            false_elim in
+                            Some(bob_result<idx j, idx a, idx b>(get(nB<j@b,a>)))
+                        else None()
+                    otherwise => None()
+                    }
+                }
+            else None()
+            otherwise None()
+        | Msg3 _ => None()
+        otherwise => None()
+        }
+    }
