@@ -134,7 +134,7 @@ data SolverEnv = SolverEnv {
     _hexConstants :: M.Map String SExp,
     _symIndexEnv :: M.Map IdxVar SExp,
     _symLabelVarEnv :: M.Map (AlphaOrd ResolvedPath) SExp,
-    _labelVals :: M.Map (AlphaOrd CanonLabelBig) SExp, -- Only used by label checking
+    _labelVals :: M.Map (AlphaOrd CanonLabelBig) (Either SExp SExp), -- Only used by label checking. Right f: apply f to the label's free variables
     _memoInterpretAExp :: M.Map (AlphaOrd AExpr) SExp,
     _memoInterpretProp :: M.Map (AlphaOrd Prop) SExp,
     _varVals :: M.Map DataVar SExp,

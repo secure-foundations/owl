@@ -215,29 +215,49 @@ symCanonLabel (CanonAnd xs) = do
 
 symCanonBig :: CanonLabelBig -> Sym SExp
 symCanonBig c = do
+    -- The big label may mention variables bound outside it (e.g., the indices
+    -- of the name whose definition is being encoded, which are bound by an
+    -- enclosing forall). Its fresh SMT label is then a function of those
+    -- variables, defined by a closed axiom and applied to their current values.
+    let freeIs = toListOf fv c :: [IdxVar]
+    let freeXs = toListOf fv c :: [DataVar]
+    let applyFrees f = do
+          fis <- mapM (symIndex . mkIVar) freeIs
+          fxs <- mapM (interpretAExp . aeVar') freeXs
+          return $ sApp (f : fis ++ fxs)
     lvs <- use labelVals
     case M.lookup (AlphaOrd c) lvs of
-      Just v -> return v
+      Just (Left v) -> return v
+      Just (Right f) -> applyFrees f
       Nothing -> do
         v <- case c of
               CanonBig ixl -> do
                   ((is, xs), l) <- liftCheck $ unbind ixl
                   let bnd_rel = any (\x -> x `elem` toListOf fv l) is || any (\x -> x `elem` toListOf fv l) xs
                   case bnd_rel of
-                    False -> symCanonAtom l
+                    False -> Left <$> symCanonAtom l
                     True -> do
                         x <- freshSMTName
-                        emit $ SApp [SAtom "declare-const", SAtom x, SAtom "Label"]
+                        fivs <- mapM (\_ -> freshSMTIndexName) freeIs
+                        fxvs <- mapM (\_ -> freshSMTIndexName) freeXs
+                        emit $ SApp [SAtom "declare-fun", SAtom x,
+                                     SApp (map (const indexSort) fivs ++ map (const bitstringSort) fxvs),
+                                     SAtom "Label"]
                         ivs <- mapM (\_ -> freshSMTIndexName) is
                         xvs <- mapM (\_ -> freshSMTIndexName) xs
-                        lv <- withSMTIndices (map (\iv -> (s2n iv, IdxGhost)) ivs) $ 
-                            withSMTVars (map s2n xvs) $
-                                symCanonAtom $ substs (zip is (map (mkIVar . s2n) ivs)) $ substs (zip xs (map (aeVar' . s2n) xvs)) l
-                        emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) ivs ++ map (\x -> (SAtom x, bitstringSort)) xvs)
-                                                (sFlows lv (SAtom x)) [] ("big_" ++ x)
-                        return $ SAtom x
+                        let allIs = is ++ freeIs
+                        let allIvs = ivs ++ fivs
+                        let allXs = xs ++ freeXs
+                        let allXvs = xvs ++ fxvs
+                        lv <- withSMTIndices (map (\iv -> (s2n iv, IdxGhost)) allIvs) $
+                            withSMTVars (map s2n allXvs) $
+                                symCanonAtom $ substs (zip allIs (map (mkIVar . s2n) allIvs)) $ substs (zip allXs (map (aeVar' . s2n) allXvs)) l
+                        let xApp = sApp (SAtom x : map SAtom fivs ++ map SAtom fxvs)
+                        emitAssertion $ sForall (map (\i -> (SAtom i, indexSort)) allIvs ++ map (\x -> (SAtom x, bitstringSort)) allXvs)
+                                                (sFlows lv xApp) [] ("big_" ++ x)
+                        return $ Right $ SAtom x
         labelVals %= M.insert (AlphaOrd c) v
-        return v
+        either return applyFrees v
 
 
 
