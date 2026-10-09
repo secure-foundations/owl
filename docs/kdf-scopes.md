@@ -146,13 +146,24 @@ it as a module or a namespace.
 A `kdf_scope` block can contain:
 
 - Names of type `kdfkey` or `DH` (`name n : DH @ loc` and
-  `name k : kdfkey @ locs`). A name of any other type, an abstract name, or a
-  name abbreviation is rejected.
+  `name k : kdfkey @ locs`), and KEM keys whose shared secrets are
+  `kdfkey`s (`name pq : kemkey (kdfkey) @ loc`). A name of any other type, an
+  abstract name, or a name abbreviation is rejected.
 - Rules: `kdf`, `odh`, `rec_kdf<i>`, and `rec_odh<i>` (section 2). Rules can
   appear *only* inside a scope.
 - Ordinary declarations that contain no code: `func`, `predicate`,
   `nametype`, `struct`, `enum`, `corr`, and so on. These behave exactly as if
   they were declared outside the scope.
+
+The shared secret of an encapsulation to `pq` is the name `KEMName<pq, i>`,
+where `i` is the index that `kem_encaps` returns. These shared secrets are
+keys of the scope. A rule may use `get(KEMName<pq, i>)` as an ikm atom, and a
+call may pass a shared secret in a key position. A KEM key declared outside
+the scope, or one whose shared secrets are not `kdfkey`s, is not a key of the
+scope (see
+[tests/failure/kdf_scope_kem_foreign.owl](../tests/failure/kdf_scope_kem_foreign.owl)
+and
+[tests/failure/kdf_scope_kem_nonce.owl](../tests/failure/kdf_scope_kem_nonce.owl)).
 
 The following are not allowed inside a scope: `locality`, `def`, def
 headers, `table`, `module`, `include`, and nested `kdf_scope` blocks.
@@ -358,16 +369,18 @@ the honest parties can. Owl captures this with the notion of
 Formally, Owl computes applicability as follows:
 
 ```
-atomApp(get(n))                           = sec(n)
+atomApp(get(n))                           = sec(n),  for a base name, a derived name, or a KEM shared secret n
 atomApp(dh_combine(dhpk(get(x)), get(y))) = sec(x) /\ sec(y)
 atomApp(p), p a parameter of the rule     = exists idxs. p == get(k<idxs>) /\ sec(k<idxs>),  over the base kdfkeys k of the scope
+                                            \/ exists i. p == get(KEMName<pq, i>) /\ sec(KEMName<pq, i>),  over the KEM keys pq of the scope
 atomApp(anything else)                    = False
 applicable(case) = atomApp(salt) \/ atomApp(ikm_1) \/ ... \/ atomApp(ikm_p)
 ```
 
 In words: a name in a key position counts if it is secret; a DH secret counts
 if both of its DH names are secret; and a parameter in a key position counts
-if its value is a secret base `kdfkey` of the scope.
+if its value is a secret base `kdfkey` of the scope, or a secret shared
+secret of one of the scope's KEM keys.
 
 An instance that is not applicable has only public inputs. The adversary can run it themselves and learn its output, so such
 an instance never gets a secret name. This is also why collisions between two
@@ -389,6 +402,15 @@ needed. Some further points about applicability:
   [tests/failure/kdf_param_key_pinned_refute.owl](../tests/failure/kdf_param_key_pinned_refute.owl),
   and
   [tests/failure/kdf_param_key_unpinned_name.owl](../tests/failure/kdf_param_key_unpinned_name.owl).
+- **KEM shared secrets as parameters.** `kem_encaps` binds the index of its
+  shared secret as a ghost index, but a `def` cannot take a ghost index. A
+  protocol whose KDF chain continues across `def`s may therefore need to pass the shared
+  secret to its rules as a parameter (`odh L(k) : 0x, dh_ss(Y, X) ++ k, 0x`),
+  not as an index (`kdf LK<i> : 0x, get(KEMName<pq, i>), 0x`). The instance
+  `L(ss)` is applicable when `ss` is a secret shared secret, even when every
+  DH secret is corrupt. See
+  [tests/success/kdf_scope_kem.owl](../tests/success/kdf_scope_kem.owl) and
+  [tests/failure/kdf_scope_kem_param_unpinned.owl](../tests/failure/kdf_scope_kem_param_unpinned.owl).
 - **Adversarial DH values.** An ikm atom `dh_combine(x, get(E))`, where `x`
   is a parameter, is never a key position. Here `x` stands for a group
   element chosen by the adversary. A DH secret between two honest keys must
@@ -861,6 +883,8 @@ every protocol:
 | `isconstant_neq_name` | `IsConstant(x) ==> x != ValueOf(n)` |
 | `isconstant_crh`, `isconstant_concat` | hashes and concatenations of constants are constants |
 | `valueof_name_inj` | `ValueOf(n1) == ValueOf(n2) ==> n1 = n2` |
+| `kemname_inj` | `KEMName` is injective, and `NameIsKEM(KEMName(n, i))`. Owl declares every base name and every derived name not `NameIsKEM`, so a KEM shared secret is neither |
+| `kem_pk_length` | `len(kem_pk(x)) = KEMPKLen`. No axiom relates `KEMPKLen` to `GroupLen` |
 | index axioms | `IndexPred(IndexSucc(x)) = x`, `IndexToNat(IndexZero) = 0`, `IndexToNat(IndexSucc(x)) = IndexToNat(x) + 1 >= 1` |
 
 #### The collision resistance axiom
@@ -921,12 +945,15 @@ facts for the solver to use.
   and `secret_neq_lemma_ghost_arg` and `secret_neq_lemma_no_public_arg` in
   `tests/failure`.
 - **`dh_exp_lemma<s, n>(y)`** takes a public `y`, a base DH name `s`, and a
-  base name `n` (any indices of `n` that are left out are quantified over).
-  It gives `sec(s) /\ n != s ==> dh_combine(y, get(s)) != get(n)`: raising a
-  public value to a secret exponent does not produce another base name. If
+  target `n`. The target is a base name (any indices of `n` that are left out are
+  quantified over) or a KEM shared secret `KEMName<pq, i>` of a base KEM key
+  `pq`. It gives `sec(s) /\ n != s ==> dh_combine(y, get(s)) != get(n)`:
+  raising a public value to a secret exponent does not produce another base
+  name or a KEM shared secret. If
   `n` is secret, this follows because `n` is uniformly random; if `n` is
   public, it follows from the hardness of inverse DH. See
-  [tests/success/dh_exp_lemma.owl](../tests/success/dh_exp_lemma.owl).
+  [tests/success/dh_exp_lemma.owl](../tests/success/dh_exp_lemma.owl) and
+  [tests/success/kdf_scope_kem.owl](../tests/success/kdf_scope_kem.owl).
 - **`cross_dh_lemma<N>(x)`** takes a public `x`. For every `dh_ss(A, B)` atom
   in a rule of `N`'s scope, it gives
   `sec(N) /\ N != A /\ N != B ==> dh_combine(x, get(N)) != dh_ss(A, B)`.
