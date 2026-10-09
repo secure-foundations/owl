@@ -114,9 +114,7 @@ def bob_send_0(
       else (x:Data<adv> ||kdfkey||{ x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(bm, dh_combine(gae, get(bs)), 0x) }),
   a3: dhpk(long_skA),
   // GOOD STATE: Bob holds the honest message key and it is secret.
-  pt: if rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ gae == dhpk(get(a<0>))
-         /\ sec(KDF<LB<0>; kdfkey || enckey; 1>)
-      then Name(mb<0>) else Data<adv>
+  pt: if bob_msg0_good[rb_g, gae] then Name(mb<0>) else Data<adv>
 ) @ bob: Option Unit =
   guard is_group_elem(gae) in
   pcase sec(KDF<LA_init; kdfkey || enckey; 0>) in

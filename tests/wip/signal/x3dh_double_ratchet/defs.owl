@@ -96,8 +96,9 @@ kdf_scope Signal {
     // produce the IV. See https://signal.org/docs/specifications/doubleratchet/#recommended-cryptographic-algorithms
     nametype ma1_enc(dh) = st_aead Name(ma1) //(if dh == correct_amaster_arg() then Name(ma1) else (x:Name(ma1){False}))
           aad x.
-            ((x == (dhpk(get(ae1)) ++ dhpk(get(long_skA)) ++ dhpk(get(a<0>))))
-              /\ happened(event_alice_send_msg1(get(ma1), dh)))
+            // AD = IK_A || IK_B, as in X3DH
+            ((x == dhpk(get(long_skA)) ++ dhpk(get(long_skB)))
+              /\ happened(event_alice_send_msg1(get(ma1), dh, x)))
           nonce N_c
 
     // nametype ma1_enc = st_aead Name(ma1)
@@ -146,10 +147,11 @@ kdf_scope Signal {
         || strict ma1_enc(dh_combine(dhpk(get(bs)), get(long_skA)) ++ dh_combine(dhpk(get(long_skB)), get(ae1)) ++ dh_combine(dhpk(get(bs)), get(ae1)) ++ dh_combine(y, get(ae1)))
     // Bob with a forged ephemeral x for Alice (SK from L1_badB) and Alice's
     // honest ratchet key.
+    // Alice never derives this key (her ephemeral is ae1), so no honest party
+    // encrypts under it.
     odh LA_init_badB(x) where
         (is_group_elem(x) /\ x != dhpk(get(ae1)))
-      : KDF<L1_badB(x);kdfkey;0>, dh_ss(a<0>, bs), 0x -> strict kdfkey
-        || strict ma1_enc(dh_combine(dhpk(get(bs)), get(long_skA)) ++ dh_combine(x, get(long_skB)) ++ dh_combine(x, get(bs)) ++ dh_combine(x, get(bo)))
+      : KDF<L1_badB(x);kdfkey;0>, dh_ss(a<0>, bs), 0x -> strict kdfkey || strict ma1_corr
     // Bob with a forged ratchet key z for Alice (honest SK).
     odh LA_init_badR(z) where
         (is_group_elem(z) /\ z != dhpk(get(a<0>)))
@@ -228,23 +230,11 @@ name long_sskB : sigkey(dhpk(bs)) @ bob
 corr [long_sskB] ==> [long_skB]
 corr [long_skB] ==> [long_sskB]
 
-// Alice authenticates bs only by Bob's signature. With long_skB (hence
-// long_sskB) corrupt, the adversary signs its own prekey g^y and computes
-// every DH value of Alice's session: dh(g^y, long_skA), dh(long_skB, ae1),
-// dh(g^y, ae1), dh(b1, ae1) for its own b1, and dh(g^y, a<0>).
-corr [long_skB] ==> [ma1]
-
-// Bob cannot authenticate Alice's ephemeral: an adversary may send its own
-// a1 = g^x and a4 = g^z, and then knows s2, s3, s4 and DH(a4, bs) itself, so
-// only s1 = dh(bs, long_skA) protects the keys Bob derives. Bob's reply mb<0>
-// (sent by bob_send_0) is therefore secret only when bs and long_skA are both
-// honest (the "compromised signed prekey allows impersonation to Bob"
-// observation of [KBB]; a compromised long_skA allows it trivially).
-corr [bs] ==> [mb<0>]
-corr [long_skA] ==> [mb<0>]
-
 // No other corr flows: the labels of RK_1 and of every ratchet chain key
-// follow from the applicability of their rule instances.
+// follow from the applicability of their rule instances. The handshake
+// messages ma1 and mb<0> need no flows either: they are secret in every good
+// session (alice_msg1_good, bob_msg0_good), and the model makes no claim about
+// them in other sessions.
 
 // ---------- STRUCTS -----------------------------------------------------------
 
@@ -282,6 +272,23 @@ struct alice_message<i> {
 predicate chain_b<i>() = sec(KDF<LB<i>; kdfkey || enckey; 0>)
 predicate chain_a<i>() = sec(KDF<LA<i>; kdfkey || enckey; 0>)
 
+// GOOD SESSIONS for the two handshake messages. Alice's message key ka is an
+// honest key and secret: the on-chain key, or the key for a forged one-time
+// prekey y (LA_init_badA). With long_skB corrupt, an adversary can forge Bob's
+// whole bundle; Alice's key is then a public value and the session is not good.
+predicate alice_msg1_good(ka, y) =
+    (ka == get(KDF<LA_init; kdfkey || enckey; 1>) /\ sec(KDF<LA_init; kdfkey || enckey; 1>))
+    \/ (is_group_elem(y) /\ y != dhpk(get(bo))
+        /\ ka == get(KDF<LA_init_badA(y); kdfkey || enckey; 1>)
+        /\ sec(KDF<LA_init_badA(y); kdfkey || enckey; 1>))
+// Bob's round-0 message key is the honest one and secret: his root key is the
+// honest RK_1, Alice's ratchet key gae is honest, and the key derived from
+// them is secret. Bob cannot authenticate Alice's ephemeral, so with bs or
+// long_skA corrupt an adversary can make Bob's root key a public value.
+predicate bob_msg0_good(rb_g, gae) =
+    rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ gae == dhpk(get(a<0>))
+    /\ sec(KDF<LB<0>; kdfkey || enckey; 1>)
+
 // ---------- INTERFACE: X3DH -> DOUBLE RATCHET ---------------------------------
 
 // Bob's first send, called by bob_x3dh after it has decrypted Alice's
@@ -306,9 +313,7 @@ def bob_send_0(
       then Name(KDF<LA_init; kdfkey || enckey; 0>)
       else (x:Data<adv> ||kdfkey||{ x == rb_g /\ x == gkdf<kdfkey || enckey; 0>(bm, dh_combine(gae, get(bs)), 0x) }),
   a3: dhpk(long_skA),
-  pt: if rb_g == get(KDF<LA_init; kdfkey || enckey; 0>) /\ gae == dhpk(get(a<0>))
-         /\ sec(KDF<LB<0>; kdfkey || enckey; 1>)
-      then Name(mb<0>) else Data<adv>
+  pt: if bob_msg0_good[rb_g, gae] then Name(mb<0>) else Data<adv>
 ) @ bob: Option Unit
 
 // Alice's first receive, called by alice_x3dh after it has sent her initial
