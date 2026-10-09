@@ -153,7 +153,7 @@ def bob_pqxdh () @ bob
   let gbssig = sign(get(long_sskB), 0x05 ++ gbs) in
   let pqpk = kem_pk(get(pqbo)) in
   let pqpksig = sign(get(long_sskB), 0x08 ++ pqpk) in
-  let b1 = bob_prekey_msg(gbo, gbs, gbssig, long_pkB, pqpk, pqpksig) in
+  let b1 = bob_prekey_msg(gbo, gbs, long_pkB, gbssig, pqpk, pqpksig) in
   let _ = output b1 to endpoint(alice) in
 
   input i2, _ in

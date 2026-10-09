@@ -123,7 +123,7 @@ def bob_x3dh () @ bob
   let gbo = dhpk(get(bo)) in
   let gbs = dhpk(get(bs)) in
   let gbssig = sign(get(long_sskB), gbs) in
-  let b1 = bob_prekey_msg(gbo, gbs, gbssig, long_pkB) in
+  let b1 = bob_prekey_msg(gbo, gbs, long_pkB, gbssig) in
   let _ = output b1 to endpoint(alice) in
 
   input i2, _ in
