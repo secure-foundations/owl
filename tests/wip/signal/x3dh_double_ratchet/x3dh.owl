@@ -25,8 +25,8 @@
 include "defs.owl"
 
 // ---------- EVENTS -----------------------------------------------------------
-def event_alice_send_msg1(msg: Ghost, dh: Ghost) @ alice : Unit = ()
-def event_bob_recv_msg1(msg: Ghost, dh: Ghost) @ bob : Unit = ()
+def event_alice_send_msg1(msg: Ghost, dh: Ghost, ad: Ghost) @ alice : Unit = ()
+def event_bob_recv_msg1(msg: Ghost, dh: Ghost, ad: Ghost) @ bob : Unit = ()
 
 
 // ---------- ALICE'S SIDE -----------------------------------------------------
@@ -34,6 +34,12 @@ def event_bob_recv_msg1(msg: Ghost, dh: Ghost) @ bob : Unit = ()
 // Models Alice checking Bob's Signal security number
 def alice_out_of_band_auth (b3: Data<adv> ||group||) @ alice
   : Option (x:Data<adv>||group||{x == b3 /\ x == dhpk(get(long_skB))}) 
+
+// The application supplies the plaintext of Alice's first message. It is the
+// secret ma1 in a good session (alice_msg1_good on her message key ka); in any
+// other session the model treats it as public and makes no claim about it.
+def alice_app_msg1 (ka: Ghost, y: Ghost) @ alice
+  : if alice_msg1_good[ka, y] then Name(ma1) else Data<adv>
 
 
 // Alice initiates conversation with Bob by looking up Bob's prekey message
@@ -92,11 +98,12 @@ def alice_x3dh () @ alice
           let ra1 = kdf<LA_init,LA_init_badA(b1); kdfkey || enckey; 0>(amaster, s_init, 0x) in
           let ca1 = kdf<LA_init,LA_init_badA(b1); kdfkey || enckey; 1>(amaster, s_init, 0x) in
 
-          pcase sec(ma1) in
-          false_elim in
           let gae2 = dhpk(get(a<0>)) in
-          call event_alice_send_msg1(get(ma1), dh);
-          let x1 = st_aead_enc<N_c>(ca1, get(ma1), gae1 ++ dhpk(get(long_skA)) ++ gae2) in
+          // AD = IK_A || IK_B
+          let ad = dhpk(get(long_skA)) ++ b3 in
+          let pt = call alice_app_msg1(ca1, b1) in
+          call event_alice_send_msg1(pt, dh, ad);
+          let x1 = st_aead_enc<N_c>(ca1, pt, ad) in
           let a1 = alice_prekey_msg(gae1, dhpk(get(long_skA)), x1, gae2) in
           let _ = output a1 to endpoint(bob) in
           // LINK: Alice enters the double ratchet with her root key RK_1
@@ -115,6 +122,12 @@ def alice_x3dh () @ alice
 def bob_out_of_band_auth (a2: Data<adv> ||group||) @ bob
   : Option (x:Data<adv>||group||{x == a2 /\ x == dhpk(get(long_skA))}) 
 
+// The application supplies the plaintext of Bob's round-0 message. It is the
+// secret mb<0> in a good session (bob_msg0_good on his root key rb_g and
+// Alice's ratchet key gae); in any other session the model treats it as public.
+def bob_app_msg0 (rb_g: Ghost, gae: Ghost) @ bob
+  : if bob_msg0_good[rb_g, gae] then Name(mb<0>) else Data<adv>
+
 
 def bob_x3dh () @ bob
 : Option Unit =
@@ -123,7 +136,7 @@ def bob_x3dh () @ bob
   let gbo = dhpk(get(bo)) in
   let gbs = dhpk(get(bs)) in
   let gbssig = sign(get(long_sskB), gbs) in
-  let b1 = bob_prekey_msg(gbo, gbs, gbssig, long_pkB) in
+  let b1 = bob_prekey_msg(gbo, gbs, long_pkB, gbssig) in
   let _ = output b1 to endpoint(alice) in
 
   input i2, _ in
@@ -180,7 +193,9 @@ def bob_x3dh () @ bob
         let n_c = get_counter N_c_bob in
         corr_case long_skA in
         false_elim in
-        let ma1_opt = st_aead_dec(cb1, a3, a1 ++ a2 ++ a4, n_c) in
+        // AD = IK_A || IK_B
+        let ad = a2 ++ long_pkB in
+        let ma1_opt = st_aead_dec(cb1, a3, ad, n_c) in
         case ma1_opt {
           | None => None()
           | Some ma1 => {
@@ -189,8 +204,8 @@ def bob_x3dh () @ bob
             // AUTH QUERY: if we derived the correct keys and at least one party is
             // uncompromised, then we know that Alice must have generated the same 
             // DH input value and thus the same pre-master secret and first ratchet key.
-            assert(bob_good[dh] ==> happened(event_alice_send_msg1(ma1, dh)));
-            call event_bob_recv_msg1(ma1, dh);
+            assert(bob_good[dh] ==> happened(event_alice_send_msg1(ma1, dh, ad)));
+            call event_bob_recv_msg1(ma1, dh, ad);
 
             // LINK: after the decryption, Bob's root key is either the honest,
             // secret RK_1 (and a4 is Alice's honest ratchet key, by the AAD),
@@ -205,7 +220,8 @@ def bob_x3dh () @ bob
                /\ a4 == dhpk(get(a<0>))));
             // Bob enters the double ratchet: his first step LB<0> sends mb<0>.
             // (bdh := dh, bm := bmaster, rb_g := rb1, gae := a4, rb := rb1)
-            call bob_send_0(dh, bmaster, rb1, a4, rb1, a2, get(mb<0>))
+            let pt0 = call bob_app_msg0(rb1, a4) in
+            call bob_send_0(dh, bmaster, rb1, a4, rb1, a2, pt0)
           }
         }
       }

@@ -1,0 +1,35 @@
+// The shared secrets KEMName<pq, i> of a KEM key declared in a kdf_scope
+// (name type kemkey kdfkey) are keys of the scope. A rule may use one as an
+// ikm atom (LK), or take one through a parameter in a key position (L). An
+// instance whose shared secret is secret is applicable even when its DH
+// secret is corrupt. dh_exp_lemma accepts a KEM shared secret as its target.
+locality alice
+locality bob
+
+name m : nonce @ alice
+
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ alice
+    name pq : kemkey (kdfkey) @ bob
+    odh L(k) : 0x, dh_ss(Y, X) ++ k, 0x -> strict enckey Name(m)
+    kdf LK<i> : 0x, get(KEMName<pq, i>), 0x01 -> strict enckey Name(m)
+}
+
+def alice_main(pk: kempk(pq)) @ alice : Unit =
+    kem_encaps ss, ct <- pk in
+    output ct;
+    unpack i, ss = ss in
+    corr_case KEMName<pq, i> in
+    corr_case X in
+    let k1 = kdf<LK<i>; enckey; 0>(0x, ss, 0x01) in
+    assert (sec(KEMName<pq, i>) ==> (k1 == get(KDF<LK<i>; enckey; 0>) /\ sec(KDF<LK<i>; enckey; 0>)));
+    let k2 = kdf<L(ss); enckey; 0>(0x, dh_combine(dhpk(get(Y)), get(X)) ++ ss, 0x) in
+    assert (sec(KEMName<pq, i>) ==> sec(KDF<L(ss); enckey; 0>));
+    // A KEM shared secret is not a base name, and an adversarial group
+    // element raised to a secret DH key is not a KEM shared secret
+    assert (get(KEMName<pq, i>) != get(X));
+    input y in
+    dh_exp_lemma<X, KEMName<pq, i>>(y);
+    assert (sec(X) ==> dh_combine(y, get(X)) != get(KEMName<pq, i>));
+    ()

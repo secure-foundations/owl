@@ -200,6 +200,9 @@
 (declare-const KEMCipherLen Int)
 (assert (> KEMCipherLen 0))
 
+(declare-const KEMPKLen Int)
+(assert (> KEMPKLen 0))
+
 (declare-const PKEPubLen Int)
 (assert (> PKEPubLen 0))
 
@@ -237,6 +240,14 @@
     (=> (= TRUE (is_group_elem x)) (= (length x) (I2B GroupLen)))
     :pattern (is_group_elem x)
     :qid is_group_elem_def
+)))
+
+; KEM public keys have a fixed length
+(declare-fun kem_pk (Bits) Bits)
+(assert (forall ((x Bits)) (!
+    (= (length (kem_pk x)) (I2B KEMPKLen))
+    :pattern (kem_pk x)
+    :qid kem_pk_length
 )))
 (assert (forall ((x Bits)) (!
     (HasType (is_group_elem x) TBool)
@@ -539,6 +550,18 @@
 (declare-fun Happened (String (List Index) (List Bits)) Bool)
 
 (declare-fun KEMName (Name Index) Name)
+; The shared secret of each encapsulation is a distinct name
+(declare-fun KEMNameBase (Name) Name)
+(declare-fun KEMNameIdx (Name) Index)
+; KEM shared secrets are distinct from base and KDF-derived names, which the
+; checker declares not NameIsKEM
+(declare-fun NameIsKEM (Name) Bool)
+(assert (forall ((n Name) (i Index)) (!
+    (and (= (KEMNameBase (KEMName n i)) n) (= (KEMNameIdx (KEMName n i)) i)
+         (NameIsKEM (KEMName n i)))
+    :pattern ((KEMName n i))
+    :qid kemname_inj
+)))
 
 ;; Builtin function axioms
 (assert (distinct TRUE FALSE UNIT))

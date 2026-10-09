@@ -1064,7 +1064,7 @@ withMemoizeDecided lns k x = do
           return v
 
 lengthConstants :: [String]
-lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group", "kem_cipherlen"]
+lengthConstants = ["nonce", "DH", "enckey", "pke_sk", "sigkey", "kdfkey", "mackey", "signature", "pke_pk", "vk", "maclen", "tag", "counter", "crh", "group", "kem_cipherlen", "kem_pk"]
 
 inferAExpr :: AExpr -> Check' senv Ty
 inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRoutine ("inferAExpr " ++ (show $ owlpretty ae)) $ do
@@ -1926,21 +1926,25 @@ unconcat a = do
      AEApp (PRes (PDot PTop "concat")) [] [x, y] -> liftM2 (++) (unconcat x) (unconcat y)
      _ -> return [a']
 
--- The base kdfkey names of a scope, as (path, index arity)
-kdfScopeKeys :: String -> Check' senv [(Path, (Int, Int))]
+-- The base kdfkey names of a scope, as (path, index arity, whether the name is
+-- a KEM key): for a KEM key k (of name type kemkey kdfkey), the keys are its
+-- shared secrets KEMName<k, i>
+kdfScopeKeys :: String -> Check' senv [(Path, (Int, Int), Bool)]
 kdfScopeKeys scope = do
     nds <- collectNameDefs
     sns <- collectEnvInfo _kdfScopeNames
     return $ concat $ flip map nds $ \(pth, bnd) ->
         let ((is, ps), nd) = unsafeUnbind bnd in
         case ([s | (pth', s) <- sns, pth' `aeq` pth], nd) of
-          (s : _, BaseDef (Spanned _ NT_KDF, _)) | s == scope -> [(PRes pth, (length is, length ps))]
+          (s : _, BaseDef (Spanned _ NT_KDF, _)) | s == scope -> [(PRes pth, (length is, length ps), False)]
+          (s : _, BaseDef (Spanned _ (NT_KEM (Spanned _ NT_KDF)), _)) | s == scope -> [(PRes pth, (length is, length ps), True)]
           _ -> []
 
 -- A case of a rule is applicable when it has a secret input in a key position:
 --   a name as the salt or as an ikm atom, if the name is secret;
 --   an ikm atom dh_combine(dhpk(get(X)), get(Y)), if X and Y are secret;
---   a parameter of the rule as the salt or as an ikm atom, if it is a secret kdfkey of the scope.
+--   a parameter of the rule as the salt or as an ikm atom, if it is a secret kdfkey of the scope
+--   (a base kdfkey, or a shared secret of a KEM key of the scope).
 -- Anything else contributes nothing.
 kdfApplicable :: String -> [DataVar] -> KDFCase -> Check' senv Prop
 kdfApplicable scope params (salt, ikm, _) = do
@@ -1952,11 +1956,15 @@ kdfApplicable scope params (salt, ikm, _) = do
           AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEApp (PRes (PDot PTop "dhpk")) _ [Spanned _ (AEGet x)]), Spanned _ (AEGet y)] -> 
               return $ pSec x `pAnd` pSec y
           AEVar _ x | x `elem` params -> do
-              ps <- forM keys $ \(pth, (ar1, ar2)) -> do
+              ps <- forM keys $ \(pth, (ar1, ar2), isKEM) -> do
                   is <- replicateM ar1 (fresh $ s2n "i")
                   ps <- replicateM ar2 (fresh $ s2n "p")
-                  let n = mkSpanned $ NameConst (map mkIVar is, map mkIVar ps) pth []
-                  return $ mkExistsIdx (is ++ ps) $ pEq e (aeGet n) `pAnd` pSec n
+                  ks <- if isKEM then (:[]) <$> fresh (s2n "k") else return []
+                  let base = mkSpanned $ NameConst (map mkIVar is, map mkIVar ps) pth []
+                  let n = case ks of
+                            [k] -> mkSpanned $ KEMName base (mkIVar k)
+                            _ -> base
+                  return $ mkExistsIdx (is ++ ps ++ ks) $ pEq e (aeGet n) `pAnd` pSec n
               return $ foldr pOr pFalse ps
           _ -> return pFalse
     foldr pOr pFalse <$> mapM atomApp (salt' : atoms)
