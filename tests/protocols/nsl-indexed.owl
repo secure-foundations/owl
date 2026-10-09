@@ -76,10 +76,10 @@ name skA<@a> : pkekey (exists i. exists j. exists b. msg2<idx i, idx j, idx a, i
 
 // What may leak: a nonce is only ever encrypted under the keys of its two
 // parties
-corr<i,a,b> [skA<@a>] ==> [nA<i@a,b>]
-corr<i,a,b> [skB<@b>] ==> [nA<i@a,b>]
-corr<j,a,b> [skA<@a>] ==> [nB<j@b,a>]
-corr<j,a,b> [skB<@b>] ==> [nB<j@b,a>]
+// corr<i,a,b> [skA<@a>] ==> [nA<i@a,b>]
+// corr<i,a,b> [skB<@b>] ==> [nA<i@a,b>]
+// corr<j,a,b> [skA<@a>] ==> [nB<j@b,a>]
+// corr<j,a,b> [skB<@b>] ==> [nB<j@b,a>]
 
 // ************************************************************************
 // Initiator
