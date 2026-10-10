@@ -32,6 +32,7 @@ import Verus
 import PrettyVerus
 import ConcreteAST
 import ExtractionBase
+import CmdArgs (fExtractNoVest)
 import AST
 import Prettyprinter.Interpolate
 
@@ -79,8 +80,10 @@ extractCStruct (CStruct n fs isVest _ _) = do
         #{structFields}
     }
     |]
-    formatDefs <- if isVest then genFormatDefs n fs else return [di||]
-    parseSerializeDefs <- if isVest then
+    noVest <- use (flags . fExtractNoVest)
+    formatDefs <- if isVest && not noVest then genFormatDefs n fs else return [di||]
+    parseSerializeDefs <- if noVest then return (genWireHookSpecs rn)
+                          else if isVest then
                                 genParserSerializer (execName n) rn rfs
                             else genParserSerializerNoVest (execName n) rn rfs
     constructor <- genConstructor n rn rfs
@@ -232,8 +235,10 @@ extractCEnum (CEnum n cs isVest _ _) = do
     use #{rn}::*;
     |]
     -- debugPrint $ "Enum def: " ++ show enumDef
-    (formatConsts, specComb, execComb) <- if isVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
-    parseSerializeDefs <- if isVest then
+    noVest <- use (flags . fExtractNoVest)
+    (formatConsts, specComb, execComb) <- if isVest && not noVest then genFormatDefs n (M.assocs cs) else return ([di||], [di||], [di||])
+    parseSerializeDefs <- if noVest then return (genWireHookSpecs rn)
+                          else if isVest then
                             genParserSerializer (execName n) rn rfs specComb execComb
                           else genParserSerializerNoVest (execName n) rn rfs
     constructors <- genConstructors n rn rfsOwlNames
@@ -391,6 +396,32 @@ extractCEnum (CEnum n cs isVest _ _) = do
                         }
                     }
                     |]
+
+
+-- --no-vest: the wire format of a struct or enum is left to the user (module `owl_wire`, see
+-- `GenVerus.genWireHookShims`), so its spec parser and inner serializer are uninterpreted.
+-- `serialize_X` and the `OwlSpecSerialize` impl are defined from them as in the Vest case.
+genWireHookSpecs :: String -> Doc ann
+genWireHookSpecs specname = [__di|
+    pub uninterp spec fn parse_#{specname}(x: Seq<u8>) -> Option<#{specname}>;
+
+    pub uninterp spec fn serialize_#{specname}_inner(x: #{specname}) -> Option<Seq<u8>>;
+
+    \#[verifier::opaque]
+    pub closed spec fn serialize_#{specname}(x: #{specname}) -> Seq<u8> {
+        if let Some(val) = serialize_#{specname}_inner(x) {
+            val
+        } else {
+            seq![]
+        }
+    }
+
+    impl OwlSpecSerialize for #{specname} {
+        open spec fn as_seq(self) -> Seq<u8> {
+            serialize_#{specname}(self)
+        }
+    }
+    |]
 
 
 extractEndpoint :: Endpoint -> EM (Doc ann)

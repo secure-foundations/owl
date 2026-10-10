@@ -928,7 +928,9 @@ genVerusStruct (CStruct name fieldsFV isVest isSecretParse isSecretSer) = do
     constructorShortcut <- genConstructorShortcut verusName verusFields lifetimeAnnot
     implStruct <- genImplStruct verusName verusFields lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusFields emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecretParse isSecretSer
+    noVest <- use (flags . fExtractNoVest)
+    parsleyWrappers <- if noVest then return (genStructWireHookShims verusName specname structTy lifetimeConst isSecretParse isSecretSer)
+                       else genParsleyWrappers verusName specname structTy verusFieldsFV lifetimeConst isVest isSecretParse isSecretSer
     return $ vsep [structDef, constructorShortcut, implStruct, viewImpl, parsleyWrappers]
     where
 
@@ -1175,7 +1177,9 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
     let emptyLifetimeAnnot = pretty $ if needsLifetime then "<'_>" else ""
     implEnum <- genImplEnum verusName verusCases lifetimeAnnot
     viewImpl <- genViewImpl verusName specname verusCases emptyLifetimeAnnot
-    parsleyWrappers <- genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb isVest isSecret
+    noVest <- use (flags . fExtractNoVest)
+    parsleyWrappers <- if noVest then return (genEnumWireHookShims verusName specname enumTy lifetimeConst isSecret)
+                       else genParsleyWrappers verusName specname enumTy verusCases lifetimeConst execComb isVest isSecret
     enumTests <- mkEnumTests verusName specname verusCases emptyLifetimeAnnot
     return $ (vsep [enumDef, implEnum, viewImpl, enumTests, parsleyWrappers])
     where
@@ -1409,6 +1413,75 @@ genVerusEnum (CEnum name casesFV isVest execComb isSecret) = do
             }
             |]
             return $ vsep [parse, secretParse, ser]
+
+
+-- --no-vest: parsing and serialization of a struct or enum are trusted shims that call the
+-- function of the same name in the user-provided module `crate::owl_wire` (plain Rust,
+-- outside `verus!`). Signatures and ensures are those of the Vest-based wrappers above; the
+-- spec functions they mention are uninterpreted (`SpecExtraction.genWireHookSpecs`).
+-- Ghost/tracked arguments are not passed to the hooks.
+wireHookParseShim :: Doc ann -> Doc ann -> Doc ann -> Doc ann -> Doc ann -> Doc ann -> Doc ann -> Doc ann
+wireHookParseShim execParse specParse lt argTy resTy extraArgs requires = [__di|
+    \#[verifier::external_body]
+    pub exec fn #{execParse}<'#{lt}>(arg: #{argTy}<'#{lt}>#{extraArgs}) -> (res: Option<#{resTy}>)
+        #{requires}ensures
+            res is Some ==> #{specParse}(arg.view()) is Some,
+            res is None ==> #{specParse}(arg.view()) is None,
+            res matches Some(x) ==> x.view() == #{specParse}(arg.view())->Some_0,
+    {
+        crate::owl_wire::#{execParse}(arg)
+    }
+    |]
+
+wireHookSerShims :: VerusName -> String -> Doc ann -> Doc ann -> Doc ann -> Bool -> Doc ann
+wireHookSerShims verusName specname ltParams argTy outTy ensNone =
+    let specSer = [di|serialize_#{specname}|]
+        execSer = [di|serialize_#{verusName}|]
+        specSerInner = [di|serialize_#{specname}_inner|]
+        execSerInner = [di|serialize_#{verusName}_inner|]
+        noneEns = if ensNone then [di|res is None ==> #{specSerInner}(arg.view()) is None,|] <> line <> pretty "        " else mempty
+    in [__di|
+    \#[verifier::external_body]
+    pub exec fn #{execSerInner}#{ltParams}(arg: &#{argTy}) -> (res: Option<#{outTy}>)
+        ensures
+            res is Some ==> #{specSerInner}(arg.view()) is Some,
+            #{noneEns}res matches Some(x) ==> x.view() == #{specSerInner}(arg.view())->Some_0,
+    {
+        crate::owl_wire::#{execSerInner}(arg)
+    }
+    \#[inline]
+    pub exec fn #{execSer}#{ltParams}(arg: &#{argTy}) -> (res: #{outTy})
+        ensures  res.view() == #{specSer}(arg.view())
+    {
+        reveal(#{specSer});
+        let res = #{execSerInner}(arg);
+        assume(res is Some);
+        res.unwrap()
+    }
+    |]
+
+genStructWireHookShims :: VerusName -> String -> VerusTy -> String -> Bool -> Bool -> Doc ann
+genStructWireHookShims verusName specname structTy lt isSecretParse isSecretSer =
+    let specParse = [di|parse_#{specname}|]
+        parse = wireHookParseShim [di|parse_#{verusName}|] specParse (pretty lt) [di|OwlBuf|] (pretty structTy) mempty mempty
+        secretParse = if isSecretParse
+            then wireHookParseShim [di|secret_parse_#{verusName}|] specParse (pretty lt) [di|SecretBuf|] (pretty structTy) mempty mempty
+            else mempty
+        outTy = if isSecretSer then [di|SecretBuf<'#{lt}>|] else [di|OwlBuf<'#{lt}>|]
+        ser = wireHookSerShims verusName specname [di|<'#{lt}>|] (pretty structTy) outTy False
+    in vsep [parse, secretParse, ser]
+
+genEnumWireHookShims :: VerusName -> String -> VerusTy -> String -> Bool -> Doc ann
+genEnumWireHookShims verusName specname enumTy lt isSecret =
+    let specParse = [di|parse_#{specname}|]
+        parse = wireHookParseShim [di|parse_#{verusName}|] specParse (pretty lt) [di|OwlBuf|] (pretty enumTy) mempty mempty
+        secretParse = if isSecret
+            then wireHookParseShim [di|secret_parse_#{verusName}|] specParse (pretty lt) [di|SecretBuf|] (pretty enumTy)
+                    [di|, Tracked(t): Tracked<DeclassifyingOpToken>|]
+                    ([di|requires t.view() matches DeclassifyingOp::EnumParse(b) && b == arg.view()|] <> line <> pretty "    ")
+            else mempty
+        ser = wireHookSerShims verusName specname mempty (pretty verusName) [di|Vec<u8>|] True
+    in vsep [parse, secretParse, ser]
 
 
 genVerusTyDef :: CTyDef (Maybe ConstUsize, VerusTy) -> EM (Doc ann)

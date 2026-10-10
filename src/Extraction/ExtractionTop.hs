@@ -58,8 +58,12 @@ extract' modbody = do
     extractedOwl <- do
         liftExtractionMonad $ genVerusPass (fs ^. fExtract == ExtractAll) verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
+    let (noVestHeader, noVestModDecl) =
+            if fs ^. fExtractNoVest then (noVestFileComment <> line, line <> pretty "pub mod owl_wire;" <> line)
+            else (mempty, mempty)
     return (
-        p                       <> line <> line <> line <> line <> 
+        noVestHeader            <>
+        p                       <> noVestModDecl <> line <> line <> line <> line <> 
         pretty "verus! {"       <> line <> line <> 
         pretty "// ------------------------------------" <> line <>
         pretty "// ---------- SPECIFICATIONS ----------" <> line <>
@@ -71,6 +75,22 @@ extract' modbody = do
         extractedOwl            <> line <> line <> line <> line <>
         pretty "} // verus!"    <> line <> line 
       )
+
+-- Header of a lib.rs extracted with --no-vest (see `SpecExtraction.genWireHookSpecs` and
+-- `GenVerus.genWireHookShims`).
+noVestFileComment :: Doc ann
+noVestFileComment = vsep $ map pretty
+    [ "// Extracted with --no-vest: no Vest wire formats are generated. For every Owl struct or"
+    , "// enum X, the spec functions parse_owlSpec_X and serialize_owlSpec_X_inner are"
+    , "// uninterpreted, and the exec functions parse_owl_X, serialize_owl_X_inner (and"
+    , "// secret_parse_owl_X where present) are trusted #[verifier::external_body] shims that"
+    , "// call the function of the same name in the user-provided module crate::owl_wire."
+    , "// Supply it as src/owl_wire.rs next to this file (declared below as `pub mod owl_wire;`)."
+    , "// Each hook has the signature of its shim, minus Verus ghost/tracked arguments, and"
+    , "// is trusted to satisfy the shim's ensures clause (not checked by Verus): each type's"
+    , "// hooks must be deterministic functions implementing one fixed encoding, and parsing"
+    , "// must invert serialization (parse_owl_X(serialize_owl_X_inner(v)) == Some(v))."
+    ]
 
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
 preprocessModBody mb = do
