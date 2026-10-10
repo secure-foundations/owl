@@ -1,6 +1,7 @@
 target/
 src/main.rs
 src/lib.rs
+src/owl_wire.rs
 *.owl_config
 parse_serialize.vest
 parse_serialize.rs

@@ -1,0 +1,285 @@
+// PQXDH for the libsignal integration (see the header of defs.owl). Security
+// statements are those of tests/wip/signal/x3dh_double_ratchet/x3dh.owl:
+//   - bob_good: some DH pair of the master secret has both keys secret
+//   - one off-chain rule per role (L1_badA / L1_badB), each guarded by
+//     "some honest DH atom has both keys secret"
+//   - Alice checks is_group_elem on the verified signed prekey and splits on
+//     whether it is Bob's honest one
+//
+// PQXDH (as in tests/wip/signal/pqxdh_double_ratchet): Alice encapsulates to Bob's
+// signed Kyber prekey pqbo, Bob decapsulates, and the shared secret is the
+// last ikm atom of the master key derivation (rule parameter k).
+//
+// Alice's initial ratchet step follows [DR] 3.3 / 7.1:
+// RK_1 || CK_A = KDF_RK(RK_0, DH(a<0>, bs)), with Bob's signed prekey bs as
+// his initial ratchet key (rule LA_init).
+//
+// Def boundaries follow libsignal: alice_init runs when Alice processes Bob's
+// prekey bundle and sends nothing; alice_send_init encrypts her first message
+// (the PreKeySignalMessage); bob_recv_prekey processes that message and takes
+// Bob's first ratchet step (bob_step_0, double_ratchet.owl).
+//
+// The peer's identity key is a parameter of type dhpk(long_sk_): libsignal's
+// identity store decides trust (Signal's safety numbers) before these defs
+// run. This replaces the out-of-band authentication defs of the original
+// model; the trust assumption is the same.
+include "defs.owl"
+
+// ---------- EVENTS -----------------------------------------------------------
+def event_alice_send_msg1(msg: Ghost, dh: Ghost, ad: Ghost) @ alice : Unit = ()
+def event_bob_recv_msg1(msg: Ghost, dh: Ghost, ad: Ghost) @ bob : Unit = ()
+
+
+// ---------- ALICE'S SIDE -----------------------------------------------------
+
+// Alice processes Bob's prekey bundle (fetched from the Signal server).
+//   b1  : Bob's one-time prekey
+//   b2  : Bob's signed prekey, b4 its signature under long_sskB
+//   b5  : Bob's signed Kyber1024 prekey (raw, without the key type byte),
+//         b6 its signature
+//   b3  : Bob's identity key (trusted by the identity store)
+//   ak0 : Alice's fresh ratchet key a<0>
+// Her base key ae1 and identity key long_skA are cfg names.
+def alice_init (
+  b1: Data<adv> ||group||,
+  b2: Data<adv> ||group||,
+  b4: Data<adv> ||signature||,
+  b5: Data<adv>,
+  b6: Data<adv> ||signature||,
+  b3: dhpk(long_skB),
+  ak0: Name(a<0>)
+) @ alice
+: Option alice_init_state =
+
+  let long_vkB = get_vk(long_sskB) in
+  pcase (sec(long_sskB)) in
+
+  guard is_group_elem(b1) in
+  guard is_group_elem(b2) in
+  // Bob signs Encode(PK) = key type byte ++ key (0x05: Curve25519, 0x08:
+  // Kyber1024). vrfy's result type does not equate it to the message, hence
+  // the guards (always true at runtime).
+  case vrfy(long_vkB, 0x05 ++ b2, b4) {
+    | None => None()
+    | Some sgbs => {
+     guard eq(sgbs, 0x05 ++ b2) in
+     let gbs = b2 in
+     case vrfy(long_vkB, 0x08 ++ b5, b6) {
+      | None => None()
+      | Some skempk => {
+      guard eq(skempk, 0x08 ++ b5) in
+      let kempk_pqbo = b5 in
+      guard is_group_elem(gbs) in
+      pcase (gbs == dhpk(get(bs))) in
+      pcase (b1 == dhpk(get(bo))) in
+      pcase (sec(ae1)) in
+      pcase (sec(bs)) in
+      pcase (sec(bo)) in
+      pcase (sec(long_skA)) in
+      pcase (sec(long_skB)) in
+      cross_dh_lemma<long_skA>(gbs);
+      cross_dh_lemma<ae1>(b3);
+      cross_dh_lemma<ae1>(gbs);
+      cross_dh_lemma<ae1>(b1);
+      let s1 = dh_combine<name bs, name long_skA>(gbs, get(long_skA)) in
+      let s2 = dh_combine<name long_skB, name ae1>(b3, get(ae1)) in
+      let s3 = dh_combine<name bs, name ae1>(gbs, get(ae1)) in
+      let s4 = dh_combine<name bo, name ae1>(b1, get(ae1)) in
+
+      // Ghost: split on whether the signed key is Bob's KEM key (the
+      // adversary may instead pass his other signed key, dhpk(bs))
+      pcase (kempk_pqbo == kem_pk(get(pqbo))) in
+      let kpk : if kempk_pqbo == kem_pk(get(pqbo)) then kempk(pqbo) else Data<adv> = kempk_pqbo in
+      kem_encaps kem_ss, kem_ct <- kpk in
+      unpack i_kem, kem_ss = kem_ss in
+      corr_case KEMName<pqbo, i_kem> in
+      // If Alice encapsulated to a key other than pqbo's, kem_ss is public
+      forall j:idx { secret_neq_lemma(kem_ss, get(KEMName<pqbo, j>)) };
+
+      // apre and dh are only used in ghost positions (the KDF call below
+      // takes the atoms directly, so that its ikm is grouped like the rule's).
+      let apre : (x:Ghost{x == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4}) =
+        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 in
+      let kss : (x:Ghost{x == kem_ss}) = kem_ss in
+      let dh : (x:Ghost{x == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 ++ kem_ss}) =
+        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 ++ kem_ss in
+      false_elim in
+
+      assert (b1 != dhpk(get(bo)) ==> s4 != dh_combine(dhpk(get(bo)), get(ae1)));
+
+      let amaster = kdf<L1(kem_ss),L1_badA(b1, kem_ss); kdfkey || kdfkey; 0>(0x,
+          0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 ++ kem_ss,
+          0x57686973706572546578745f5832353531395f5348412d3235365f4352595354414c532d4b594245522d31303234) in
+      let ck0 = kdf<L1(kem_ss),L1_badA(b1, kem_ss); kdfkey || kdfkey; 1>(0x,
+          0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 ++ kem_ss,
+          0x57686973706572546578745f5832353531395f5348412d3235365f4352595354414c532d4b594245522d31303234) in
+      // CK_0 is a public output of L1 (and of L1_badA).
+      kdf_label_lemma<KDF<L1(kem_ss); kdfkey || kdfkey; 1>>();
+      kdf_label_lemma<KDF<L1_badA(b1, kem_ss); kdfkey || kdfkey; 1>>();
+      // Alice's initial ratchet step: RK_1 || CK_A = KDF_RK(RK_0, DH(a<0>, bs))
+      pcase sec(a<0>) in
+      cross_dh_lemma<a<0>>(gbs);
+      false_elim in
+      let s_init = dh_combine<name bs, name a<0>>(gbs, ak0) in
+      let ra1 = kdf<LA_init(kem_ss),LA_init_badA(b1, kem_ss); kdfkey || enckey; 0>(amaster, s_init, 0x5768697370657252617463686574) in
+      let ca1 = kdf<LA_init(kem_ss),LA_init_badA(b1, kem_ss); kdfkey || enckey; 1>(amaster, s_init, 0x5768697370657252617463686574) in
+      assert (ca1 == get(KDF<LA_init(kem_ss); kdfkey || enckey; 1>) ==> dh == correct_amaster_arg(kem_ss));
+      assert (amaster == gkdf<kdfkey || kdfkey; 0>(0x, dh,
+                0x57686973706572546578745f5832353531395f5348412d3235365f4352595354414c532d4b594245522d31303234));
+      // (kss := kem_ss, apre, adh := dh, am := amaster, ags := gbs, ra_y := b1:
+      // the one-time prekey she used, ra_g := ra1, ka_g := ca1, kct := kem_ct)
+      Some(alice_init_state(kss, apre, dh, amaster, gbs, b1, ra1, ra1, ca1, ca1, ak0, gbs, ck0, kem_ct, b3))
+      }
+     }
+    }
+  }
+
+// Alice's first message: the PreKeySignalMessage. Its inner SignalMessage is
+// encrypted under her initial chain key (the parameters come from her
+// alice_init_state). meta, kct: registration and prekey ids, KEM ciphertext
+// (public; kct is ai_kct); addr: sender and recipient addresses (36 bytes)
+// or empty.
+def alice_send_init (
+  kss: Ghost,
+  adh: Ghost,
+  ra_y: Ghost,
+  ka_g: (x:Ghost{
+          (x == get(KDF<LA_init(kss); kdfkey || enckey; 1>) ==> adh == correct_amaster_arg(kss))
+          /\ ((is_group_elem(ra_y) /\ ra_y != dhpk(get(bo))
+               /\ x == get(KDF<LA_init_badA(ra_y, kss); kdfkey || enckey; 1>))
+              ==> adh == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ dh_combine(dhpk(get(bs)), get(long_skA)) ++ dh_combine(dhpk(get(long_skB)), get(ae1))
+                         ++ dh_combine(dhpk(get(bs)), get(ae1)) ++ dh_combine(ra_y, get(ae1)) ++ kss) }),
+  ka: if ka_g == get(KDF<LA_init(kss); kdfkey || enckey; 1>) then Name(KDF<LA_init(kss); kdfkey || enckey; 1>)
+      else if is_group_elem(ra_y) /\ ra_y != dhpk(get(bo))
+              /\ ka_g == get(KDF<LA_init_badA(ra_y, kss); kdfkey || enckey; 1>)
+      then Name(KDF<LA_init_badA(ra_y, kss); kdfkey || enckey; 1>)
+      else Data<adv> ||enckey||,
+  gae2: dhpk(a<0>),     // her ratchet key a<0> (public; the private key is not needed)
+  b3: dhpk(long_skB),
+  gae1: dhpk(ae1),      // her base key (libsignal keeps only the public key)
+  ika: dhpk(long_skA),  // her identity key
+  meta: Data<adv>,
+  kct: Data<adv>,
+  addr: Data<adv>,
+  // GOOD STATE: Alice holds an honest (on- or off-chain) chain key and it is secret.
+  pt: if (ka_g == get(KDF<LA_init(kss); kdfkey || enckey; 1>) /\ sec(KDF<LA_init(kss); kdfkey || enckey; 1>))
+         \/ (is_group_elem(ra_y) /\ ra_y != dhpk(get(bo))
+             /\ ka_g == get(KDF<LA_init_badA(ra_y, kss); kdfkey || enckey; 1>)
+             /\ sec(KDF<LA_init_badA(ra_y, kss); kdfkey || enckey; 1>))
+      then Name(ma1) else Data<adv>
+) @ alice : Unit =
+  let ad = ika ++ b3 ++ gae2 ++ 0x00000000000000000000000000000000 ++ addr in
+  call event_alice_send_msg1(pt, adh, ad);
+  // PROVEN: pt is Name(ma1) only under an honest, secret key.
+  let x1 = st_aead_enc<N_c>(ka, pt, ad) in
+  let m = signal_message(gae2, 0x0000000000000000, 0x0000000000000000, x1, addr) in
+  let pm = prekey_msg(meta, kct, gae1, ika, m) in
+  let _ = output pm to endpoint(bob) in
+  ()
+
+
+// ---------- BOB'S SIDE -------------------------------------------------------
+
+// Bob receives Alice's PreKeySignalMessage (his prekeys bs, bo, pqbo and his
+// identity key are cfg names, loaded by prekey id).
+//   a2  : Alice's identity key (trusted by the identity store)
+//   bk0 : Bob's fresh ratchet key b<0>
+def bob_recv_prekey (
+  a2: dhpk(long_skA),
+  ikb: dhpk(long_skB),  // his identity key
+  bk0: Name(b<0>)
+) @ bob
+: Option bob_prekey_out =
+  input i2, _ in
+  parse i2 as prekey_msg(meta, kct, a1, a2_wire, m) in {
+   parse m as signal_message(a4, ctr, prev, a3, addr) in {
+    guard is_group_elem(a1) in
+    guard is_group_elem(a4) in
+    // The identity key in the message is the one the identity store trusts.
+    guard eq(a2_wire, a2) in
+    // a1 -> gae1 (base key), a2 -> long_pkA, a3 -> x1, a4 -> gae2 (ratchet key),
+    // kct -> KEM ciphertext
+
+    pcase (a1 == dhpk(get(ae1))) in
+    corr_case long_skA in
+    corr_case ae1 in
+    corr_case bo in
+    corr_case bs in
+    corr_case long_skB in
+    false_elim in
+
+    cross_dh_lemma<bs>(a2);
+    cross_dh_lemma<long_skB>(a1);
+    cross_dh_lemma<bs>(a1);
+    cross_dh_lemma<bo>(a1);
+
+    case kem_decaps(get(pqbo), kct) as Option Data<adv> {
+      | None => None()
+      | Some kem_ss => {
+        pcase (honest_kem_encaps<pqbo>(kct)) in
+        unpack i_kem, kem_ss = kem_ss in
+        corr_case KEMName<pqbo, i_kem> in
+        // For a ciphertext not from an honest encapsulation, kem_ss is public
+        forall j:idx { secret_neq_lemma(kem_ss, get(KEMName<pqbo, j>)) };
+        let s1 = dh_combine<name long_skA, name bs>(a2, get(bs)) in
+        let s2 = dh_combine<name ae1, name long_skB>(a1, get(long_skB)) in
+        let s3 = dh_combine<name ae1, name bs>(a1, get(bs)) in
+        let s4 = dh_combine<name ae1, name bo>(a1, get(bo)) in
+        let dh = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 ++ kem_ss in
+
+        false_elim in
+
+        let bmaster = kdf<L1(kem_ss),L1_badB(a1, kem_ss); kdfkey || kdfkey; 0>(0x,
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4 ++ kem_ss,
+            0x57686973706572546578745f5832353531395f5348412d3235365f4352595354414c532d4b594245522d31303234) in
+        // Alice's initial ratchet step, recomputed by Bob with his signed
+        // prekey bs and Alice's ratchet key a4: RK_1 || CK_A = KDF_RK(RK_0, DH(a4, bs))
+        pcase (a4 == dhpk(get(a<0>))) in
+        corr_case a<0> in
+        cross_dh_lemma<bs>(a4);
+        false_elim in
+        let s_init = dh_combine<name a<0>, name bs>(a4, get(bs)) in
+        // Ghost split on the secrecy of the forged-ephemeral RK_0 name (see
+        // tests/wip/signal/x3dh_double_ratchet/x3dh.owl).
+        pcase sec(KDF<L1_badB(a1, kem_ss); kdfkey || kdfkey; 0>) in
+        let rb1 = kdf<LA_init(kem_ss),LA_init_badB(a1, kem_ss),LA_init_badR(a4, kem_ss),LA_init_badBR(a1, a4, kem_ss); kdfkey || enckey; 0>(bmaster, s_init, 0x5768697370657252617463686574) in
+        let cb1 = kdf<LA_init(kem_ss),LA_init_badB(a1, kem_ss),LA_init_badR(a4, kem_ss),LA_init_badBR(a1, a4, kem_ss); kdfkey || enckey; 1>(bmaster, s_init, 0x5768697370657252617463686574) in
+
+        let n_c = get_counter N_c_bob_init in
+        let ad = a2 ++ ikb ++ a4 ++ ctr ++ prev ++ addr in
+        corr_case long_skA in
+        false_elim in
+        let ma1_opt = st_aead_dec(cb1, a3, ad, n_c) in
+        case ma1_opt {
+          | None => None()
+          | Some ma1 => {
+            assert(bob_good[dh, kem_ss] ==> a4 == dhpk(get(a<0>)));
+
+            // AUTH QUERY: if we derived the correct keys and at least one party is
+            // uncompromised, then Alice generated the same PQXDH input value, and
+            // she sent this message's plaintext and AAD (identity keys, ratchet key
+            // a<0>, counters, addresses).
+            assert(bob_good[dh, kem_ss] ==> happened(event_alice_send_msg1(ma1, dh, ad)));
+            call event_bob_recv_msg1(ma1, dh, ad);
+
+            // LINK: after the decryption, Bob's root key is either the honest,
+            // secret RK_1 (and a4 is Alice's honest ratchet key), or public.
+            secret_neq_lemma(rb1, get(KDF<LA_init(kem_ss); kdfkey || enckey; 0>));
+            kdf_label_lemma<KDF<LA_init(kem_ss); kdfkey || enckey; 0>>();
+            // PROVEN: a good handshake hands the double ratchet the honest,
+            // secret root key and Alice's honest ratchet key.
+            assert(bob_good[dh, kem_ss] ==>
+              (rb1 == get(KDF<LA_init(kem_ss); kdfkey || enckey; 0>) /\ sec(KDF<LA_init(kem_ss); kdfkey || enckey; 0>)
+               /\ a4 == dhpk(get(a<0>))));
+            // Bob's first ratchet step LB<0>.
+            // (kss := kem_ss, bpre, bdh := dh, bm := bmaster, rb_g := rb1,
+            // gae := a4, rb := rb1, ka_g, ka := cb1)
+            call bob_step_0(kem_ss, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ++ s1 ++ s2 ++ s3 ++ s4, dh, bmaster, rb1, a4, rb1, a2, bk0, cb1, cb1, ma1)
+          }
+        }
+      }
+      otherwise => None()
+    }
+   } otherwise None()
+  }
+  otherwise None()

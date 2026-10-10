@@ -33,6 +33,9 @@ vstd = "=0.0.0-2026-09-06-0133"
 vest_lib = "=0.2.1"
 # KEM (src/owl_kem.rs): Kyber1024 and ML-KEM-1024, the version and features libsignal uses
 libcrux-ml-kem = { version = "=0.0.10", default-features = false, features = ["kyber", "mlkem1024"] }
+# protobuf, for the wire hooks (owl_wire.rs) of models extracted with --no-vest
+# (tests/wip/signal_libsignal)
+prost = "=0.14.4"
 
 [features]
 default = [] # ["nonverif-crypto"]
