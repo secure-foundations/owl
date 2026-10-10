@@ -17,7 +17,15 @@ pub fn gen_rand_kdf_key() -> Vec<u8> {
 
 #[verifier(external_body)]
 pub fn extract_expand_to_len(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
-    #[cfg(feature = "nonverif-crypto")]
+    // libsignal's HKDF-SHA256 (the hkdf/sha2 versions libsignal uses)
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        let h = hkdf_libsignal::Hkdf::<sha2_libsignal::Sha256>::new(Some(salt), ikm);
+        let mut okm = vec![0u8; len];
+        h.expand(info, &mut okm).expect("failed to expand");
+        okm
+    }
+    #[cfg(all(feature = "nonverif-crypto", not(feature = "libsignal-crypto")))]
     {
         let h = Hkdf::<Sha256>::new(Some(salt), ikm);
         let mut okm = vec![0u8; len];

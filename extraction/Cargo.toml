@@ -37,6 +37,10 @@ libcrux-ml-kem = { version = "=0.0.10", default-features = false, features = ["k
 [features]
 default = [] # ["nonverif-crypto"]
 nonverif-crypto = []
+# libsignal integration: libsignal's primitives. Builds only in libsignal's copy of this
+# crate (rust/protocol/owl in the libsignal fork), whose Cargo.toml provides libsignal-core,
+# signal-crypto, subtle and libsignal's versions of hkdf, hmac and sha2
+libsignal-crypto = ["nonverif-crypto"]
 
 [package.metadata.verus]
 verify = true

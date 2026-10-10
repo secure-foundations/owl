@@ -43,21 +43,45 @@ pub fn decrypt(privkey: &[u8], ctxt: &[u8]) -> Option<Vec<u8>> {
 
 #[verifier(external_body)]
 pub fn sign(privkey: &[u8], msg: &[u8]) -> Vec<u8> {
+    // libsignal: XEdDSA over Encode(msg) = 0x05 || msg (the Signal model only signs
+    // X25519 public keys). Signing is done by libsignal's key management, not by the
+    // extracted code.
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        unimplemented!("the Signal model does not sign")
+    }
+    #[cfg(not(feature = "libsignal-crypto"))]
+    {
     let mut rng = rand::thread_rng();
     let padding = PaddingScheme::new_pss::<sha2::Sha256>();
     let privkey_decoded = RsaPrivateKey::from_pkcs8_der(privkey).unwrap();
     privkey_decoded
         .sign_with_rng(&mut rng, padding, &sha2::Sha256::digest(&msg))
         .unwrap()
+    }
 }
 
 #[verifier(external_body)]
 pub fn verify(pubkey: &[u8], signature: &[u8], msg: &[u8]) -> bool {
+    // libsignal: XEdDSA verification (libsignal-core) of a signature on msg, under the
+    // 32-byte X25519 key `pubkey` (a Signal identity key). The model passes Signal's
+    // Encode(PK) itself (0x05 ++ X25519 key, 0x08 ++ Kyber1024 key), so msg is exactly
+    // what libsignal verifies for a signed prekey and a signed Kyber prekey.
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        let Ok(pk) = libsignal_core::curve::PublicKey::from_djb_public_key_bytes(pubkey) else {
+            return false;
+        };
+        pk.verify_signature(msg, signature)
+    }
+    #[cfg(not(feature = "libsignal-crypto"))]
+    {
     let padding = PaddingScheme::new_pss::<sha2::Sha256>();
     let pubkey_decoded = RsaPublicKey::from_public_key_der(pubkey).unwrap();
     match pubkey_decoded.verify(padding, &sha2::Sha256::digest(&msg), &signature) {
         Ok(_) => true,
         Err(_) => false,
+    }
     }
 }
 

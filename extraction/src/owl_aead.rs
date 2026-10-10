@@ -7,6 +7,14 @@ use vstd::prelude::*;
 #[cfg(not(feature = "nonverif-crypto"))]
 use libcrux::{aead::*, digest, drbg};
 
+// libsignal integration: Signal's message encryption, used as the AEAD in place of the
+// modes below. It is not part of this library: it depends on the Signal model's wire
+// format, so the model supplies it as signal_message_aead.rs next to its owl_wire.rs
+// (tests/wip/signal_libsignal), with `seal` and `open` of the signatures used below.
+#[cfg(feature = "libsignal-crypto")]
+#[path = "signal_message_aead.rs"]
+mod signal_message_aead;
+
 verus! {
 
 #[derive(Clone, Copy)]
@@ -221,6 +229,12 @@ pub fn encrypt_combined(
         return Err(Error::InvalidNonce);
     }
 
+    // libsignal integration: Signal's message encryption (see signal_message_aead)
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        return signal_message_aead::seal(k, msg, iv, aad);
+    }
+
     #[cfg(feature = "nonverif-crypto")]
     {
         #[verifier(external_body)]
@@ -351,6 +365,10 @@ pub fn decrypt_combined(
     iv: &[u8],
     aad: &Aad,
 ) -> Result<Vec<u8>, Error> {
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        return signal_message_aead::open(k, ctxt, iv, aad);
+    }
     if ctxt.len() < tag_size(alg) {
         return Err(Error::InvalidTagSize);
     }

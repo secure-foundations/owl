@@ -30,7 +30,15 @@ pub fn gen_ecdh_key_pair() -> (Vec<u8>, Vec<u8>) {
 
 #[verifier(external_body)]
 pub fn ecdh_dhpk(sk: &[u8]) -> Vec<u8> {
-    #[cfg(feature = "nonverif-crypto")]
+    // libsignal's X25519 (libsignal-core), for the libsignal integration
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        libsignal_core::curve::PrivateKey::deserialize(sk)
+            .and_then(|k| k.public_key())
+            .map(|pk| pk.public_key_bytes().to_vec())
+            .unwrap_or_default()
+    }
+    #[cfg(all(feature = "nonverif-crypto", not(feature = "libsignal-crypto")))]
     {
         use std::convert::TryInto;
         let sk_length_checked: [u8; 32] = sk.try_into().unwrap();
@@ -46,7 +54,15 @@ pub fn ecdh_dhpk(sk: &[u8]) -> Vec<u8> {
 
 #[verifier(external_body)]
 pub fn ecdh_combine(sk: &[u8], others_pk: &[u8]) -> Vec<u8> {
-    #[cfg(feature = "nonverif-crypto")]
+    #[cfg(feature = "libsignal-crypto")]
+    {
+        use libsignal_core::curve::{PrivateKey, PublicKey};
+        match (PrivateKey::deserialize(sk), PublicKey::from_djb_public_key_bytes(others_pk)) {
+            (Ok(k), Ok(pk)) => k.calculate_agreement(&pk).map(|s| s.to_vec()).unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+    #[cfg(all(feature = "nonverif-crypto", not(feature = "libsignal-crypto")))]
     {
         use std::convert::TryInto;
         let sk_length_checked: [u8; 32] = sk.try_into().unwrap();
