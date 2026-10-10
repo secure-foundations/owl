@@ -258,6 +258,8 @@ builtins = M.mapWithKey addExecName builtins' `M.union` diffNameBuiltins where
         , ("secret_concat", ([secBuf, secBuf], secBuf))
         , ("xor", ([u8slice, u8slice], vecU8))
         , ("secret_xor", ([secBuf, secBuf], secBuf))
+        , ("kem_decaps", ([secBuf, owlBuf], RTOption secBuf))
+        , ("kem_pk", ([secBuf], vecU8))
         -- bytes_as_counter and counter_as_bytes are handled specially 
         ]
     diffNameBuiltins = M.fromList [
@@ -593,6 +595,31 @@ genVerusCExpr info expr = do
             return $ GenRustExpr (k' ^. eTy) [__di|
             let tmp_#{rustX} = effects.owl_sample::<#{itreeTy}>(Tracked(&mut itree), #{pretty sz});
             let #{rustX} = #{castTmp};
+            #{k' ^. code}
+            |]
+        CKEMEncaps pk xk -> do
+            -- One call to the KEM computes both the shared secret and the ciphertext from
+            -- freshly sampled coins. It fails (and so does the def) only when the public
+            -- key does not have the length and key type of a supported KEM.
+            let (((ss, tss), (ct, tct)), k) = unsafeUnbind xk
+            let rustSS = execName . show $ ss
+            let rustCT = execName . show $ ct
+            let coins = [di|tmp_kem_coins_#{rustSS}|]
+            pk' <- genVerusCAExpr pk
+            pkCast <- castGRE pk' owlBuf
+            k' <- genVerusCExpr info k
+            let itreeTy = specItreeTy info
+            castSS <- ([di|tmp_#{rustSS}|], secBuf) `cast` tss
+            castCT <- ([di|tmp_#{rustCT}|], vecU8) `cast` tct
+            return $ GenRustExpr (k' ^. eTy) [__di|
+            let #{coins} = effects.owl_sample::<#{itreeTy}>(Tracked(&mut itree), KEM_COINS_SIZE);
+            let (tmp_#{rustSS}, tmp_#{rustCT}) = match owl_kem_encaps(#{pkCast}, #{coins}) {
+                Some(kem_res) => kem_res,
+                // not a public key of a supported KEM
+                None => { return Err(OwlError::IntegerOverflow); }
+            };
+            let #{rustSS} = #{castSS};
+            let #{rustCT} = #{castCT};
             #{k' ^. code}
             |]
         CItreeDeclassify _ xk -> do

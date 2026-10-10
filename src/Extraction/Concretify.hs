@@ -104,8 +104,8 @@ concretifyTy t = do
       TName ne -> formatTyOfNameExp ne
       TVK ne -> return $ fPBuf $ Just $ FLNamed "vk"
       TEnc_PK ne -> return $ fPBuf $ Just $ FLNamed "pke_pk"
-      TKEM_PK _ -> throwError UnsupportedKEM
       TDH_PK ne -> return $ fPBuf $ Just $ FLNamed "group"
+      TKEM_PK ne -> return kemPKFormatTy
       TSS ne1 ne2 -> return $ groupFormatTy BufSecret
       TAdmit -> throwError $ ErrSomethingFailed "Got admit type during concretization"
       TExistsIdx _ it -> do
@@ -119,6 +119,20 @@ hexConstType s = fPBuf $ Just $ FLConst $ length s `div` 2
 
 groupFormatTy :: BufSecrecy -> FormatTy
 groupFormatTy secrecy = FBuf secrecy $ Just $ FLNamed "group"
+
+-- KEM public keys and ciphertexts are public buffers of fixed length
+kemPKFormatTy :: FormatTy
+kemPKFormatTy = fPBuf $ Just $ FLNamed "kem_pk"
+
+kemCiphertextFormatTy :: FormatTy
+kemCiphertextFormatTy = fPBuf $ Just $ FLNamed "kem_cipherlen"
+
+-- The shared secret of an encapsulation or decapsulation. Its length is a constant
+-- (not the length of a name type), since the public key of kem_encaps and the
+-- ciphertext of kem_decaps are not tied to a particular KEM key. A constant length
+-- unifies with the named length of KEMName<k, i> (see `kemSharedSecretFLen`).
+kemSharedSecretFormatTy :: FormatTy
+kemSharedSecretFormatTy = fSBuf $ Just $ FLConst kemSharedSecretLen
 
 unifyFormatTy :: FormatTy -> FormatTy -> EM FormatTy
 unifyFormatTy t1 t2 =
@@ -189,7 +203,14 @@ formatTyOfNameExp ne = do
             let nk = nks !! i
             sec <- secrecyOfNameKind nk
             FBuf sec . Just <$> fLenOfNameKind nk
-        KEMName _ _ -> throwError UnsupportedKEM
+        KEMName k _ -> do
+            -- A shared secret of the KEM key k : kemkey(nt) has name type nt
+            knt <- liftCheck $ TB.getNameType k
+            case knt ^. val of
+                NT_KEM nt -> do
+                    fl <- kemSharedSecretFLen nt
+                    return $ FBuf BufSecret $ Just fl
+                _ -> throwError $ UnsupportedNameExp ne
 
 
 concretifyNameExpLoc :: NameExp -> EM String -- Returns the flattened path
@@ -197,7 +218,6 @@ concretifyNameExpLoc n = do
     case n ^. val of
         NameConst _ p _ -> flattenPath p
         KDFName {} -> throwError $ UnsupportedNameExp n
-        KEMName _ _ -> throwError UnsupportedKEM
 
 concretifyPath :: Path -> EM String
 concretifyPath (PRes rp) = do
@@ -333,7 +353,10 @@ concretifyApp (PRes (PDot PTop f)) params args = do
         ("vk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "vk"
         ("dhpk", [x]) -> return $ mkAppNoLets f $ groupFormatTy BufPublic
         ("enc_pk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "enc_pk"
-        ("kem_pk", _) -> throwError UnsupportedKEM
+        -- the public key of a KEM key, computed from the (serialized) secret key
+        ("kem_pk", [x]) -> do
+            (x', xLets) <- bufcastSecrecy (head args) BufSecret
+            return $ withLets xLets $ Typed kemPKFormatTy $ cAApp f [x']
         ("dh_combine", [x, y]) -> do
             return $ mkAppNoLets f $ groupFormatTy BufSecret
         ("checknonce", [x, y]) -> do
@@ -556,8 +579,6 @@ concretifyExpr e = do
       EAssume _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       EAdmit -> return $ noLets $ Typed FGhost $ CRet ghostUnit
       ECrypt (CLemma _) _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
-      ECrypt CKEMDecaps _ -> throwError UnsupportedKEM
-      EKEMEncaps {} -> throwError UnsupportedKEM
       ECrypt cop aes -> do
           (cs, argLets) <- concretifyAExprs aes
           addLets argLets <$> concretifyCryptOp aes cop cs
@@ -731,6 +752,17 @@ concretifyExpr e = do
           return $ withLets (c1lets ++ c2lets) $ Typed FUnit $ CTWrite s c1 c2
       ESetOption _ _ e -> concretifyExpr e
       EOpenTyOf _ e -> concretifyExpr e
+      EKEMEncaps a _ xk -> do
+          -- The typechecker requires the public key to be public
+          (pk, pkLets) <- concretifyAExpr a
+          (pk', pkCastLets) <- bufcastSecrecy pk BufPublic
+          ((ss, ct), k) <- unbind xk
+          let ssTy = kemSharedSecretFormatTy
+          let ctTy = kemCiphertextFormatTy
+          k' <- withVars [(castName ss, ssTy), (castName ct, ctTy)] $ concretifyExpr k
+          let k'' = exprFromLets' k'
+          return $ withLets (pkLets ++ pkCastLets) $ Typed (k'' ^. tty) $
+              CKEMEncaps pk' $ bind ((castName ss, ssTy), (castName ct, ctTy)) k''
 
 typeOfTable :: Path -> EM FormatTy
 typeOfTable (PRes (PDot p n)) = do
@@ -894,6 +926,15 @@ concretifyCryptOp _ CSigVrfy [k, x, v] = do
     let dop = DOSigVrfy (k', x', v')
     let doSigVrfy = Typed plaintextT $ CRet $ Typed plaintextT $ cAApp "vrfy" [k', x', v', tokVar]
     return $ withLets (kLets ++ xLets ++ vLets) $ Typed plaintextT $ CItreeDeclassify dop $ bind tokName doSigVrfy
+-- kem_decaps is not a declassifying operation: ML-KEM decapsulation uses implicit
+-- rejection, so it returns None only when the ciphertext or the key has the wrong
+-- length or key type, which are public. For every other ciphertext it returns a
+-- (pseudorandom) shared secret.
+concretifyCryptOp _ CKEMDecaps [k, c] = do
+    let t = FOption kemSharedSecretFormatTy
+    (k', kLets) <- bufcastSecrecy k BufSecret
+    (c', cLets) <- bufcastSecrecy c BufPublic
+    return $ withLets (kLets ++ cLets) $ Typed t $ CRet $ Typed t $ cAApp "kem_decaps" [k', c']
 concretifyCryptOp _ cop cargs = throwError $ TypeError $
     "Got bad crypt op during concretization: " ++ show (owlpretty cop) ++ ", args: " ++ show (tupled . map owlpretty $ cargs)
 

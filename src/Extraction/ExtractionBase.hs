@@ -88,7 +88,6 @@ data ExtractionError =
     | GhostInExec String
     | LiftedError ExtractionError
     | CantCastType String String String
-    | UnsupportedKEM
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -128,8 +127,6 @@ instance OwlPretty ExtractionError where
         owlpretty "Lifted error:" <+> owlpretty e
     owlpretty (CantCastType v t1 t2) =
         owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
-    owlpretty UnsupportedKEM =
-        owlpretty "Extraction does not yet support KEMs"
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
@@ -269,7 +266,6 @@ specNameOfExecName s =
     if "owl_" `isPrefixOf` s then specName $ drop 4 s else error "specNameOf: not an owl name: " ++ s
 
 fLenOfNameKind :: NameKind -> ExtractionMonad t FLen
-fLenOfNameKind NK_KEM = throwError UnsupportedKEM
 fLenOfNameKind nk = do
     return $ FLNamed $ case nk of
         NK_KDF -> "kdfkey"
@@ -278,16 +274,39 @@ fLenOfNameKind nk = do
         NK_PKE -> "pkekey"
         NK_Sig -> "sigkey"
         NK_MAC -> "mackey"
+        NK_KEM -> "kemkey"
         NK_Nonce s -> s
 
 fLenOfNameTy :: NameType -> ExtractionMonad t FLen
 fLenOfNameTy nt = do
-    nk <- liftCheck $ TB.getNameKind nt
+    nk <- nameKindOfNameTy nt
     fLenOfNameKind nk
+
+-- TB.getNameKind has no case for KEM keys (NT_KEM), so it is wrapped here
+nameKindOfNameTy :: NameType -> ExtractionMonad t NameKind
+nameKindOfNameTy nt =
+    case nt ^. val of
+        NT_KEM _ -> return NK_KEM
+        NT_App p ps as -> liftCheck (TB.resolveNameTypeApp p ps as) >>= nameKindOfNameTy
+        _ -> liftCheck $ TB.getNameKind nt
+
+-- KEM (ML-KEM / Kyber) shared secrets are always this many bytes long
+kemSharedSecretLen :: Int
+kemSharedSecretLen = 32
+
+-- The length of the shared secrets KEMName<k, i> of a KEM key k : kemkey(nt), which is
+-- the length of nt. Extraction requires it to be the length of a KEM shared secret.
+kemSharedSecretFLen :: NameType -> ExtractionMonad t FLen
+kemSharedSecretFLen nt = do
+    fl <- fLenOfNameTy nt
+    l <- concreteLength $ lowerFLen fl
+    when (l /= kemSharedSecretLen) $ throwError $ ErrSomethingFailed $
+        "the name type of the shared secrets of a KEM key must be " ++ show kemSharedSecretLen
+        ++ " bytes long (the KEM's shared secret length), but it is " ++ show l ++ " bytes long"
+    return fl
 
 
 secrecyOfNameKind :: NameKind -> ExtractionMonad t BufSecrecy
-secrecyOfNameKind NK_KEM = throwError UnsupportedKEM
 secrecyOfNameKind nk = do
     return $ case nk of
         NK_KDF -> BufSecret
@@ -296,11 +315,12 @@ secrecyOfNameKind nk = do
         NK_PKE -> BufSecret
         NK_Sig -> BufSecret
         NK_MAC -> BufSecret
+        NK_KEM -> BufSecret
         NK_Nonce _ -> BufSecret
 
 secrecyOfNameTy :: NameType -> ExtractionMonad t BufSecrecy
 secrecyOfNameTy nt = do
-    nk <- liftCheck $ TB.getNameKind nt
+    nk <- nameKindOfNameTy nt
     secrecyOfNameKind nk
 
 concreteLength :: ConstUsize -> ExtractionMonad t Int
@@ -317,6 +337,13 @@ concreteLength (CUsizeConst s) = do
         "MACLEN_SIZE"    -> return 16
         "COUNTER_SIZE"   -> return 8
         "SIGNATURE_SIZE" -> return 64
+        -- KEM: Kyber1024 / ML-KEM-1024. Secret keys and ciphertexts are in libsignal's
+        -- serialized forms, which start with a one-byte key type (0x08 = Kyber1024,
+        -- 0x0A = ML-KEM-1024); a public key is a raw Kyber1024 key (see owl_kem.rs)
+        "KEMKEY_SIZE"        -> return 3169 -- 1 + 3168 (decapsulation key)
+        "KEM_PK_SIZE"        -> return 1568 -- raw encapsulation key
+        "KEM_CIPHERLEN_SIZE" -> return 1569 -- 1 + 1568 (ciphertext)
+        "KEM_COINS_SIZE"     -> return 32   -- randomness of one encapsulation
         -- The below are for compatibility with old Owl
         "VK_SIZE"        -> return 1219
         "SIGKEY_SIZE"    -> return 1219

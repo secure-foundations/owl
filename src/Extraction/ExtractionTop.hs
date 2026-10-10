@@ -161,6 +161,11 @@ preprocessModBody mb = do
                         return nt
                     _ -> return nt
                 flen <- fLenOfNameTy nt
+                -- A KEM key (a secret key in the cfg of its locality): its shared secrets
+                -- must have the length of the KEM's shared secret
+                case nt ^. val of
+                    NT_KEM ssnt -> void $ kemSharedSecretFLen ssnt
+                    _ -> return ()
                 let nsids = length sids
                 let npids = length pids
                 when (nsids > 1) $ throwError $ DefWithTooManySids name

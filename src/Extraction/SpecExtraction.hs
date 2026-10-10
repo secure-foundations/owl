@@ -463,6 +463,8 @@ specBuiltins = M.mapWithKey addSpecName builtins' `M.union` diffNameBuiltins whe
         , ("kdf", ([RTUsize, seqU8, seqU8, seqU8], seqU8))
         , ("xor", ([seqU8, seqU8], seqU8))
         , ("concat", ([seqU8, seqU8], seqU8))
+        , ("kem_decaps", ([seqU8, seqU8], RTOption seqU8))
+        , ("kem_pk", ([seqU8], seqU8))
         ]
     diffNameBuiltins = M.fromList [
             ("secret_concat", ("concat", [seqU8, seqU8], seqU8))
@@ -650,6 +652,19 @@ extractExpr expr = do
                     (sample(#{sz}, enc(#{key''}, #{msg''})))
                     |]
                 _ -> throwError $ ErrSomethingFailed $ "Unsupported continuation after sample: " ++ show k
+        CKEMEncaps pk xk -> do
+            -- `sample_kem_encaps` (see `owl_spec!` in speclib.rs) samples KEM_COINS_SIZE
+            -- coins and binds ss and ct to kem_encaps_ss(pk, coins) and kem_encaps_ct(pk, coins)
+            let (((ss, _), (ct, _)), k) = unsafeUnbind xk
+            ss' <- extractVar ss
+            ct' <- extractVar ct
+            pk' <- extractCAExpr pk
+            pk'' <- specCast (pk', pk ^. tty) seqU8
+            k' <- extractExpr k
+            return [__di|
+            (sample_kem_encaps(KEM_COINS_SIZE, #{pk''}, #{ss'}, #{ct'})) in
+            #{k'}
+            |]
         CItreeDeclassify dop xk -> do
             let (x, k) = unsafeUnbind xk
             dop' <- extractDeclassifyingOp dop

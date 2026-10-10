@@ -205,6 +205,24 @@ pub closed spec(checked) fn dec_st_aead(k: Seq<u8>, c: Seq<u8>, nonce: Seq<u8>, 
 pub closed spec(checked) fn is_group_elem(x: Seq<u8>) -> bool
 { unimplemented!() }
 
+// KEM. Encapsulation is a deterministic function of the public key and the coins (see the
+// `sample_kem_encaps` rule of `owl_spec!`), returning the shared secret and the ciphertext.
+#[verifier(external_body)]
+pub closed spec(checked) fn kem_encaps_ss(pk: Seq<u8>, coins: Seq<u8>) -> (ss: Seq<u8>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn kem_encaps_ct(pk: Seq<u8>, coins: Seq<u8>) -> (ct: Seq<u8>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn kem_decaps(sk: Seq<u8>, ct: Seq<u8>) -> (ss: Option<Seq<u8>>)
+{ unimplemented!() }
+
+#[verifier(external_body)]
+pub closed spec(checked) fn kem_pk(sk: Seq<u8>) -> (pk: Seq<u8>)
+{ unimplemented!() }
+
 #[verifier(external_body)]
 pub closed spec(checked) fn crh(x: Seq<u8>) -> Seq<u8>
 { unimplemented!() }
@@ -557,6 +575,14 @@ pub mod itree {
         }};
         ($mut_state:ident, $mut_type:ident, sample($n:expr, $f:ident($($arg:expr),*))) => { verus_proof_expr!{
             (ITree::Sample($n, |coins| {owl_spec!($mut_state, $mut_type, (ret($f($($arg),*, coins))))}))
+        }};
+        // KEM encapsulation: sample the coins, then bind the shared secret and the ciphertext
+        ($mut_state:ident, $mut_type:ident, (sample_kem_encaps($n:expr, $pk:expr, $ss:ident, $ct:ident)) in $($next:tt)*) => { verus_proof_expr!{
+            (ITree::Sample($n, |coins| {
+                let $ss = kem_encaps_ss($pk, coins);
+                let $ct = kem_encaps_ct($pk, coins);
+                owl_spec!($mut_state, $mut_type, $($next)*)
+            }))
         }};
         ($mut_state:ident, $mut_type:ident, (declassify ($($e:tt)*)) in $($next:tt)*) => { verus_proof_expr!{
             (ITree::Declassify($($e)*, Box::new({

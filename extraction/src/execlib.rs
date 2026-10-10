@@ -4,6 +4,11 @@ use crate::{*, speclib::*};
 // (the other Vest names are re-exported by the preamble)
 use vest_lib::core::exec::{PreSerializeError, ComplianceErrorKind};
 
+// The KEM implementation (libcrux-ml-kem on libsignal's serialized keys and ciphertexts);
+// its trusted Verus wrappers are owl_kem_encaps, owl_kem_decaps and owl_kem_pk below
+#[path = "owl_kem.rs"]
+pub mod owl_kem;
+
 
 verus! {
     
@@ -237,6 +242,27 @@ impl Prepare<OwlBuf<'_>> for Tail {
     }
 }
 
+
+// KEM lengths, see owl_kem.rs. Secret keys and ciphertexts are in libsignal's serialized
+// forms, which start with a one-byte key type (0x08 = Kyber1024, 0x0A = ML-KEM-1024); a
+// public key (the model's kem_pk) is a raw Kyber1024 key, as Bob signs 0x08 ++ kem_pk.
+// OwlC names them after the Owl length constants kem_pk, kem_cipherlen and name kind kemkey.
+pub spec const SPEC_KEMKEY_SIZE: usize = 3169usize; // 1 + 3168 (decapsulation key)
+pub spec const SPEC_KEM_PK_SIZE: usize = 1568usize; // raw Kyber1024 encapsulation key
+pub spec const SPEC_KEM_CIPHERLEN_SIZE: usize = 1569usize; // 1 + 1568 (ciphertext)
+pub spec const SPEC_KEM_COINS_SIZE: usize = 32usize; // randomness of one encapsulation
+
+#[verifier::when_used_as_spec(SPEC_KEMKEY_SIZE)]
+pub exec const KEMKEY_SIZE: usize ensures KEMKEY_SIZE == SPEC_KEMKEY_SIZE { 3169usize }
+
+#[verifier::when_used_as_spec(SPEC_KEM_PK_SIZE)]
+pub exec const KEM_PK_SIZE: usize ensures KEM_PK_SIZE == SPEC_KEM_PK_SIZE { 1568usize }
+
+#[verifier::when_used_as_spec(SPEC_KEM_CIPHERLEN_SIZE)]
+pub exec const KEM_CIPHERLEN_SIZE: usize ensures KEM_CIPHERLEN_SIZE == SPEC_KEM_CIPHERLEN_SIZE { 1569usize }
+
+#[verifier::when_used_as_spec(SPEC_KEM_COINS_SIZE)]
+pub exec const KEM_COINS_SIZE: usize ensures KEM_COINS_SIZE == SPEC_KEM_COINS_SIZE { 32usize }
 
 pub fn owl_unit() -> (res: ())
 { () }
@@ -898,6 +924,41 @@ pub mod secret {
                 None
             }
         }
+    }
+
+    // KEM encapsulation, deterministic in the public key and the coins (sampled by the
+    // caller through the sampling effect). The public key is a raw Kyber1024 key; None if
+    // it has the wrong length (see owl_kem.rs).
+    #[verifier(external_body)]
+    pub exec fn owl_kem_encaps<'a>(pk: OwlBuf<'_>, coins: SecretBuf<'_>) -> (res: Option<(SecretBuf<'a>, Vec<u8>)>)
+        ensures
+            res matches Some(r) ==> r.0.view() == kem_encaps_ss(pk.view(), coins.view())
+                                    && r.1.view() == kem_encaps_ct(pk.view(), coins.view()),
+    {
+        let (ss, ct) = owl_kem::encapsulate_kyber1024_raw(pk.as_slice(), coins.private_as_slice())?;
+        Some((OwlBuf::from_vec(ss).into_secret(), ct))
+    }
+
+    // KEM decapsulation. It is not a declassifying operation: ML-KEM (and Kyber) use
+    // implicit rejection, so the result is None only when the lengths or key types of the
+    // key and the ciphertext are wrong, which is public; otherwise it is a (pseudorandom)
+    // shared secret.
+    #[verifier(external_body)]
+    pub exec fn owl_kem_decaps<'a>(sk: SecretBuf<'_>, ct: OwlBuf<'_>) -> (ss: Option<SecretBuf<'a>>)
+        ensures
+            view_option(ss) == kem_decaps(sk.view(), ct.view()),
+    {
+        let ss = owl_kem::decapsulate(sk.private_as_slice(), ct.as_slice())?;
+        Some(OwlBuf::from_vec(ss).into_secret())
+    }
+
+    // The raw public key of a Kyber1024 secret key (empty if the secret key is malformed or
+    // of another key type)
+    #[verifier(external_body)]
+    pub exec fn owl_kem_pk(sk: SecretBuf) -> (pk: Vec<u8>)
+        ensures pk.view() == kem_pk(sk.view())
+    {
+        owl_kem::kyber1024_raw_public_key_of(sk.private_as_slice()).unwrap_or(vec![])
     }
 
     #[verifier(external_body)]

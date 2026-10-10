@@ -417,6 +417,15 @@ lowerExpr expr = do
             eagerRtNoLets $ CGetCtr s
         CIncCtr s -> do
             eagerRtNoLets $ CIncCtr s
+        CKEMEncaps pk xk -> do
+            (((ss, tss), (ct, tct)), k) <- unbind xk
+            tss' <- lowerTy' tss
+            tct' <- lowerTy' tct
+            pkty <- lowerTy' $ pk ^. tty
+            (pk', pklets) <- lowerCAExpr' pk >>= forceAE pkty
+            k' <- withVars [(ss, tss'), (ct, tct')] $ lowerExprNoSusp k
+            let xk' = bind ((castName ss, tss'), (castName ct, tct')) k'
+            eagerNoLets $ exprFromLets pklets $ Typed (k' ^. tty) $ CKEMEncaps pk' xk'
     where                
         -- Recognize the pattern of a suspended serializer computation, which can show up as a 
         -- variable of buffer type, or as a cast of a variable of ADT type to buffer type

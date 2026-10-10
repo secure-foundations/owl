@@ -127,6 +127,10 @@ data CExpr' t =
     -- | CCrypt CryptOp [AExpr]
     | CGetCtr String 
     | CIncCtr String 
+    -- KEM encapsulation to the public key: samples the coins (KEM_COINS_SIZE bytes)
+    -- through the sampling effect, then binds the shared secret and the ciphertext,
+    -- which are a deterministic function of the public key and the coins
+    | CKEMEncaps (CAExpr t) (Bind ((CDataVar t, t), (CDataVar t, t)) (CExpr t))
     deriving (Show, Generic, Typeable)    
 
 type CExpr t = Typed (CExpr' t) t
@@ -313,6 +317,9 @@ instance (OwlPretty t, Alpha t, Typeable t) => OwlPretty (CExpr' t) where
     owlpretty (CTWrite n a a') = owlpretty "write" <+> owlpretty n <> brackets (owlpretty a) <+> owlpretty "<-" <+> owlpretty a'
     owlpretty (CGetCtr p) = owlpretty "get_counter" <+> owlpretty p
     owlpretty (CIncCtr p) = owlpretty "inc_counter" <+> owlpretty p
+    owlpretty (CKEMEncaps pk xk) =
+        let (((ss, _), (ct, _)), k) = unsafeUnbind xk in
+        owlpretty "kem_encaps" <+> owlpretty ss <> comma <+> owlpretty ct <+> owlpretty "<-" <+> owlpretty pk <+> owlpretty "in" <> line <> owlpretty k
 
 
 ---- traversals ----
@@ -403,6 +410,13 @@ traverseCExpr f a =
                         pure (s, Right $ bind (castName n) (t2, e'))) zs
               CCase <$> traverseCAExpr f x <*> pure zs'
           CRet e -> CRet <$> traverseCAExpr f e
+          CKEMEncaps pk xk -> do
+              (((ss, tss), (ct, tct)), k) <- unbind xk
+              tss' <- f tss
+              tct' <- f tct
+              k' <- traverseCExpr f k
+              pk' <- traverseCAExpr f pk
+              return $ CKEMEncaps pk' (bind ((castName ss, tss'), (castName ct, tct')) k')
 
 --------------------------------------------------------------------------------
 -- ConcreteAST utils
