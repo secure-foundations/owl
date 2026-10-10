@@ -843,6 +843,7 @@ addLifetime lt (RTRef RShared ty) = RTRef (RSharedWithLifetime lt) ty
 addLifetime lt (RTStruct s fs) = if structNeedsLifetime s fs then RTWithLifetime (RTStruct s fs) lt else RTStruct s fs
 addLifetime lt (RTEnum s cs) = if enumNeedsLifetime s cs then RTWithLifetime (RTEnum s cs) lt else RTEnum s cs
 addLifetime lt (RTOwlBuf _) = RTOwlBuf lt
+addLifetime lt (RTSecBuf _) = RTSecBuf lt
 addLifetime lt (RTOption ty) = RTOption (addLifetime lt ty)
 addLifetime _ t = t
 
@@ -1551,6 +1552,8 @@ cast (v, RTVec RTU8) (RTOwlBuf _) =
     return [di|OwlBuf::from_vec(#{v})|]
 cast (v, RTVec RTU8) (RTSecBuf _) =
     return [di|OwlBuf::from_vec(#{v}).into_secret()|]
+cast (v, RTVec RTU8) (RTRef RShared (RTSecBuf _)) =
+    return [di|&OwlBuf::from_vec(#{v}).into_secret()|]
 cast (v, RTArray RTU8 _) (RTOwlBuf _) =
     return [di|OwlBuf::from_slice(&#{v})|]
 cast (v, RTArray RTU8 _) (RTSecBuf _) =

@@ -2,6 +2,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use vstd::prelude::*;
 
+#[cfg(not(feature = "nonverif-crypto"))]
 use libcrux::hkdf::*;
 
 verus! {

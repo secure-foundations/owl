@@ -374,6 +374,9 @@ macro_rules! mk_vec_u8 {
             $(
                 v.push($e);
             )*
+            // Relate the pushes to the spec literal here, where it is cheap; in a
+            // larger goal (e.g. a constant KDF info or AAD) z3 does not find it.
+            proof { assert(v@ =~= seq![$($e),*]); }
             v
         }}
     };
@@ -521,8 +524,10 @@ pub mod secret {
                         ((self@ == l && other@ == r) || (self@ == r && other@ == l))
             ensures  result <==> self.view() == other.view()
         {
-            // self.buf.eq_contents(&other.buf)
-            todo!("implement secret_eq")
+            // Constant time in the contents: only the result (declassified by the EqCheck
+            // token) and the lengths (public in Owl) are revealed.
+            let (a, b) = (self.private_as_slice(), other.private_as_slice());
+            a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
         }
         
         // Private function for declassification---can only be used in the `secret` module
@@ -533,6 +538,15 @@ pub mod secret {
             ensures  result.view() == self.view()
         {
             reveal(SecretBuf::len_valid);
+            self.buf.as_slice()
+        }
+
+        /// TRUSTED application boundary: the bytes of a secret, for an application
+        /// that keeps secret state between calls to the verified code (e.g. the chain
+        /// and root keys in libsignal's session records). External to Verus, so no
+        /// verified code can call it.
+        #[verifier::external]
+        pub fn expose_to_application(&self) -> &[u8] {
             self.buf.as_slice()
         }
     }

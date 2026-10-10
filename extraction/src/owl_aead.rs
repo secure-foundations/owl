@@ -124,6 +124,7 @@ pub type Tag = Vec<u8>;
 
 #[inline]
 #[verifier(external)]
+#[cfg(not(feature = "nonverif-crypto"))]
 pub fn crux_alg_of_mode(alg : Mode) -> Algorithm {
     match alg {
         Mode::Aes128Gcm => Algorithm::Aes128Gcm,

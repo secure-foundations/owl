@@ -6,6 +6,7 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use vstd::prelude::*;
 use blake2::{Blake2s256};
+#[cfg(not(feature = "nonverif-crypto"))]
 use libcrux::digest::*;
 
 verus! {

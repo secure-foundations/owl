@@ -1,6 +1,8 @@
 use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
 use vstd::prelude::*;
+#[cfg(not(feature = "nonverif-crypto"))]
 use libcrux::ecdh::*;
+#[cfg(not(feature = "nonverif-crypto"))]
 use libcrux::drbg::*;
 
 verus! {
