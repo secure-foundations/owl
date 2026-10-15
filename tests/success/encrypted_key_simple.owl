@@ -1,0 +1,81 @@
+/* 
+    A, B already have key k
+
+    A -> B : {k_data}_k
+
+    B -> A : {x}_(k_data)
+
+    A : retrieve x
+
+
+    label ::=
+        [k] |
+        label /\ label |
+        public | 
+        adv
+
+
+    k
+    |
+    |
+    k_data
+    |
+    |
+    x
+
+
+    k : enckey t          c : adv         [k] !<= adv
+    -------------------------------
+    adec(k, c) : option t
+
+
+
+    k : enckey t          c : adv         [k] <= adv
+    -------------------------------
+    adec(k, c) : option adv
+
+
+*/
+
+locality alice
+locality bob
+
+def bob_main  @ bob
+
+def alice_main  @ alice
+
+name x : nonce @ bob
+name k_data : enckey (Name(x)) @ alice
+name shared_key : enckey (Name(k_data)) @ alice, bob
+
+enum Result {
+    | SomeResult Name(x)
+    | NoResult
+}
+
+def alice_main () @ alice
+     : if sec(k_data) then (Result) else Data<adv> = 
+    let c = aenc(get(shared_key), get(k_data)) in
+    let _ = output c to endpoint(bob) in 
+    input i, _ in 
+    corr_case k_data in
+    case adec(get(k_data), i) {
+     | Some j => 
+       SomeResult(j)
+     | None => NoResult()
+     }
+    
+def bob_main () @ bob
+    : Bool<adv> = 
+    input i, _ in 
+    // i : Data<adv>
+    corr_case shared_key in
+    case adec(get(shared_key), i) {
+     | Some k => 
+        let c = aenc(k, get(x)) in
+        output c to endpoint(alice);
+        true
+     | None => false
+     }
+        
+
