@@ -1,0 +1,14 @@
+// Refinements that do hold are still proved when the base types are the same
+locality alice
+name n : nonce @ alice
+name m : nonce @ alice
+
+struct S {
+    _f : if [n] <= [m] then Data<adv> ||nonce|| else (x:Data<adv> ||nonce||{length(x) == |nonce|})
+}
+
+def f(w : Data<adv> ||nonce||, o : Option Data<adv>) @ alice : S =
+    let z : (x:Data<adv> ||nonce||{x == w}) = w in
+    let p : (x:Option Data<adv>{x == o}) = o in
+    let y : if [n] <= [m] then Data<adv> ||nonce|| else (x:Data<adv> ||nonce||{x == w}) = w in
+    S(y)

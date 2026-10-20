@@ -742,7 +742,10 @@ isSubtype' t1 r1 t2 r2 = local (set tcScope (TcGhost False)) $ do
     res <- withPushLog $ do
       structural <-
           case (t1^.val, t2^.val) of
-            (t1', t2') | t1' `aeq` t2' -> return True
+            -- Equal types can have different refinements, so check them here.
+            -- If t2 is a leaf, refinements are checked at the end of the function.
+            (t1', t2') | t1' `aeq` t2' ->
+                if null r2 || isSubtypeLeaf t2 then return True else checkSubRefinement t1 r1 t2 r2
             (_, TGhost) -> return True
             (TAdmit, _) -> return True
             (TCase p t1' t2', _) -> do

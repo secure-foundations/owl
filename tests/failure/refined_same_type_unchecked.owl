@@ -1,0 +1,7 @@
+// Fails: w's type has the same base type as the annotation, but not its refinement {false}
+locality alice
+
+def f(w : Data<adv> ||nonce||) @ alice : Unit =
+    let z : (x:Data<adv> ||nonce||{false}) = w in
+    assert (false);
+    ()
