@@ -26,7 +26,9 @@ def AuthEncap<i>(pkR : dhpk(skR), dhpk_skE: dhpk(skE<i>), dhpk_skS: dhpk(skS)) @
         else
             Data<adv> ||kdfkey||
             = shared_secret in
-    AuthEncapResult<session i>(res, dhpk_skE)
+    // Built from shared_secret, whose type has the value equation that the else branch
+    // of aer_shared_secret needs (res's annotated type has none)
+    AuthEncapResult<session i>(shared_secret, dhpk_skE)
 
 
 /* Corresponds to Context<ROLE> for the Sender from the RFC */
