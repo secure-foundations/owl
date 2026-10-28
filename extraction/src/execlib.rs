@@ -62,19 +62,20 @@ pub spec const SPEC_COUNTER_SIZE: usize = 8;
 #[verifier::when_used_as_spec(SPEC_COUNTER_SIZE)]
 pub exec const COUNTER_SIZE: usize ensures COUNTER_SIZE == SPEC_COUNTER_SIZE { 8 }
 
-// RSA-2048, DER keys: placeholder lengths
+// Ed25519
 pub spec const SPEC_SIGNATURE_SIZE: usize = 64;
 #[verifier::when_used_as_spec(SPEC_SIGNATURE_SIZE)]
 pub exec const SIGNATURE_SIZE: usize ensures SIGNATURE_SIZE == SPEC_SIGNATURE_SIZE { 64 }
 
-pub spec const SPEC_SIGKEY_SIZE: usize = 1219;
+pub spec const SPEC_SIGKEY_SIZE: usize = 32;
 #[verifier::when_used_as_spec(SPEC_SIGKEY_SIZE)]
-pub exec const SIGKEY_SIZE: usize ensures SIGKEY_SIZE == SPEC_SIGKEY_SIZE { 1219 }
+pub exec const SIGKEY_SIZE: usize ensures SIGKEY_SIZE == SPEC_SIGKEY_SIZE { 32 }
 
-pub spec const SPEC_VK_SIZE: usize = 1219;
+pub spec const SPEC_VK_SIZE: usize = 32;
 #[verifier::when_used_as_spec(SPEC_VK_SIZE)]
-pub exec const VK_SIZE: usize ensures VK_SIZE == SPEC_VK_SIZE { 1219 }
+pub exec const VK_SIZE: usize ensures VK_SIZE == SPEC_VK_SIZE { 32 }
 
+// RSA-2048, DER keys: placeholder lengths
 pub spec const SPEC_PKEKEY_SIZE: usize = 1219;
 #[verifier::when_used_as_spec(SPEC_PKEKEY_SIZE)]
 pub exec const PKEKEY_SIZE: usize ensures PKEKEY_SIZE == SPEC_PKEKEY_SIZE { 1219 }
@@ -98,7 +99,7 @@ pub exec fn owl_gen_rand_bytes(len: usize) -> (res: Vec<u8>)
 
 /// Crypto primitives used by OwlC. Uses verified primitives from libcrux by default. The `nonverif-crypto` Cargo feature switches to RustCrypto implementations
 pub mod owl_crypto_suite {
-    use libcrux::{aead, digest, drbg, ecdh, hkdf};
+    use libcrux::{aead, digest, drbg, ecdh, hkdf, signature};
     use super::{AEAD_NONCE_SIZE, TAG_SIZE};
 
     pub const AEAD_ALG: aead::Algorithm = aead::Algorithm::Chacha20Poly1305;
@@ -114,7 +115,7 @@ pub mod owl_crypto_suite {
     pub const HASH_ALG: digest::Algorithm = digest::Algorithm::Blake2s;
     #[cfg(feature = "nonverif-crypto")]
     type NonverifHash = blake2::Blake2s256;
-    // RSA-2048: OAEP-SHA256, PSS-SHA256, PKCS#8 DER keys
+    // RSA-2048 PKE: OAEP-SHA256, PKCS#8 DER keys
     const RSA_BITS: usize = 2048;
 
     pub fn rand_bytes(len: usize) -> Vec<u8> {
@@ -256,18 +257,23 @@ pub mod owl_crypto_suite {
         sk.decrypt(rsa::PaddingScheme::new_oaep::<sha2::Sha256>(), ctxt).ok()
     }
 
-    pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
-        use rsa::pkcs8::DecodePrivateKey;
-        use sha2::Digest;
-        let sk = rsa::RsaPrivateKey::from_pkcs8_der(sk).unwrap();
-        sk.sign_with_rng(&mut rand::thread_rng(), rsa::PaddingScheme::new_pss::<sha2::Sha256>(), &sha2::Sha256::digest(msg)).unwrap()
+    /// (signing key, verification key)
+    pub fn sig_keygen() -> (Vec<u8>, Vec<u8>) {
+        let mut rng = drbg::Drbg::new(digest::Algorithm::Sha256).unwrap();
+        signature::key_gen(signature::Algorithm::Ed25519, &mut rng).unwrap()
     }
 
-    pub fn verify(pk: &[u8], sig: &[u8], msg: &[u8]) -> bool {
-        use rsa::{pkcs8::DecodePublicKey, PublicKey};
-        use sha2::Digest;
-        let pk = rsa::RsaPublicKey::from_public_key_der(pk).unwrap();
-        pk.verify(rsa::PaddingScheme::new_pss::<sha2::Sha256>(), &sha2::Sha256::digest(msg), sig).is_ok()
+    pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
+        // the rng is unused: Ed25519 is deterministic
+        let mut rng = drbg::Drbg::new(digest::Algorithm::Sha256).unwrap();
+        signature::sign(signature::Algorithm::Ed25519, msg, sk, &mut rng).unwrap().into_vec()
+    }
+
+    pub fn verify(vk: &[u8], sig: &[u8], msg: &[u8]) -> bool {
+        match signature::Ed25519Signature::from_slice(sig) {
+            Ok(sig) => signature::verify(msg, &signature::Signature::Ed25519(sig), vk).is_ok(),
+            Err(_) => false,
+        }
     }
 
     #[cfg(test)]
@@ -275,7 +281,7 @@ pub mod owl_crypto_suite {
         use super::*;
         use crate::execlib::*;
 
-        // not checked: MACLEN_SIZE, RSA lengths
+        // not checked: MACLEN_SIZE, RSA (PKE) lengths
         #[test]
         fn lengths_match_primitives() {
             let k = rand_bytes(ENCKEY_SIZE);
@@ -292,6 +298,13 @@ pub mod owl_crypto_suite {
             assert_eq!(hash(b"x").len(), CRH_SIZE);
             let mk = rand_bytes(MACKEY_SIZE);
             assert!(mac_verify(&mk, b"msg", &mac(&mk, b"msg")));
+            let (sk, vk) = sig_keygen();
+            assert_eq!((sk.len(), vk.len()), (SIGKEY_SIZE, VK_SIZE));
+            let sig = sign(&sk, b"msg");
+            assert_eq!(sig, sign(&sk, b"msg"));
+            assert_eq!(sig.len(), SIGNATURE_SIZE);
+            assert!(verify(&vk, &sig, b"msg") && !verify(&vk, &sig, b"other"));
+            assert!(!verify(&vk, &sign(&rand_bytes(SIGKEY_SIZE), b"msg"), b"msg"));
         }
     }
 }
