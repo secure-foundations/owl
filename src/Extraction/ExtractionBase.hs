@@ -64,6 +64,7 @@ data Env t = Env {
     ,   _memoKDF :: [(([NameKind], [AExpr]), (CDataVar t, t))]
     ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
     ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
+    ,   _lengthChecks :: [(ConstUsize, ConstUsize)] -- length equalities to assert in `owlc_length_checks`
 }
 
 
@@ -178,7 +179,8 @@ liftExtractionMonad m = do
             _owlUserFuncs = env' ^. owlUserFuncs,
             _memoKDF = [],
             _genVerusNameEnv = M.empty,
-            _genVerusPkEnv = M.empty
+            _genVerusPkEnv = M.empty,
+            _lengthChecks = []
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -211,7 +213,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty []
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy))
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
@@ -303,41 +305,9 @@ secrecyOfNameTy nt = do
     nk <- liftCheck $ TB.getNameKind nt
     secrecyOfNameKind nk
 
-concreteLength :: ConstUsize -> ExtractionMonad t Int
-concreteLength (CUsizeLit i) = return i
-concreteLength (CUsizeConst s) = do
-    -- NOTE: these lengths are dependent on the particular crypto primitives being used
-    l <- case s of
-        "KDFKEY_SIZE"    -> return 32
-        "GROUP_SIZE"     -> return 32
-        "ENCKEY_SIZE"    -> return 32
-        "MACKEY_SIZE"    -> return 64
-        "NONCE_SIZE"     -> return 12
-        "TAG_SIZE"       -> return 16
-        "MACLEN_SIZE"    -> return 16
-        "COUNTER_SIZE"   -> return 8
-        "SIGNATURE_SIZE" -> return 64
-        -- The below are for compatibility with old Owl
-        "VK_SIZE"        -> return 1219
-        "SIGKEY_SIZE"    -> return 1219
-        "PKEKEY_SIZE"    -> return 1219
-        "PKE_PK_SIZE"    -> return 1219
-        _ -> throwError $ UndefinedSymbol $ "concreteLength: unhandled length constant: " ++ s
-    debugPrint $ "WARNING: using hardcoded concrete length: " ++ s ++ " = " ++ show l
-    return l
-concreteLength (CUsizePlus a b) = do
-    a' <- concreteLength a
-    b' <- concreteLength b
-    return $ a' + b'
-
--- prelude.smt2 bounds the lengths of the kdfInjKinds below by the uninterpreted
--- security parameter MinKDFSliceLen. The concrete key sizes are therefore an
--- upper bound on the values it can take for the extracted code.
-reportMaxKDFSliceLen :: ExtractionMonad t ()
-reportMaxKDFSliceLen = do
-    ls <- forM kdfInjKinds $ \nk -> fLenOfNameKind nk >>= concreteLength . lowerFLen
-    debugPrint $ "Security parameter: with these concrete key sizes, MinKDFSliceLen (prelude.smt2) is at most " 
-        ++ show (minimum ls) ++ " bytes (the minimum over kdfkey, enckey, mackey)"
+lenExpr :: ConstUsize -> Doc ann
+lenExpr l@(CUsizePlus _ _) = [di|(#{pretty l}) as usize|]
+lenExpr l = pretty l
 
 lowerLenConst :: String -> String
 lowerLenConst s = map toUpper s ++ "_SIZE"
@@ -563,12 +533,12 @@ execCombTyOf = liftFromJust execCombTyOf'
 -- (combinator type, any constants that need to be defined)
 specCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 specCombOf' _ (FBuf BufSecret (Just flen)) = do
-    l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Varied(#{l}usize)|]
+    let l = lenExpr $ lowerFLen flen
+    return $ noconst [di|Varied(#{l})|]
 specCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 specCombOf' _ (FBuf BufPublic (Just flen)) = do
-    l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Varied(#{l}usize)|]
+    let l = lenExpr $ lowerFLen flen
+    return $ noconst [di|Varied(#{l})|]
 specCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 specCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (specCombOf' constSuffix . snd) fs
@@ -609,12 +579,12 @@ specCombOf s = liftFromJust (specCombOf' s)
 -- (combinator type, any constants that need to be defined)
 execCombOf' :: String -> FormatTy -> ExtractionMonad t (Maybe (Doc ann, Doc ann))
 execCombOf' _ (FBuf BufSecret (Just flen)) = do
-    l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Varied(#{l}usize)|]
+    let l = lenExpr $ lowerFLen flen
+    return $ noconst [di|Varied(#{l})|]
 execCombOf' _ (FBuf BufSecret Nothing) = return $ noconst [di|Tail|]
 execCombOf' _ (FBuf BufPublic (Just flen)) = do
-    l <- concreteLength $ lowerFLen flen
-    return $ noconst [di|Varied(#{l}usize)|]
+    let l = lenExpr $ lowerFLen flen
+    return $ noconst [di|Varied(#{l})|]
 execCombOf' _ (FBuf BufPublic Nothing) = return $ noconst [di|Tail|]
 execCombOf' constSuffix (FStruct _ fs) = do
     fcs <- mapM (execCombOf' constSuffix . snd) fs

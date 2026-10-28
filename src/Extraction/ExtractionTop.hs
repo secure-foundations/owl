@@ -31,6 +31,7 @@ import CmdArgs
 import ConcreteAST
 import ExtractionBase
 import Verus
+import PrettyVerus
 import qualified SMTBase
 import qualified TypingBase as TB
 import qualified Concretify
@@ -46,9 +47,10 @@ extract flags tcEnv path modbody = runExtractionMonad tcEnv (initEnv flags path 
 
 extract' :: TB.ModBody -> ExtractionMonad FormatTy (Doc ann)
 extract' modbody = do
-    reportMaxKDFSliceLen
+    -- MinKDFSliceLen (prelude.smt2) must be at most min(KDFKEY_SIZE, ENCKEY_SIZE, MACKEY_SIZE)
     owlExtrData <- preprocessModBody modbody
     concreteExtrData <- concretifyPass owlExtrData
+    lengthChecksFn <- genLengthChecks
     specs <- specExtractPass concreteExtrData
     fs <- use flags
     verusTyExtrData <- do
@@ -65,12 +67,25 @@ extract' modbody = do
         pretty "// ---------- SPECIFICATIONS ----------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
         specs                   <> line <> line <> line <> line <>
+        lengthChecksFn          <> line <> line <> line <> line <>
         pretty "// ------------------------------------" <> line <>
         pretty "// ---------- IMPLEMENTATIONS ---------" <> line <>
         pretty "// ------------------------------------" <> line <> line <>
         extractedOwl            <> line <> line <> line <> line <>
         pretty "} // verus!"    <> line <> line 
       )
+
+-- Emit Verus asserts to check length equalities assumed by Concretify
+genLengthChecks :: ExtractionMonad t (Doc ann)
+genLengthChecks = do
+    cs <- use lengthChecks
+    let conds = [ pretty a <+> pretty "==" <+> pretty b | (a, b) <- cs ]
+    unless (null cs) $ do
+        debugPrint "Length conditions on the crypto suite (checked by Verus in `owlc_length_checks`):"
+        forM_ conds $ \c -> debugPrint $ "    " ++ show c
+    let asserts = [ pretty "assert" <> parens c <> pretty ";" | c <- conds ]
+    return $ if null asserts then pretty "pub proof fn owlc_length_checks() {}"
+             else vsep [pretty "pub proof fn owlc_length_checks() {", indent 4 (vsep asserts), pretty "}"]
 
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
 preprocessModBody mb = do
