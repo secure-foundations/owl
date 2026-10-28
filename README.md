@@ -52,6 +52,7 @@ The `run_verus` script assumes you have [`verus`](https://github.com/verus-lang/
 in your `PATH`. The extracted code has been tested with Verus release
 [`0.2026.09.06.8dea4a2`](https://github.com/verus-lang/verus/releases/tag/release%2F0.2026.09.06.8dea4a2)
 using Rust toolchain `1.98.0` and `verusfmt` `0.7.4`.
+The extracted code uses the crypto primitives defined in module `owl_crypto_suite` in `extraction/src/execlib.rs`. To use different primitives or a different crypto provider, edit that file and `extraction/Cargo.toml` to add any new dependencies. You don't need to re-extract the Owl code.
 
 ## Syntax highlighting
 

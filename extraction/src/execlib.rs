@@ -4,6 +4,331 @@ use crate::{*, speclib::*};
 // (the other Vest names are re-exported by the preamble)
 use vest_lib::core::exec::{PreSerializeError, ComplianceErrorKind};
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////// Crypto suite ////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+// Generated code uses the suite only through these lengths and the `owl_*` crypto functions
+
+verus! {
+
+// HKDF-SHA256
+pub spec const SPEC_KDFKEY_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_KDFKEY_SIZE)]
+pub exec const KDFKEY_SIZE: usize ensures KDFKEY_SIZE == SPEC_KDFKEY_SIZE { 32 }
+
+// ChaCha20-Poly1305
+pub spec const SPEC_ENCKEY_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_ENCKEY_SIZE)]
+pub exec const ENCKEY_SIZE: usize ensures ENCKEY_SIZE == SPEC_ENCKEY_SIZE { 32 }
+
+pub spec const SPEC_TAG_SIZE: usize = 16;
+#[verifier::when_used_as_spec(SPEC_TAG_SIZE)]
+pub exec const TAG_SIZE: usize ensures TAG_SIZE == SPEC_TAG_SIZE { 16 }
+
+pub spec const SPEC_AEAD_NONCE_SIZE: usize = 12;
+#[verifier::when_used_as_spec(SPEC_AEAD_NONCE_SIZE)]
+pub exec const AEAD_NONCE_SIZE: usize ensures AEAD_NONCE_SIZE == SPEC_AEAD_NONCE_SIZE { 12 }
+
+// Owl `nonce` names (prelude.smt2 assumes >= 32)
+pub spec const SPEC_NONCE_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_NONCE_SIZE)]
+pub exec const NONCE_SIZE: usize ensures NONCE_SIZE == SPEC_NONCE_SIZE { 32 }
+
+// Keyed BLAKE2s-128 (WireGuard's MAC)
+pub spec const SPEC_MACKEY_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_MACKEY_SIZE)]
+pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { 32 }
+
+pub spec const SPEC_MACLEN_SIZE: usize = 16;
+#[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
+pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 16 }
+
+// X25519
+pub spec const SPEC_GROUP_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_GROUP_SIZE)]
+pub exec const GROUP_SIZE: usize ensures GROUP_SIZE == SPEC_GROUP_SIZE { 32 }
+
+pub spec const SPEC_DH_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_DH_SIZE)]
+pub exec const DH_SIZE: usize ensures DH_SIZE == SPEC_DH_SIZE { 32 }
+
+// BLAKE2s-256
+pub spec const SPEC_CRH_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_CRH_SIZE)]
+pub exec const CRH_SIZE: usize ensures CRH_SIZE == SPEC_CRH_SIZE { 32 }
+
+pub spec const SPEC_COUNTER_SIZE: usize = 8;
+#[verifier::when_used_as_spec(SPEC_COUNTER_SIZE)]
+pub exec const COUNTER_SIZE: usize ensures COUNTER_SIZE == SPEC_COUNTER_SIZE { 8 }
+
+// Ed25519
+pub spec const SPEC_SIGNATURE_SIZE: usize = 64;
+#[verifier::when_used_as_spec(SPEC_SIGNATURE_SIZE)]
+pub exec const SIGNATURE_SIZE: usize ensures SIGNATURE_SIZE == SPEC_SIGNATURE_SIZE { 64 }
+
+pub spec const SPEC_SIGKEY_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_SIGKEY_SIZE)]
+pub exec const SIGKEY_SIZE: usize ensures SIGKEY_SIZE == SPEC_SIGKEY_SIZE { 32 }
+
+pub spec const SPEC_VK_SIZE: usize = 32;
+#[verifier::when_used_as_spec(SPEC_VK_SIZE)]
+pub exec const VK_SIZE: usize ensures VK_SIZE == SPEC_VK_SIZE { 32 }
+
+// RSA-2048, DER keys: placeholder lengths
+pub spec const SPEC_PKEKEY_SIZE: usize = 1219;
+#[verifier::when_used_as_spec(SPEC_PKEKEY_SIZE)]
+pub exec const PKEKEY_SIZE: usize ensures PKEKEY_SIZE == SPEC_PKEKEY_SIZE { 1219 }
+
+pub spec const SPEC_PKE_SK_SIZE: usize = 1219;
+#[verifier::when_used_as_spec(SPEC_PKE_SK_SIZE)]
+pub exec const PKE_SK_SIZE: usize ensures PKE_SK_SIZE == SPEC_PKE_SK_SIZE { 1219 }
+
+pub spec const SPEC_PKE_PK_SIZE: usize = 1219;
+#[verifier::when_used_as_spec(SPEC_PKE_PK_SIZE)]
+pub exec const PKE_PK_SIZE: usize ensures PKE_PK_SIZE == SPEC_PKE_PK_SIZE { 1219 }
+
+#[verifier(external_body)]
+pub exec fn owl_gen_rand_bytes(len: usize) -> (res: Vec<u8>)
+    ensures res.view().len() == len
+{
+    owl_crypto_suite::rand_bytes(len)
+}
+
+} // verus!
+
+/// Crypto primitives used by OwlC. Uses verified primitives from libcrux by default. The `nonverif-crypto` Cargo feature switches to RustCrypto implementations
+pub mod owl_crypto_suite {
+    use libcrux::{aead, digest, drbg, ecdh, hkdf, signature};
+    use super::{AEAD_NONCE_SIZE, MACLEN_SIZE, TAG_SIZE};
+
+    pub const AEAD_ALG: aead::Algorithm = aead::Algorithm::Chacha20Poly1305;
+    #[cfg(feature = "nonverif-crypto")]
+    type NonverifAead = chacha20poly1305::ChaCha20Poly1305;
+    pub const KDF_ALG: hkdf::Algorithm = hkdf::Algorithm::Sha256;
+    #[cfg(feature = "nonverif-crypto")]
+    type NonverifKdfHash = sha2::Sha256;
+    type MacBuilder<'a> = libcrux_blake2::Blake2sBuilder<'a, &'a [u8]>;
+    #[cfg(any(test, feature = "nonverif-crypto"))]
+    type NonverifMac = blake2::Blake2sMac<blake2::digest::consts::U16>;
+    pub const DH_ALG: ecdh::Algorithm = ecdh::Algorithm::X25519;
+    #[cfg(feature = "nonverif-crypto")]
+    const _: () = assert!(matches!(DH_ALG, ecdh::Algorithm::X25519));
+    pub const HASH_ALG: digest::Algorithm = digest::Algorithm::Blake2s;
+    #[cfg(feature = "nonverif-crypto")]
+    type NonverifHash = blake2::Blake2s256;
+    // RSA-2048 PKE: OAEP-SHA256, PKCS#8 DER keys
+    const RSA_BITS: usize = 2048;
+
+    pub fn rand_bytes(len: usize) -> Vec<u8> {
+        let mut rng = drbg::Drbg::new(digest::Algorithm::Sha256).unwrap();
+        rng.generate_vec(len).unwrap()
+    }
+
+    /// ciphertext || tag into `data[pos..]`
+    pub fn aead_encrypt_into(k: &[u8], msg: &[u8], nonce: &[u8], aad: &[u8], data: &mut [u8], pos: usize) -> Option<()> {
+        data[pos..pos + msg.len()].copy_from_slice(msg);
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            use ::aead::{AeadInPlace, KeyInit, Nonce};
+            let cipher = NonverifAead::new_from_slice(k).ok()?;
+            let tag = cipher.encrypt_in_place_detached(<Nonce<NonverifAead>>::from_slice(nonce), aad, &mut data[pos..pos + msg.len()]).ok()?;
+            data[pos + msg.len()..pos + msg.len() + TAG_SIZE].copy_from_slice(&tag);
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            let key = aead::Key::from_slice(AEAD_ALG, k).ok()?;
+            let iv = aead::Iv::new(nonce).ok()?;
+            let tag = aead::encrypt(&key, &mut data[pos..pos + msg.len()], iv, aad).ok()?;
+            data[pos + msg.len()..pos + msg.len() + TAG_SIZE].copy_from_slice(tag.as_ref());
+        }
+        Some(())
+    }
+
+    /// returns ciphertext || tag
+    pub fn aead_encrypt(k: &[u8], msg: &[u8], nonce: &[u8], aad: &[u8]) -> Option<Vec<u8>> {
+        let mut data = vec![0u8; msg.len() + TAG_SIZE];
+        aead_encrypt_into(k, msg, nonce, aad, &mut data, 0)?;
+        Some(data)
+    }
+
+    /// `ctxt` is ciphertext || tag
+    pub fn aead_decrypt(k: &[u8], ctxt: &[u8], nonce: &[u8], aad: &[u8]) -> Option<Vec<u8>> {
+        if ctxt.len() < TAG_SIZE || nonce.len() != AEAD_NONCE_SIZE {
+            return None;
+        }
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            use ::aead::{Aead, KeyInit, Nonce, Payload};
+            let cipher = NonverifAead::new_from_slice(k).ok()?;
+            cipher.decrypt(<Nonce<NonverifAead>>::from_slice(nonce), Payload { msg: ctxt, aad }).ok()
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            let (c, tag) = ctxt.split_at(ctxt.len() - TAG_SIZE);
+            let key = aead::Key::from_slice(AEAD_ALG, k).ok()?;
+            let iv = aead::Iv::new(nonce).ok()?;
+            let tag = aead::Tag::from_slice(tag).ok()?;
+            aead::decrypt_detached(&key, c, iv, aad, &tag).ok()
+        }
+    }
+
+    pub fn kdf(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> Vec<u8> {
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            let h = ::hkdf::Hkdf::<NonverifKdfHash>::new(Some(salt), ikm);
+            let mut okm = vec![0u8; len];
+            h.expand(info, &mut okm).expect("failed to expand");
+            okm
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            hkdf::hkdf(KDF_ALG, salt, ikm, info, len).unwrap()
+        }
+    }
+
+    pub fn mac(k: &[u8], msg: &[u8]) -> Vec<u8> {
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            use ::digest::Mac;
+            let mac = <NonverifMac as Mac>::new_from_slice(k).expect("MAC got invalid key length");
+            mac.chain_update(msg).finalize().into_bytes().to_vec()
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            let mut mac = MacBuilder::new_keyed_dynamic(k).expect("MAC got invalid key length")
+                .build_var_digest_len(MACLEN_SIZE as u8).unwrap();
+            mac.update(msg).unwrap();
+            let mut tag = vec![0u8; MACLEN_SIZE];
+            mac.finalize(&mut tag).unwrap();
+            tag
+        }
+    }
+
+    pub fn mac_verify(k: &[u8], msg: &[u8], tag: &[u8]) -> bool {
+        mac(k, msg) == tag
+    }
+
+    pub fn dhpk(sk: &[u8]) -> Vec<u8> {
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            let sk: [u8; 32] = sk.try_into().unwrap();
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sk)).to_bytes().to_vec()
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            ecdh::secret_to_public(DH_ALG, sk).unwrap()
+        }
+    }
+
+    pub fn dh_combine(sk: &[u8], pk: &[u8]) -> Vec<u8> {
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            let sk: [u8; 32] = sk.try_into().unwrap();
+            let pk: [u8; 32] = pk.try_into().unwrap();
+            x25519_dalek::StaticSecret::from(sk).diffie_hellman(&x25519_dalek::PublicKey::from(pk)).as_bytes().to_vec()
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            ecdh::derive(DH_ALG, pk, sk).unwrap()
+        }
+    }
+
+    /// X25519: any GROUP_SIZE bytes
+    pub fn is_group_elem(x: &[u8]) -> bool {
+        x.len() == super::GROUP_SIZE
+    }
+
+    pub fn hash(x: &[u8]) -> Vec<u8> {
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            use ::blake2::Digest;
+            NonverifHash::digest(x).to_vec()
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            digest::hash(HASH_ALG, x)
+        }
+    }
+
+    pub fn pke_keygen() -> (Vec<u8>, Vec<u8>) {
+        use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+        let sk = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), RSA_BITS).unwrap();
+        let pk = rsa::RsaPublicKey::from(&sk);
+        (sk.to_pkcs8_der().unwrap().as_bytes().to_vec(), pk.to_public_key_der().unwrap().to_vec())
+    }
+
+    pub fn pke_encrypt(pk: &[u8], msg: &[u8]) -> Vec<u8> {
+        use rsa::{pkcs8::DecodePublicKey, PublicKey};
+        let pk = rsa::RsaPublicKey::from_public_key_der(pk).unwrap();
+        pk.encrypt(&mut rand::thread_rng(), rsa::PaddingScheme::new_oaep::<sha2::Sha256>(), msg).unwrap()
+    }
+
+    pub fn pke_decrypt(sk: &[u8], ctxt: &[u8]) -> Option<Vec<u8>> {
+        use rsa::pkcs8::DecodePrivateKey;
+        let sk = rsa::RsaPrivateKey::from_pkcs8_der(sk).unwrap();
+        sk.decrypt(rsa::PaddingScheme::new_oaep::<sha2::Sha256>(), ctxt).ok()
+    }
+
+    /// (signing key, verification key)
+    pub fn sig_keygen() -> (Vec<u8>, Vec<u8>) {
+        let mut rng = drbg::Drbg::new(digest::Algorithm::Sha256).unwrap();
+        signature::key_gen(signature::Algorithm::Ed25519, &mut rng).unwrap()
+    }
+
+    pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
+        // the rng is unused: Ed25519 is deterministic
+        let mut rng = drbg::Drbg::new(digest::Algorithm::Sha256).unwrap();
+        signature::sign(signature::Algorithm::Ed25519, msg, sk, &mut rng).unwrap().into_vec()
+    }
+
+    pub fn verify(vk: &[u8], sig: &[u8], msg: &[u8]) -> bool {
+        match signature::Ed25519Signature::from_slice(sig) {
+            Ok(sig) => signature::verify(msg, &signature::Signature::Ed25519(sig), vk).is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::execlib::*;
+
+        // not checked: RSA (PKE) lengths
+        #[test]
+        fn lengths_match_primitives() {
+            let k = rand_bytes(ENCKEY_SIZE);
+            let n = rand_bytes(AEAD_NONCE_SIZE);
+            let c = aead_encrypt(&k, b"msg", &n, b"aad").expect("AEAD key or nonce length is wrong");
+            assert_eq!(c.len(), 3 + TAG_SIZE);
+            assert_eq!(aead_decrypt(&k, &c, &n, b"aad").as_deref(), Some(&b"msg"[..]));
+            assert_eq!(kdf(&rand_bytes(KDFKEY_SIZE), b"ikm", b"info", 100).len(), 100);
+            let (a, b) = (rand_bytes(DH_SIZE), rand_bytes(DH_SIZE));
+            assert_eq!(dhpk(&a).len(), GROUP_SIZE);
+            let ss = dh_combine(&a, &dhpk(&b));
+            assert_eq!(ss.len(), GROUP_SIZE);
+            assert_eq!(ss, dh_combine(&b, &dhpk(&a)));
+            assert_eq!(hash(b"x").len(), CRH_SIZE);
+            let mk = rand_bytes(MACKEY_SIZE);
+            assert_eq!(mac(&mk, b"msg").len(), MACLEN_SIZE);
+            assert!(mac_verify(&mk, b"msg", &mac(&mk, b"msg")) && !mac_verify(&mk, b"other", &mac(&mk, b"msg")));
+            {
+                // cross-check with RustCrypto
+                use ::digest::Mac;
+                let other = <NonverifMac as Mac>::new_from_slice(&mk).unwrap().chain_update(b"msg").finalize();
+                assert_eq!(mac(&mk, b"msg"), other.into_bytes().to_vec());
+            }
+            let (sk, vk) = sig_keygen();
+            assert_eq!((sk.len(), vk.len()), (SIGKEY_SIZE, VK_SIZE));
+            let sig = sign(&sk, b"msg");
+            assert_eq!(sig, sign(&sk, b"msg"));
+            assert_eq!(sig.len(), SIGNATURE_SIZE);
+            assert!(verify(&vk, &sig, b"msg") && !verify(&vk, &sig, b"other"));
+            assert!(!verify(&vk, &sign(&rand_bytes(SIGKEY_SIZE), b"msg"), b"msg"));
+        }
+    }
+}
+
 
 verus! {
     
@@ -309,7 +634,7 @@ pub exec fn owl_concat(a: &[u8], b: &[u8]) -> (res: Vec<u8>)
 pub exec fn owl_crh(x: &[u8]) -> (res: Vec<u8>)
     ensures res.view() == crh(x.view())
 {
-    owl_hmac::blake2s(x)
+    owl_crypto_suite::hash(x)
 }
 
 #[verifier(external_body)]
@@ -657,16 +982,13 @@ pub mod secret {
         let k = k.private_as_slice();
         let msg = msg.private_as_slice();
         let iv = iv.private_as_slice();
-        match owl_aead::encrypt_combined(CIPHER, k, msg, iv, &[]) {
-            Ok(mut c) => {
+        match owl_crypto_suite::aead_encrypt(k, msg, iv, &[]) {
+            Some(mut c) => {
                 let mut v = iv.to_owned();
                 v.append(&mut c);
                 v
             },
-            Err(_e) => {
-                // dbg!(e);
-                vec![]
-            }
+            None => vec![],
         }
     }
 
@@ -680,13 +1002,11 @@ pub mod secret {
     {
         let k = k.private_as_slice();
         let c = c.as_slice();
-        match owl_aead::decrypt_combined(CIPHER, k, &c[NONCE_SIZE..], &c[..NONCE_SIZE], &[]) {
-            Ok(p) => Some(OwlBuf::from_vec(p).into_secret()),
-            Err(_e) => {
-                // dbg!(e);
-                None
-            }
+        if c.len() < AEAD_NONCE_SIZE {
+            return None;
         }
+        let p = owl_crypto_suite::aead_decrypt(k, &c[AEAD_NONCE_SIZE..], &c[..AEAD_NONCE_SIZE], &[])?;
+        Some(OwlBuf::from_vec(p).into_secret())
     }
 
     #[verifier(external_body)]
@@ -695,7 +1015,7 @@ pub mod secret {
     {
         let privkey = privkey.private_as_slice();
         let msg = msg.as_slice();
-        owl_pke::sign(privkey, msg)
+        owl_crypto_suite::sign(privkey, msg)
     }
 
     #[verifier(external_body)]
@@ -709,7 +1029,7 @@ pub mod secret {
         let pubkey_slice = pubkey.as_slice();
         let msg_slice = msg.private_as_slice();
         let signature_slice = signature.as_slice();
-        if owl_pke::verify(pubkey_slice, signature_slice, msg_slice) {
+        if owl_crypto_suite::verify(pubkey_slice, signature_slice, msg_slice) {
             Some(msg.another_ref())
         } else {
             None
@@ -720,7 +1040,7 @@ pub mod secret {
     pub exec fn owl_dhpk(privkey: SecretBuf) -> (pubkey: Vec<u8>)
         ensures pubkey.view() == dhpk(privkey.view())
     {
-        owl_dhke::ecdh_dhpk(privkey.private_as_slice())
+        owl_crypto_suite::dhpk(privkey.private_as_slice())
     }
 
 
@@ -729,7 +1049,7 @@ pub mod secret {
         ensures
             ss.view() == dh_combine(pubkey.view(), privkey.view())
     {
-        let ss = owl_dhke::ecdh_combine(privkey.private_as_slice(), pubkey.private_as_slice());
+        let ss = owl_crypto_suite::dh_combine(privkey.private_as_slice(), pubkey.private_as_slice());
         OwlBuf::from_vec(ss).into_secret()
     }
 
@@ -738,7 +1058,7 @@ pub mod secret {
         ensures h.view() == kdf(len.view(), salt.view(), ikm.view(), info.view()),
                 h.view().len() == len
     {
-        let h = owl_hkdf::extract_expand_to_len(ikm.private_as_slice(), salt.private_as_slice(), info.as_slice(), len);
+        let h = owl_crypto_suite::kdf(salt.private_as_slice(), ikm.private_as_slice(), info.as_slice(), len);
         OwlBuf::from_vec(h).into_secret()
     }
 
@@ -746,7 +1066,7 @@ pub mod secret {
     pub exec fn owl_mac(mackey: SecretBuf, msg: OwlBuf) -> (mac_val: Vec<u8>)
         ensures mac_val.view() == mac(mackey.view(), msg.view())
     {
-        owl_hmac::hmac(HMAC_MODE, mackey.private_as_slice(), msg.as_slice(), None)
+        owl_crypto_suite::mac(mackey.private_as_slice(), msg.as_slice())
     }
 
     #[verifier(external_body)]
@@ -757,7 +1077,7 @@ pub mod secret {
         ensures 
             view_option(x) == mac_vrfy(mackey.view(), msg.view(), mac.view())
     {
-        if owl_hmac::verify(HMAC_MODE, mackey.private_as_slice(), msg.private_as_slice(), mac.as_slice(), None) {
+        if owl_crypto_suite::mac_verify(mackey.private_as_slice(), msg.private_as_slice(), mac.as_slice()) {
             Some(msg.another_ref())
         } else {
             None
@@ -768,7 +1088,7 @@ pub mod secret {
     pub exec fn owl_pkenc(pubkey: OwlBuf<'_>, msg: SecretBuf<'_>) -> (ctxt: Vec<u8>)
         ensures ctxt.view() == pkenc(pubkey.view(), msg.view())
     {
-        owl_pke::encrypt(pubkey.as_slice(), msg.private_as_slice())
+        owl_crypto_suite::pke_encrypt(pubkey.as_slice(), msg.private_as_slice())
     }
 
     #[verifier(external_body)]
@@ -779,7 +1099,7 @@ pub mod secret {
         ensures 
             view_option(msg) == pkdec(privkey.view(), ctxt.view())
     {
-        let p = owl_pke::decrypt(privkey.private_as_slice(), ctxt.as_slice())?;
+        let p = owl_crypto_suite::pke_decrypt(privkey.private_as_slice(), ctxt.as_slice())?;
         Some(OwlBuf::from_vec(p).into_secret())
     }
 
@@ -830,22 +1150,15 @@ pub mod secret {
                 old(data)@.subrange(pos + self.value().len() as int, old(data)@.len() as int)),
         {
             let mut iv_sized = self.iv.private_as_slice().to_vec();
-            iv_sized.resize(NONCE_SIZE, 0u8);
-            match owl_aead::encrypt_combined_into(
-                CIPHER, 
-                self.k.private_as_slice(), 
-                self.msg.private_as_slice(), 
-                &iv_sized[..], 
-                self.aad.private_as_slice(), 
-                data, 
+            iv_sized.resize(AEAD_NONCE_SIZE, 0u8);
+            owl_crypto_suite::aead_encrypt_into(
+                self.k.private_as_slice(),
+                self.msg.private_as_slice(),
+                &iv_sized[..],
+                self.aad.private_as_slice(),
+                data,
                 pos,
-            ) {
-                Ok(()) => (),
-                Err(_e) => {
-                    // dbg!(e);
-                    ()
-                }
-            };
+            );
         }
     }
 
@@ -872,15 +1185,8 @@ pub mod secret {
             res.view() == enc_st_aead(k.view(), msg.view(), iv.view(), aad.view()),
     {
         let mut iv_sized = iv.private_as_slice().to_vec();
-        iv_sized.resize(NONCE_SIZE, 0u8);
-        let res = match owl_aead::encrypt_combined(CIPHER, k.private_as_slice(), msg.private_as_slice(), &iv_sized[..], aad.private_as_slice()) {
-            Ok(c) => c,
-            Err(_e) => {
-                // dbg!(e);
-                vec![]
-            }
-        };
-        res
+        iv_sized.resize(AEAD_NONCE_SIZE, 0u8);
+        owl_crypto_suite::aead_encrypt(k.private_as_slice(), msg.private_as_slice(), &iv_sized[..], aad.private_as_slice()).unwrap_or(vec![])
     }
 
     #[verifier(external_body)]
@@ -891,27 +1197,22 @@ pub mod secret {
         ensures
             view_option(x) == dec_st_aead(k.view(), c.view(), nonce.view(), aad.view())
     {
-        match owl_aead::decrypt_combined(CIPHER, k.private_as_slice(), c.as_slice(), nonce.private_as_slice(), aad.private_as_slice()) {
-            Ok(p) => Some(OwlBuf::from_vec(p).into_secret()),
-            Err(_e) => {
-                // dbg!(e);
-                None
-            }
-        }
+        let p = owl_crypto_suite::aead_decrypt(k.private_as_slice(), c.as_slice(), nonce.private_as_slice(), aad.private_as_slice())?;
+        Some(OwlBuf::from_vec(p).into_secret())
     }
 
     #[verifier(external_body)]
     pub exec fn owl_is_group_elem(x: SecretBuf) -> (b: bool)
         ensures b == is_group_elem(x.view())
     {
-        x.len() == 32
+        owl_crypto_suite::is_group_elem(x.private_as_slice())
     }
 
     #[verifier(external_body)]
     pub exec fn owl_secret_crh<'a>(x: SecretBuf) -> (res: SecretBuf<'a>)
         ensures res.view() == crh(x.view())
     {
-        let h = owl_hmac::blake2s(x.private_as_slice());
+        let h = owl_crypto_suite::hash(x.private_as_slice());
         OwlBuf::from_vec(h).into_secret()
     }
 

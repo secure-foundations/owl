@@ -213,7 +213,7 @@ genVerusName maybeLt fromConfig (vname, vsize, _, secrecy) =
     let nameDecl = [di|pub #{execname} : #{pretty bufty'}|] in
     let nameInitBody =
             if fromConfig then [di|config.#{execname}|]
-            else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
+            else [di|owl_gen_rand_bytes(#{lenExpr vsize})|] in
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
     (nameDecl, nameInit)
 
@@ -229,7 +229,7 @@ genVerusPk maybeLt fromConfig (vname, vsize, _, secrecy) =
     let nameDecl = [di|pub #{execname} : #{pretty bufty'}|] in
     let nameInitBody =
             if fromConfig then [di|config.#{execname}|]
-            else [di|owl_util::gen_rand_bytes(#{pretty vsize})|] in
+            else [di|owl_gen_rand_bytes(#{lenExpr vsize})|] in
     let nameInit = [di|#{execname} : (#{nameInitBody})|] in
     (nameDecl, nameInit)
 
@@ -397,8 +397,8 @@ genVerusCAExpr ae = do
             let printComb arg comb = case comb of
                     PCTail -> return [di|Tail|]
                     PCBytes l -> do
-                        l' <- concreteLength $ lowerFLen l
-                        return [di|Varied(#{l'}usize)|]
+                        let l' = lenExpr $ lowerFLen l
+                        return [di|Varied(#{l'})|]
                     PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
                     PCBuilder -> return [di|Varied(#{arg}.length())|]
             let mkCombArg ((arg, comb), fty) = do
@@ -533,8 +533,8 @@ genVerusCExpr info expr = do
                     let printComb arg comb = case comb of
                             PCTail -> return [di|Tail|]
                             PCBytes l -> do
-                                l' <- concreteLength $ lowerFLen l
-                                return [di|Varied(#{l'}usize)|]
+                                let l' = lenExpr $ lowerFLen l
+                                return [di|Varied(#{l'})|]
                             PCConstBytes l s -> return [di|OwlConstBytes::<#{l}>(#{s})|]
                             PCBuilder -> return [di|Varied(#{arg}.length())|]
                     let mkCombArg ((arg, comb), fty) = do

@@ -165,17 +165,20 @@ unifyFLen l1 l2 =
         (FLCipherlen l1', FLCipherlen l2') -> do
             l <- unifyFLen l1' l2'
             return $ FLCipherlen l
-        (FLConst _, FLNamed _) -> do
-            cl1 <- concreteLength $ lowerFLen l1
-            cl2 <- concreteLength $ lowerFLen l2
-            if cl1 == cl2 then return l2
-            else throwError $ ErrSomethingFailed $ "Could not unify lengths " ++ show l1 ++ " and " ++ show l2
-        (FLNamed _, FLConst _) -> do
-            cl1 <- concreteLength $ lowerFLen l1
-            cl2 <- concreteLength $ lowerFLen l2
-            if cl1 == cl2 then return l1
-            else throwError $ ErrSomethingFailed $ "Could not unify lengths " ++ show l1 ++ " and " ++ show l2
+        _ | Just c1 <- literalFLen l1, Just c2 <- literalFLen l2, c1 == c2 -> return l1
+        -- If we can't check length equality during compilation, we assume the lengths are equal
+        -- for compilation and emit a Verus assertion that they are equal in `owlc_length_checks`.
+        -- Verus will reject any choices of cipher suite that invalidate these length equality
+        -- assumptions.
+        _ | isJust (literalFLen l1) /= isJust (literalFLen l2) -> do
+            let c = (lowerFLen l1, lowerFLen l2)
+            lengthChecks %= \cs -> if c `elem` cs then cs else cs ++ [c]
+            return $ if isJust (literalFLen l1) then l2 else l1
         _ -> throwError $ ErrSomethingFailed $ "Could not unify lengths " ++ show l1 ++ " and " ++ show l2
+    where
+        literalFLen (FLConst i) = Just i
+        literalFLen (FLPlus a b) = (+) <$> literalFLen a <*> literalFLen b
+        literalFLen _ = Nothing
 
 formatTyOfNameExp :: NameExp -> EM FormatTy
 formatTyOfNameExp ne = do
@@ -332,7 +335,7 @@ concretifyApp (PRes (PDot PTop f)) params args = do
         ("pk_cipherlen", [x]) -> return $ mkAppNoLets f FInt
         ("vk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "vk"
         ("dhpk", [x]) -> return $ mkAppNoLets f $ groupFormatTy BufPublic
-        ("enc_pk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "enc_pk"
+        ("enc_pk", [x]) -> return $ mkAppNoLets f $ fPBuf $ Just $ FLNamed "pke_pk"
         ("kem_pk", _) -> throwError UnsupportedKEM
         ("dh_combine", [x, y]) -> do
             return $ mkAppNoLets f $ groupFormatTy BufSecret
@@ -800,7 +803,7 @@ concretifyCryptOp _ CAEnc [k, x] = do
               FBuf BufSecret (Just fl) -> FBuf BufPublic $ Just $ FLCipherlen fl
               _ -> FBuf BufPublic Nothing
     coinsName <- fresh $ s2n "coins"
-    let sampFLen = FLNamed "nonce"
+    let sampFLen = FLNamed "aead_nonce"
     let coinsVar = Typed (fSBuf $ Just sampFLen) $ CAVar (ignore "coins") coinsName
     (k', klets) <- bufcastSecrecy k BufSecret
     (x', xlets) <- bufcastSecrecy x BufSecret

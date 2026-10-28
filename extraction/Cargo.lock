@@ -320,6 +320,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "libcrux",
+ "libcrux-blake2",
  "p256",
  "rand 0.8.5",
  "rsa",
@@ -536,6 +537,15 @@ dependencies = [
  "libcrux-sha2",
  "libcrux-traits",
  "rand 0.9.0",
+]
+
+[[package]]
+name = "libcrux-blake2"
+version = "0.0.3"
+source = "git+https://github.com/cryspen/libcrux?rev=879bab2ebc3df985dae0c9db119c033f38c516dd#879bab2ebc3df985dae0c9db119c033f38c516dd"
+dependencies = [
+ "libcrux-hacl-rs",
+ "libcrux-macros",
 ]
 
 [[package]]

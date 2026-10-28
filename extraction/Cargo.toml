@@ -26,6 +26,7 @@ rsa = "=0.7.2"
 sha1 = "=0.10.6"
 sha2 = "=0.10.8"
 libcrux = { git = "https://github.com/cryspen/libcrux", rev = "879bab2ebc3df985dae0c9db119c033f38c516dd", features = ["rand"] }
+libcrux-blake2 = { git = "https://github.com/cryspen/libcrux", rev = "879bab2ebc3df985dae0c9db119c033f38c516dd" }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
 x25519-dalek = { version = "=2.0.1", features = ["static_secrets"] }
