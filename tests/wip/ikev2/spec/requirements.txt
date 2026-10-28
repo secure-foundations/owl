@@ -1,0 +1,2 @@
+cryptography>=42
+scapy>=2.5  # optional: independent wire-format check

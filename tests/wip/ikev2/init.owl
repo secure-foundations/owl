@@ -1,0 +1,86 @@
+include "defs.owl"
+
+// The initiator: one def for the whole handshake (spi/ikev2.py splits it
+// into Initiator.stage1/2/3 at the same points: after output msg1 and after
+// output msg3).
+
+def init_main<i@n,m>(vkR : vk(skR<@m>), id_i : Data<adv> |16|, id_r : Data<adv> |16|)
+    @ Initiator<n>
+    : Option (exists j. exists m2. init_result<session i, session j, pid n, pid m, pid m2>) =
+    // ---- IKE_SA_INIT request: HDR, SAi1, KEi, Ni
+    let spi_i = call get_spi_i<@n>() in
+    let ni = call get_ni<@n>() in
+    let ke_i = dhpk(get(E_i<i@n>)) in
+    output init_msg1(spi_i, ke_i, ni);
+
+    // ---- IKE_SA_INIT response
+    input inp2 in
+    parse inp2 as msg2(m2_spi_i, spi_r, _m2t, _m2sa, _m2kh, ke_r, _m2nh, nr) in {
+    guard eq(m2_spi_i, spi_i) in
+    guard is_group_elem(ke_r) in
+
+    // Is KEr an honest responder ephemeral? If so, of responder m2, session j.
+    // This is the only case split over the key schedule.
+    pcase is_e_r[ke_r] in
+    choose_idx m2 | exists j:idx. ke_r == dhpk(get(E_r<j@m2>)) in
+    choose_idx j | ke_r == dhpk(get(E_r<j@m2>)) in
+
+    let s = ni ++ nr in
+    let inf = ni ++ nr ++ spi_i ++ spi_r in
+    let gir = dh_combine(ke_r, get(E_i<i@n>)) in
+    // A forged KEr raised to E_i is not a DH secret of two other honest keys
+    cross_dh_lemma<E_i<i@n>>(ke_r);
+    corr_case E_i<i@n> in
+    corr_case E_r<j@m2> in
+    let sk_d  = kdf<L_ike<i,j@n,m2>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 0>(s, gir, inf) in
+    let sk_ei = kdf<L_ike<i,j@n,m2>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 1>(s, gir, inf) in
+    let sk_er = kdf<L_ike<i,j@n,m2>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 2>(s, gir, inf) in
+    let sk_pi = kdf<L_ike<i,j@n,m2>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 3>(s, gir, inf) in
+    let sk_pr = kdf<L_ike<i,j@n,m2>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 4>(s, gir, inf) in
+
+    // ---- IKE_AUTH request: HDR, SK{IDi, AUTH, SAi2, TSi, TSr}
+    // AUTH = Sign(RealMessage1 | Nr | prf(SK_pi, IDi'))
+    let maced_id_i = mac(sk_pi, id_rest(id_i)) in
+    let auth_i = sign(get(skI<@n>), init_octets(spi_i, ke_i, ni, nr, maced_id_i)) in
+    let esp_spi_i = call get_esp_spi_i<@n>() in
+    let inner3 = auth_inner(id_hdr(), id_rest_prefix(), id_i, auth_hdr(), auth_data_prefix(),
+                            auth_i, sa2_prefix(), esp_spi_i, sa2_transforms(), tsi_payload(),
+                            tsr_payload(), pad_len_byte()) in
+    let iv3 = get_counter ctr_ei<i@n> in
+    let ct3 = st_aead_enc<ctr_ei<i@n>>(sk_ei, inner3, auth_req_aad(spi_i, spi_r)) in
+    output msg3(spi_i, spi_r, auth_req_tag(), sk_hdr_req(), iv3, ct3);
+
+    // ---- IKE_AUTH response
+    input inp4 in
+    parse inp4 as msg4(m4_spi_i, m4_spi_r, _m4t, _m4sk, iv4, ct4) in {
+    guard andb(eq(m4_spi_i, spi_i), eq(m4_spi_r, spi_r)) in
+    case st_aead_dec(sk_er, ct4, auth_resp_aad(spi_i, spi_r), aead_nonce(iv4)) as Option Data<adv> {
+    | None => None()
+    | Some inner4 =>
+    parse inner4 as auth_inner(_a1, _a2, m4_id_r, _a3, _a4, auth_r, _a5, esp_spi_r, _a6, _a7, _a8, _a9) in {
+    guard eq(m4_id_r, id_r) in
+    // AUTH = Sign(RealMessage2 | Ni | prf(SK_pr, IDr'))
+    let maced_id_r = mac(sk_pr, id_rest(id_r)) in
+    let octets_r = resp_octets(spi_i, spi_r, ke_r, nr, ni, maced_id_r) in
+    corr_case skR<@m> in
+    case vrfy(vkR, octets_r, auth_r) {
+    | None => None()
+    | Some x =>
+    // vrfy returns the signed message; this check makes that explicit
+    guard eq(x, octets_r) in
+    // If skR is secret, KEr is an ephemeral of m: so it is honest, and m2 = m
+    assert (sec(skR<@m>) ==> (m2 =idx m /\ ke_r == dhpk(get(E_r<j@m2>))));
+
+    // ---- Child SA: KEYMAT = prf+(SK_d, Ni | Nr)
+    let k_i2r = kdf<L_child<i,j@n,m2>(s, inf); enckey||enckey; 0>(sk_d, 0x, s) in
+    let k_r2i = kdf<L_child<i,j@n,m2>(s, inf); enckey||enckey; 1>(sk_d, 0x, s) in
+    let res = init_result<session i, session j, pid n, pid m, pid m2>(
+        spi_i, spi_r, esp_spi_i, esp_spi_r, s, inf, ke_r, k_i2r, k_r2i) in
+    let packed = pack<j>(pack<m2>(res)) in
+    Some(packed)
+    }
+    } otherwise None()
+    otherwise => None()
+    }
+    } otherwise None()
+    } otherwise None()

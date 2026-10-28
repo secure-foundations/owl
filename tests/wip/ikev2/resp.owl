@@ -1,0 +1,86 @@
+include "defs.owl"
+
+// The responder: one def for the whole handshake (spec/ikev2.py splits it
+// into Responder.stage1/2 after output msg2).
+
+def resp_main<j@m>(id_r : Data<adv> |16|)
+    @ Responder<m>
+    : Option (exists i. exists n. exists n2. resp_result<session i, session j, pid n, pid n2, pid m>) =
+    // ---- IKE_SA_INIT request
+    input inp1 in
+    parse inp1 as msg1(spi_i, _m1zs, _m1t, _m1sa, _m1kh, ke_i, _m1nh, ni) in {
+    guard is_group_elem(ke_i) in
+
+    // ---- IKE_SA_INIT response: HDR, SAr1, KEr, Nr
+    let spi_r = call get_spi_r<@m>() in
+    let nr = call get_nr<@m>() in
+    let ke_r = dhpk(get(E_r<j@m>)) in
+    output resp_msg2(spi_i, spi_r, ke_r, nr);
+
+    // ---- IKE_AUTH request
+    input inp3 in
+    parse inp3 as msg3(m3_spi_i, m3_spi_r, _m3t, _m3sk, iv3, ct3) in {
+    guard andb(eq(m3_spi_i, spi_i), eq(m3_spi_r, spi_r)) in
+
+    // Is KEi an honest initiator ephemeral? If so, of initiator n2, session i.
+    pcase is_e_i[ke_i] in
+    choose_idx n2 | exists i:idx. ke_i == dhpk(get(E_i<i@n2>)) in
+    choose_idx i | ke_i == dhpk(get(E_i<i@n2>)) in
+
+    let s = ni ++ nr in
+    let inf = ni ++ nr ++ spi_i ++ spi_r in
+    let gir = dh_combine(ke_i, get(E_r<j@m>)) in
+    cross_dh_lemma<E_r<j@m>>(ke_i);
+    corr_case E_i<i@n2> in
+    corr_case E_r<j@m> in
+    let sk_d  = kdf<L_ike<i,j@n2,m>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 0>(s, gir, inf) in
+    let sk_ei = kdf<L_ike<i,j@n2,m>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 1>(s, gir, inf) in
+    let sk_er = kdf<L_ike<i,j@n2,m>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 2>(s, gir, inf) in
+    let sk_pi = kdf<L_ike<i,j@n2,m>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 3>(s, gir, inf) in
+    let sk_pr = kdf<L_ike<i,j@n2,m>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 4>(s, gir, inf) in
+
+    case st_aead_dec(sk_ei, ct3, auth_req_aad(spi_i, spi_r), aead_nonce(iv3)) as Option Data<adv> {
+    | None => None()
+    | Some inner3 =>
+    parse inner3 as auth_inner(_a1, _a2, id_i, _a3, _a4, auth_i, _a5, esp_spi_i, _a6, _a7, _a8, _a9) in {
+    let opk = call get_pk_info<@m>(id_i) in
+    case opk {
+    | None => None()
+    | Some pk =>
+    unpack n, vkI = pk in
+    // AUTH = Sign(RealMessage1 | Nr | prf(SK_pi, IDi'))
+    let maced_id_i = mac(sk_pi, id_rest(id_i)) in
+    let octets_i = init_octets(spi_i, ke_i, ni, nr, maced_id_i) in
+    corr_case skI<@n> in
+    case vrfy(vkI, octets_i, auth_i) {
+    | None => None()
+    | Some x =>
+    guard eq(x, octets_i) in
+    // If skI is secret, KEi is an ephemeral of n: so it is honest, and n2 = n
+    assert (sec(skI<@n>) ==> (n2 =idx n /\ ke_i == dhpk(get(E_i<i@n2>))));
+
+    // ---- IKE_AUTH response: HDR, SK{IDr, AUTH, SAr2, TSi, TSr}
+    let maced_id_r = mac(sk_pr, id_rest(id_r)) in
+    let auth_r = sign(get(skR<@m>), resp_octets(spi_i, spi_r, ke_r, nr, ni, maced_id_r)) in
+    let esp_spi_r = call get_esp_spi_r<@m>() in
+    let inner4 = auth_inner(id_hdr(), id_rest_prefix(), id_r, auth_hdr(), auth_data_prefix(),
+                            auth_r, sa2_prefix(), esp_spi_r, sa2_transforms(), tsi_payload(),
+                            tsr_payload(), pad_len_byte()) in
+    let iv4 = get_counter ctr_er<j@m> in
+    let ct4 = st_aead_enc<ctr_er<j@m>>(sk_er, inner4, auth_resp_aad(spi_i, spi_r)) in
+    output msg4(spi_i, spi_r, auth_resp_tag(), sk_hdr_resp(), iv4, ct4);
+
+    // ---- Child SA: KEYMAT = prf+(SK_d, Ni | Nr)
+    let k_i2r = kdf<L_child<i,j@n2,m>(s, inf); enckey||enckey; 0>(sk_d, 0x, s) in
+    let k_r2i = kdf<L_child<i,j@n2,m>(s, inf); enckey||enckey; 1>(sk_d, 0x, s) in
+    let res = resp_result<session i, session j, pid n, pid n2, pid m>(
+        spi_i, spi_r, esp_spi_i, esp_spi_r, s, inf, ke_i, k_i2r, k_r2i) in
+    let packed = pack<i>(pack<n>(pack<n2>(res))) in
+    Some(packed)
+    }
+    }
+    } otherwise None()
+    otherwise => None()
+    }
+    } otherwise None()
+    } otherwise None()

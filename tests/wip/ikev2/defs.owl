@@ -1,0 +1,279 @@
+/*
+ * IKEv2 (RFC 5996 / RFC 7296): IKE_SA_INIT + IKE_AUTH, signature
+ * authentication, and the keys of the first Child SA.
+ *
+ *   Initiator                                    Responder
+ *   HDR, SAi1, KEi, Ni                      -->
+ *                                           <--  HDR, SAr1, KEr, Nr
+ *   HDR, SK{IDi, AUTH, SAi2, TSi, TSr}      -->
+ *                                           <--  HDR, SK{IDr, AUTH, SAr2, TSi, TSr}
+ *
+ * The executable reference for this file is spec/ikev2.py: the constants
+ * below are byte-identical to the ones there, and the message layouts are the
+ * same. One fixed suite: ENCR_CHACHA20_POLY1305, PRF_HMAC_SHA2_256,
+ * Curve25519, Digital Signature auth. See spec/README.md for the deviations
+ * from the RFC.
+ */
+
+locality Initiator : 1
+locality Responder : 1
+
+// =====================================================================
+// Constants (see spec/ikev2.py)
+// =====================================================================
+
+func zero_spi() = 0x0000000000000000
+
+// IKE header after the two SPIs: Next Payload | Version | Exchange Type |
+// Flags | Message ID | Length. All lengths are constants in this profile.
+func sa_init_req_tag()  = 0x21202208000000000000008c
+func sa_init_resp_tag() = 0x21202220000000000000008c
+func auth_req_tag()     = 0x2e20230800000001000001f2
+func auth_resp_tag()    = 0x2e20232000000001000001f2
+
+// SAi1 / SAr1: ENCR 28, PRF 5, D-H 31
+func sa1_payload() = 0x220000240000002001010003030000080100001c0300000802000005000000080400001f
+// KE payload header, D-H group 31, reserved
+func ke_hdr() = 0x28000028001f0000
+func nonce_hdr() = 0x00000024
+
+// Encrypted payload headers (Next Payload = IDi / IDr)
+func sk_hdr_req()  = 0x230001d6
+func sk_hdr_resp() = 0x240001d6
+
+// Inner payloads of IKE_AUTH
+func id_hdr() = 0x27000018
+func id_rest_prefix() = 0x0b000000          // ID_KEY_ID | RESERVED
+func auth_hdr() = 0x21000151
+// Auth Method 14 | RESERVED | ASN.1 length | RSASSA-PSS-SHA256 AlgorithmIdentifier
+func auth_data_prefix() = 0x0e00000048304606092a864886f70d01010a3039a00f300d06096086480165030402010500a11c301a06092a864886f70d010108300d06096086480165030402010500a203020120a303020101
+func sa2_prefix() = 0x2c0000200000001c01030402
+func sa2_transforms() = 0x030000080100001c0000000805000000
+func tsi_payload() = 0x2d00001801000000070000100000ffff00000000ffffffff
+func tsr_payload() = 0x0000001801000000070000100000ffff00000000ffffffff
+func pad_len_byte() = 0x00
+
+// =====================================================================
+// Message bytes and signed octets
+//
+// Messages that a party signs or verifies are built with explicit
+// concatenation rather than a struct constructor: struct constructors are
+// uninterpreted in the SMT theory, while `++` comes with injectivity
+// axioms. The nesting (prefix) ++ (ke ++ rest) puts the key share right
+// after a fixed-length prefix, so equal messages have equal key shares.
+// Concatenation is associative at run time, so the bytes are the same as
+// the flat layout in spec/ikev2.py.
+// =====================================================================
+
+// HDR, SAi1, KEi, Ni
+func init_msg1(spi_i, ke, ni) =
+    (spi_i ++ zero_spi() ++ sa_init_req_tag() ++ sa1_payload() ++ ke_hdr())
+    ++ (ke ++ (nonce_hdr() ++ ni))
+
+// HDR, SAr1, KEr, Nr
+func resp_msg2(spi_i, spi_r, ke, nr) =
+    (spi_i ++ spi_r ++ sa_init_resp_tag() ++ sa1_payload() ++ ke_hdr())
+    ++ (ke ++ (nonce_hdr() ++ nr))
+
+// InitiatorSignedOctets = RealMessage1 | NonceRData | MACedIDForI
+func init_octets(spi_i, ke, ni, nr, maced) = init_msg1(spi_i, ke, ni) ++ (nr ++ maced)
+// ResponderSignedOctets = RealMessage2 | NonceIData | MACedIDForR
+func resp_octets(spi_i, spi_r, ke, nr, ni, maced) = resp_msg2(spi_i, spi_r, ke, nr) ++ (ni ++ maced)
+
+// RestOfInitIDPayload / RestOfRespIDPayload = IDType | RESERVED | IDData
+func id_rest(id) = id_rest_prefix() ++ id
+
+// AAD for an Encrypted payload (RFC 5282): IKE header ++ SK payload header
+func auth_req_aad(spi_i, spi_r) = spi_i ++ spi_r ++ auth_req_tag() ++ sk_hdr_req()
+func auth_resp_aad(spi_i, spi_r) = spi_i ++ spi_r ++ auth_resp_tag() ++ sk_hdr_resp()
+
+// =====================================================================
+// Key schedule
+// =====================================================================
+
+// st_aead_enc pads the 8-byte counter with zeros to the 12-byte AEAD nonce;
+// st_aead_dec takes the nonce as given, so the receiver pads the IV itself.
+func aead_nonce(iv) = iv ++ 0x00000000
+
+// Counters for the IKE SA's AEAD keys; the counter value is sent as the IV
+counter ctr_ei<i@n> @ Initiator<n>
+counter ctr_er<j@m> @ Responder<m>
+
+// IKE_AUTH payloads carry only public data (IDs, signatures, SPIs). The AEAD
+// keys still need a type: their payloads are public.
+nametype sk_ei_t = st_aead Data<adv> aad x. true nonce ctr_ei
+nametype sk_er_t = st_aead Data<adv> aad x. true nonce ctr_er
+
+kdf_scope IKE {
+    name E_i<i@n> : DH @ Initiator<n>
+    name E_r<j@m> : DH @ Responder<m>
+
+    // SKEYSEED = prf(Ni | Nr, g^ir)
+    // {SK_d | SK_ei | SK_er | SK_pi | SK_pr} = prf+(SKEYSEED, Ni | Nr | SPIi | SPIr)
+    //
+    // HKDF-Extract is prf and HKDF-Expand is prf+, so this is one kdf call
+    // with salt Ni | Nr, ikm g^ir and info Ni | Nr | SPIi | SPIr. The salt
+    // and info are public, and are parameters of the rule.
+    odh L_ike<i,j@n,m>(s, inf) : s, dh_ss(E_i<i@n>, E_r<j@m>), inf ->
+        strict kdfkey ||
+        strict sk_ei_t ||
+        strict sk_er_t ||
+        strict mackey Data<adv> ||
+        strict mackey Data<adv>
+
+    // KEYMAT = prf+(SK_d, Ni | Nr). Owl's kdf always extracts, so the Owl
+    // call is kdf(SK_d, 0x, Ni | Nr) (see spec/README.md). Its info Ni | Nr is
+    // the salt s of L_ike.
+    kdf L_child<i,j@n,m>(s, inf) :
+        KDF<L_ike<i,j@n,m>(s, inf); kdfkey||enckey||enckey||mackey||mackey; 0>, 0x, s ->
+        strict enckey Data<adv> ||
+        strict enckey Data<adv>
+}
+
+// =====================================================================
+// Signatures
+//
+// Each party signs its own IKE_SA_INIT message (followed by the peer's
+// nonce and its MACed ID). The type of each signing key records that the
+// key share in the signed message is one of the signer's ephemerals.
+// =====================================================================
+
+predicate init_signed<n>(x) =
+    exists i:idx, spi:bv, ni:bv, rest:bv.
+        length(spi) == 8 /\ length(ni) == 32 /\
+        x == init_msg1(spi, dhpk(get(E_i<i@n>)), ni) ++ rest
+
+predicate resp_signed<m>(x) =
+    exists j:idx, spi_i:bv, spi_r:bv, nr:bv, rest:bv.
+        length(spi_i) == 8 /\ length(spi_r) == 8 /\ length(nr) == 32 /\
+        x == resp_msg2(spi_i, spi_r, dhpk(get(E_r<j@m>)), nr) ++ rest
+
+name skI<@n> : sigkey (x:Data<adv>{init_signed<n>[x]}) @ Initiator<n>
+name skR<@m> : sigkey (x:Data<adv>{resp_signed<m>[x]}) @ Responder<m>
+
+// =====================================================================
+// Message formats
+// =====================================================================
+
+struct msg1 {
+      _m1_spi_i : Data<adv> |8|
+    , _m1_spi_r : Const(0x0000000000000000)
+    , _m1_tag : Const(0x21202208000000000000008c)
+    , _m1_sa : Const(0x220000240000002001010003030000080100001c0300000802000005000000080400001f)
+    , _m1_ke_hdr : Const(0x28000028001f0000)
+    , _m1_ke : Data<adv> | |group| |
+    , _m1_nonce_hdr : Const(0x00000024)
+    , _m1_nonce : Data<adv> |32|
+}
+
+struct msg2 {
+      _m2_spi_i : Data<adv> |8|
+    , _m2_spi_r : Data<adv> |8|
+    , _m2_tag : Const(0x21202220000000000000008c)
+    , _m2_sa : Const(0x220000240000002001010003030000080100001c0300000802000005000000080400001f)
+    , _m2_ke_hdr : Const(0x28000028001f0000)
+    , _m2_ke : Data<adv> | |group| |
+    , _m2_nonce_hdr : Const(0x00000024)
+    , _m2_nonce : Data<adv> |32|
+}
+
+// HDR, SK{...}: the AEAD ciphertext is the last field
+struct msg3 {
+      _m3_spi_i : Data<adv> |8|
+    , _m3_spi_r : Data<adv> |8|
+    , _m3_tag : Const(0x2e20230800000001000001f2)
+    , _m3_sk_hdr : Const(0x230001d6)
+    , _m3_iv : Data<adv> | |counter| |
+    , _m3_ct : Data<adv>
+}
+
+struct msg4 {
+      _m4_spi_i : Data<adv> |8|
+    , _m4_spi_r : Data<adv> |8|
+    , _m4_tag : Const(0x2e20232000000001000001f2)
+    , _m4_sk_hdr : Const(0x240001d6)
+    , _m4_iv : Data<adv> | |counter| |
+    , _m4_ct : Data<adv>
+}
+
+// {IDx, AUTH, SAx2, TSi, TSr} followed by the Pad Length octet
+struct auth_inner {
+      _ai_id_hdr : Const(0x27000018)
+    , _ai_id_prefix : Const(0x0b000000)
+    , _ai_id : Data<adv> |16|
+    , _ai_auth_hdr : Const(0x21000151)
+    , _ai_auth_prefix : Const(0x0e00000048304606092a864886f70d01010a3039a00f300d06096086480165030402010500a11c301a06092a864886f70d010108300d06096086480165030402010500a203020120a303020101)
+    , _ai_sig : Data<adv> | |signature| |
+    , _ai_sa2_prefix : Const(0x2c0000200000001c01030402)
+    , _ai_esp_spi : Data<adv> |4|
+    , _ai_sa2_transforms : Const(0x030000080100001c0000000805000000)
+    , _ai_tsi : Const(0x2d00001801000000070000100000ffff00000000ffffffff)
+    , _ai_tsr : Const(0x0000001801000000070000100000ffff00000000ffffffff)
+    , _ai_pad : Const(0x00)
+}
+
+// =====================================================================
+// Abstract operations
+// =====================================================================
+
+// SPIs and nonces are public and, for the proof, adversary-chosen; the
+// implementation fills them with random bytes.
+def get_spi_i<@n>() @ Initiator<n> : Data<adv> |8|
+def get_ni<@n>() @ Initiator<n> : Data<adv> |32|
+def get_esp_spi_i<@n>() @ Initiator<n> : Data<adv> |4|
+
+def get_spi_r<@m>() @ Responder<m> : Data<adv> |8|
+def get_nr<@m>() @ Responder<m> : Data<adv> |32|
+def get_esp_spi_r<@m>() @ Responder<m> : Data<adv> |4|
+
+// The responder's database of initiator IDs and their verification keys
+def get_pk_info<@m>(id : Data<adv>) @ Responder<m> : Option (exists n. vk(skI<@n>))
+
+// =====================================================================
+// Security predicates
+// =====================================================================
+
+predicate is_e_i(x) = exists i:idx, n:idx. x == dhpk(get(E_i<i@n>))
+predicate is_e_r(x) = exists j:idx, m:idx. x == dhpk(get(E_r<j@m>))
+
+// The Child SA keys are secret when the received key share is the honest
+// ephemeral it claims to be, and both ephemerals are secret.
+predicate child_sec<i,j,n,m>(ke_i, ke_r) =
+    ke_i == dhpk(get(E_i<i@n>)) /\ ke_r == dhpk(get(E_r<j@m>)) /\
+    sec(E_i<i@n>) /\ sec(E_r<j@m>)
+
+// What the initiator gets. m is the responder it meant to talk to; m2 owns
+// the key share it received. If m's signing key is secret, the two agree.
+struct init_result<i,j,n,m,m2> {
+    ir_spi_i : Data<adv> |8|,
+    ir_spi_r : Data<adv> |8|,
+    ir_esp_spi_i : Data<adv> |4|,
+    ir_esp_spi_r : Data<adv> |4|,
+    ir_s : Ghost,
+    ir_inf : Ghost,
+    ir_ke_r : (x:Ghost{sec(skR<@m>) ==> (m2 =idx m /\ x == dhpk(get(E_r<j@m2>)))}),
+    ir_k_i2r : if child_sec<i,j,n,m2>[dhpk(get(E_i<i@n>)), ir_ke_r] then
+                   SecName(KDF<L_child<i,j@n,m2>(ir_s, ir_inf); enckey||enckey; 0>)
+               else Data<adv>,
+    ir_k_r2i : if child_sec<i,j,n,m2>[dhpk(get(E_i<i@n>)), ir_ke_r] then
+                   SecName(KDF<L_child<i,j@n,m2>(ir_s, ir_inf); enckey||enckey; 1>)
+               else Data<adv>
+}
+
+// What the responder gets. n is the initiator it authenticated (through the
+// ID lookup); n2 owns the key share it received.
+struct resp_result<i,j,n,n2,m> {
+    rr_spi_i : Data<adv> |8|,
+    rr_spi_r : Data<adv> |8|,
+    rr_esp_spi_i : Data<adv> |4|,
+    rr_esp_spi_r : Data<adv> |4|,
+    rr_s : Ghost,
+    rr_inf : Ghost,
+    rr_ke_i : (x:Ghost{sec(skI<@n>) ==> (n2 =idx n /\ x == dhpk(get(E_i<i@n2>)))}),
+    rr_k_i2r : if child_sec<i,j,n2,m>[rr_ke_i, dhpk(get(E_r<j@m>))] then
+                   SecName(KDF<L_child<i,j@n2,m>(rr_s, rr_inf); enckey||enckey; 0>)
+               else Data<adv>,
+    rr_k_r2i : if child_sec<i,j,n2,m>[rr_ke_i, dhpk(get(E_r<j@m>))] then
+                   SecName(KDF<L_child<i,j@n2,m>(rr_s, rr_inf); enckey||enckey; 1>)
+               else Data<adv>
+}
