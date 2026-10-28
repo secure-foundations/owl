@@ -35,10 +35,10 @@ pub spec const SPEC_NONCE_SIZE: usize = 32;
 #[verifier::when_used_as_spec(SPEC_NONCE_SIZE)]
 pub exec const NONCE_SIZE: usize ensures NONCE_SIZE == SPEC_NONCE_SIZE { 32 }
 
-// HMAC-SHA512
-pub spec const SPEC_MACKEY_SIZE: usize = 64;
+// Keyed BLAKE2s-128 (WireGuard's MAC)
+pub spec const SPEC_MACKEY_SIZE: usize = 32;
 #[verifier::when_used_as_spec(SPEC_MACKEY_SIZE)]
-pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { 64 }
+pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { 32 }
 
 pub spec const SPEC_MACLEN_SIZE: usize = 16;
 #[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
@@ -100,7 +100,7 @@ pub exec fn owl_gen_rand_bytes(len: usize) -> (res: Vec<u8>)
 /// Crypto primitives used by OwlC. Uses verified primitives from libcrux by default. The `nonverif-crypto` Cargo feature switches to RustCrypto implementations
 pub mod owl_crypto_suite {
     use libcrux::{aead, digest, drbg, ecdh, hkdf, signature};
-    use super::{AEAD_NONCE_SIZE, TAG_SIZE};
+    use super::{AEAD_NONCE_SIZE, MACLEN_SIZE, TAG_SIZE};
 
     pub const AEAD_ALG: aead::Algorithm = aead::Algorithm::Chacha20Poly1305;
     #[cfg(feature = "nonverif-crypto")]
@@ -108,7 +108,9 @@ pub mod owl_crypto_suite {
     pub const KDF_ALG: hkdf::Algorithm = hkdf::Algorithm::Sha256;
     #[cfg(feature = "nonverif-crypto")]
     type NonverifKdfHash = sha2::Sha256;
-    type Mac = hmac::Hmac<sha2::Sha512>;
+    type MacBuilder<'a> = libcrux_blake2::Blake2sBuilder<'a, &'a [u8]>;
+    #[cfg(any(test, feature = "nonverif-crypto"))]
+    type NonverifMac = blake2::Blake2sMac<blake2::digest::consts::U16>;
     pub const DH_ALG: ecdh::Algorithm = ecdh::Algorithm::X25519;
     #[cfg(feature = "nonverif-crypto")]
     const _: () = assert!(matches!(DH_ALG, ecdh::Algorithm::X25519));
@@ -186,10 +188,21 @@ pub mod owl_crypto_suite {
     }
 
     pub fn mac(k: &[u8], msg: &[u8]) -> Vec<u8> {
-        use ::hmac::Mac as _;
-        let mut mac = <Mac as ::hmac::Mac>::new_from_slice(k).expect("HMAC got invalid length");
-        mac.update(msg);
-        mac.finalize().into_bytes().to_vec()
+        #[cfg(feature = "nonverif-crypto")]
+        {
+            use ::digest::Mac;
+            let mac = <NonverifMac as Mac>::new_from_slice(k).expect("MAC got invalid key length");
+            mac.chain_update(msg).finalize().into_bytes().to_vec()
+        }
+        #[cfg(not(feature = "nonverif-crypto"))]
+        {
+            let mut mac = MacBuilder::new_keyed_dynamic(k).expect("MAC got invalid key length")
+                .build_var_digest_len(MACLEN_SIZE as u8).unwrap();
+            mac.update(msg).unwrap();
+            let mut tag = vec![0u8; MACLEN_SIZE];
+            mac.finalize(&mut tag).unwrap();
+            tag
+        }
     }
 
     pub fn mac_verify(k: &[u8], msg: &[u8], tag: &[u8]) -> bool {
@@ -281,7 +294,7 @@ pub mod owl_crypto_suite {
         use super::*;
         use crate::execlib::*;
 
-        // not checked: MACLEN_SIZE, RSA (PKE) lengths
+        // not checked: RSA (PKE) lengths
         #[test]
         fn lengths_match_primitives() {
             let k = rand_bytes(ENCKEY_SIZE);
@@ -297,7 +310,14 @@ pub mod owl_crypto_suite {
             assert_eq!(ss, dh_combine(&b, &dhpk(&a)));
             assert_eq!(hash(b"x").len(), CRH_SIZE);
             let mk = rand_bytes(MACKEY_SIZE);
-            assert!(mac_verify(&mk, b"msg", &mac(&mk, b"msg")));
+            assert_eq!(mac(&mk, b"msg").len(), MACLEN_SIZE);
+            assert!(mac_verify(&mk, b"msg", &mac(&mk, b"msg")) && !mac_verify(&mk, b"other", &mac(&mk, b"msg")));
+            {
+                // cross-check with RustCrypto
+                use ::digest::Mac;
+                let other = <NonverifMac as Mac>::new_from_slice(&mk).unwrap().chain_update(b"msg").finalize();
+                assert_eq!(mac(&mk, b"msg"), other.into_bytes().to_vec());
+            }
             let (sk, vk) = sig_keygen();
             assert_eq!((sk.len(), vk.len()), (SIGKEY_SIZE, VK_SIZE));
             let sig = sign(&sk, b"msg");
