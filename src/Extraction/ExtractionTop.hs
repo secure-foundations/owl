@@ -60,8 +60,12 @@ extract' modbody = do
     extractedOwl <- do
         liftExtractionMonad $ genVerusPass (fs ^. fExtract == ExtractAll) verusTyExtrData
     p <- prettyFile "extraction/preamble.rs"
+    let (noVestHeader, noVestModDecl) =
+            if fs ^. fExtractNoVest then (noVestFileComment <> line, line <> pretty "pub mod owl_wire;" <> line)
+            else (mempty, mempty)
     return (
-        p                       <> line <> line <> line <> line <> 
+        noVestHeader            <>
+        p                       <> noVestModDecl <> line <> line <> line <> line <> 
         pretty "verus! {"       <> line <> line <> 
         pretty "// ------------------------------------" <> line <>
         pretty "// ---------- SPECIFICATIONS ----------" <> line <>
@@ -86,6 +90,17 @@ genLengthChecks = do
     let asserts = [ pretty "assert" <> parens c <> pretty ";" | c <- conds ]
     return $ if null asserts then pretty "pub proof fn owlc_length_checks() {}"
              else vsep [pretty "pub proof fn owlc_length_checks() {", indent 4 (vsep asserts), pretty "}"]
+
+-- Header of a lib.rs extracted with --no-vest (see `SpecExtraction.genWireHookSpecs` and
+-- `GenVerus.genWireHookShims`).
+noVestFileComment :: Doc ann
+noVestFileComment = vsep $ map pretty
+    [ "// Extracted with --no-vest: no Vest parsers or serializers generated, spec parse and"
+    , "// serialize routines are uninterpreted, and exec parse and serialize routines are trusted"
+    , "// `#[verifier::external_body]` shims to a module `owl_wire`. User must supply the parsers"
+    , "// and serializers in `src/owl_wire.rs`, and parsers and serializers are assumed to satisfy"
+    , "// all the properties proved by Vest."
+    ]
 
 preprocessModBody :: TB.ModBody -> ExtractionMonad t OwlExtractionData
 preprocessModBody mb = do

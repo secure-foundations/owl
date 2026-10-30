@@ -27,6 +27,12 @@ import Control.Monad ( when )
 main :: IO ()
 main = do
   args <- doParseArgs
+  when (args^.fExtractNoVest && args^.fExtractBufOpt) $ do
+      putStrLn "error: --no-vest is not supported together with --bufopt (the buffer-optimizing translation serializes through Vest combinators)"
+      exitFailure
+  when (args^.fExtractNoVest && args^.fExtract == NoExtraction) $ do
+      putStrLn "error: --no-vest requires --extract or --extract-only-specs"
+      exitFailure
   if args^.fDoTests then doAllTests args else do
       case args^.fFilePath of
         "" -> do
