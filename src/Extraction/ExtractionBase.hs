@@ -80,8 +80,6 @@ data ExtractionError =
     | UnsupportedNameExp NameExp
     | UnsupportedNameType NameType
     | UnsupportedDecl String
-    | DefWithTooManySids String
-    | NameWithTooManySids String
     | UnsupportedSharedIndices String
     | CouldntParseInclude String
     | OddLengthHexConst
@@ -111,10 +109,6 @@ instance OwlPretty ExtractionError where
         owlpretty "Name type" <+> owlpretty nt <+> owlpretty "is unsupported for extraction."
     owlpretty (UnsupportedDecl s) =
         owlpretty "Unsupported decl type for extraction:" <+> owlpretty s
-    owlpretty (DefWithTooManySids s) =
-        owlpretty "Owl procedure" <+> owlpretty s <+> owlpretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
-    owlpretty (NameWithTooManySids s) =
-        owlpretty "Owl name" <+> owlpretty s <+> owlpretty "has too many sessionID parameters. For extraction, each procedure can have at most one sessionID parameter"
     owlpretty (UnsupportedSharedIndices s) =
         owlpretty "Unsupported sharing of indexed name:" <+> owlpretty s
     owlpretty (CouldntParseInclude s) =

@@ -173,7 +173,6 @@ preprocessModBody mb = do
                 flen <- fLenOfNameTy nt
                 let nsids = length sids
                 let npids = length pids
-                when (nsids > 1) $ throwError $ DefWithTooManySids name
                 -- All names are secret bufs
                 let gShared m lo = M.adjust (sharedNames %~ flip (++) [(name, flen, npids, BufSecret)]) lo m
                 let gLocal m lo = M.adjust (localNames %~ flip (++) [(name, flen, npids, BufSecret)]) lo m
@@ -199,7 +198,6 @@ preprocessModBody mb = do
         sortDef _ m (_, TB.DefHeader _) = return m
         sortDef lookupLoc m (owlName, def@(TB.Def idxs_defSpec)) = do
                 let ((sids, pids), defspec) = unsafeUnbind idxs_defSpec 
-                when (length sids > 1) $ throwError $ DefWithTooManySids owlName
                 let loc@(Locality locP _) = defspec ^. TB.defLocality
                 locName <- lookupLoc =<< flattenPath locP
                 let f = defs %~ flip (++) [(owlName, def)]

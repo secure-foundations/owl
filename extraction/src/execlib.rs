@@ -35,14 +35,22 @@ pub spec const SPEC_NONCE_SIZE: usize = 32;
 #[verifier::when_used_as_spec(SPEC_NONCE_SIZE)]
 pub exec const NONCE_SIZE: usize ensures NONCE_SIZE == SPEC_NONCE_SIZE { 32 }
 
-// Keyed BLAKE2s-128 (WireGuard's MAC)
+// Keyed BLAKE2s-128, or HMAC-SHA256 with the `mac-hmac-sha256` feature
 pub spec const SPEC_MACKEY_SIZE: usize = 32;
 #[verifier::when_used_as_spec(SPEC_MACKEY_SIZE)]
 pub exec const MACKEY_SIZE: usize ensures MACKEY_SIZE == SPEC_MACKEY_SIZE { 32 }
 
+#[cfg(not(feature = "mac-hmac-sha256"))]
 pub spec const SPEC_MACLEN_SIZE: usize = 16;
+#[cfg(not(feature = "mac-hmac-sha256"))]
 #[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
 pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 16 }
+
+#[cfg(feature = "mac-hmac-sha256")]
+pub spec const SPEC_MACLEN_SIZE: usize = 32;
+#[cfg(feature = "mac-hmac-sha256")]
+#[verifier::when_used_as_spec(SPEC_MACLEN_SIZE)]
+pub exec const MACLEN_SIZE: usize ensures MACLEN_SIZE == SPEC_MACLEN_SIZE { 32 }
 
 // X25519
 pub spec const SPEC_GROUP_SIZE: usize = 32;
@@ -97,7 +105,8 @@ pub exec fn owl_gen_rand_bytes(len: usize) -> (res: Vec<u8>)
 
 } // verus!
 
-/// Crypto primitives used by OwlC. Uses verified primitives from libcrux by default. The `nonverif-crypto` Cargo feature switches to RustCrypto implementations
+/// Crypto primitives used by OwlC. Uses verified primitives from libcrux by default. The `nonverif-crypto` Cargo feature switches to RustCrypto implementations.
+/// The `mac-hmac-sha256` feature switches the MAC from keyed BLAKE2s-128 to HMAC-SHA256.
 pub mod owl_crypto_suite {
     use libcrux::{aead, digest, drbg, ecdh, hkdf, signature};
     use super::{AEAD_NONCE_SIZE, MACLEN_SIZE, TAG_SIZE};
@@ -108,9 +117,14 @@ pub mod owl_crypto_suite {
     pub const KDF_ALG: hkdf::Algorithm = hkdf::Algorithm::Sha256;
     #[cfg(feature = "nonverif-crypto")]
     type NonverifKdfHash = sha2::Sha256;
+    #[cfg(not(feature = "mac-hmac-sha256"))]
     type MacBuilder<'a> = libcrux_blake2::Blake2sBuilder<'a, &'a [u8]>;
-    #[cfg(any(test, feature = "nonverif-crypto"))]
+    #[cfg(all(any(test, feature = "nonverif-crypto"), not(feature = "mac-hmac-sha256")))]
     type NonverifMac = blake2::Blake2sMac<blake2::digest::consts::U16>;
+    #[cfg(feature = "mac-hmac-sha256")]
+    pub const MAC_ALG: libcrux::hmac::Algorithm = libcrux::hmac::Algorithm::Sha256;
+    #[cfg(all(any(test, feature = "nonverif-crypto"), feature = "mac-hmac-sha256"))]
+    type NonverifMac = hmac::Hmac<sha2::Sha256>;
     pub const DH_ALG: ecdh::Algorithm = ecdh::Algorithm::X25519;
     #[cfg(feature = "nonverif-crypto")]
     const _: () = assert!(matches!(DH_ALG, ecdh::Algorithm::X25519));
@@ -194,7 +208,11 @@ pub mod owl_crypto_suite {
             let mac = <NonverifMac as Mac>::new_from_slice(k).expect("MAC got invalid key length");
             mac.chain_update(msg).finalize().into_bytes().to_vec()
         }
-        #[cfg(not(feature = "nonverif-crypto"))]
+        #[cfg(all(not(feature = "nonverif-crypto"), feature = "mac-hmac-sha256"))]
+        {
+            libcrux::hmac::hmac(MAC_ALG, k, msg, Some(MACLEN_SIZE))
+        }
+        #[cfg(all(not(feature = "nonverif-crypto"), not(feature = "mac-hmac-sha256")))]
         {
             let mut mac = MacBuilder::new_keyed_dynamic(k).expect("MAC got invalid key length")
                 .build_var_digest_len(MACLEN_SIZE as u8).unwrap();
@@ -673,6 +691,9 @@ macro_rules! mk_vec_u8 {
             $(
                 v.push($e);
             )*
+            // Relate the pushes to the spec literal here, where it is cheap; in a
+            // larger goal (e.g. a constant KDF info or AAD) z3 does not find it.
+            proof { assert(v@ =~= seq![$($e),*]); }
             v
         }}
     };
@@ -820,8 +841,8 @@ pub mod secret {
                         ((self@ == l && other@ == r) || (self@ == r && other@ == l))
             ensures  result <==> self.view() == other.view()
         {
-            // self.buf.eq_contents(&other.buf)
-            todo!("implement secret_eq")
+            let (a, b) = (self.private_as_slice(), other.private_as_slice());
+            a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
         }
         
         // Private function for declassification---can only be used in the `secret` module
@@ -832,6 +853,13 @@ pub mod secret {
             ensures  result.view() == self.view()
         {
             reveal(SecretBuf::len_valid);
+            self.buf.as_slice()
+        }
+
+        /// For unverified application code only.
+        pub fn expose_to_application(&self) -> &[u8]
+            requires false
+        {
             self.buf.as_slice()
         }
     }

@@ -822,7 +822,7 @@ extractDef locName (CDef defname b) = do
             return (body', [di||])
         Nothing -> do
             let p = pureDef defname owlArgs' specRetTy
-            let specArgVars = map (\(cdvar, strname, ty) -> pretty strname) owlArgs
+            specArgVars <- mapM (\(cdvar, _, _) -> extractVar cdvar) owlArgs
             return ([di|(ret(#{defname}_pure(#{hsep . punctuate comma $ specArgVars})))|], p)
     return [__di|
         \#[verifier::opaque]
@@ -834,9 +834,10 @@ extractDef locName (CDef defname b) = do
         #{pureDef}
     |]
     where
-        extractArg (cdvar, strname, ty) = do
+        extractArg (cdvar, _, ty) = do
             let specty = specTyOf ty
-            return [di|#{pretty strname} : #{pretty specty}|]
+            v <- extractVar cdvar
+            return [di|#{v} : #{pretty specty}|]
         pureDef owlName specArgs specRt =
             line <>
             pretty "#[verifier(external_body)] pub closed spec fn" <+> pretty owlName <> pretty "_pure" <> tupled specArgs <+>

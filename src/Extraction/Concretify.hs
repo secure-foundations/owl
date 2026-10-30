@@ -537,8 +537,8 @@ concretifyExpr e = do
             concretifyExpr e
       EIf a e1 e2 -> do
           (ca, calets) <- concretifyAExpr a
-          c1 <- exprFromLets' <$> concretifyExpr e1
-          c2 <- exprFromLets' <$> concretifyExpr e2
+          c1 <- exprFromLets' <$> scopedMemo (concretifyExpr e1)
+          c2 <- exprFromLets' <$> scopedMemo (concretifyExpr e2)
           t <- unifyFormatTy (_tty c1) (_tty c2)
           return $ withLets calets $ Typed t $ CIf ca c1 c2
       EForallBV _ _ -> return $ noLets $ Typed FGhost $ CRet ghostUnit
@@ -546,7 +546,7 @@ concretifyExpr e = do
       EPackIdx _ e -> concretifyExpr e
       EGuard a e -> do
           (ca, calets) <- concretifyAExpr a
-          ce <- exprFromLets' <$> concretifyExpr e
+          ce <- exprFromLets' <$> scopedMemo (concretifyExpr e)
           return $ withLets calets $ Typed (_tty ce) $ CIf ca ce (Typed (_tty ce) $ CRet (noneConcrete $ _tty ce))
       EGetCtr p _ -> do
           s <- concretifyPath p
@@ -579,7 +579,7 @@ concretifyExpr e = do
       EParse a t_target otherwiseCase xsk -> do
             (a', alets) <- concretifyAExpr a
             t_target' <- concretifyTy t_target
-            otw' <- traverse concretifyExpr otherwiseCase
+            otw' <- traverse (scopedMemo . concretifyExpr) otherwiseCase
             let otw'' = fmap exprFromLets' otw'
             (xs, k) <- unbind xsk
             let xs' = map (\(x, s) -> (castName x, s)) xs
@@ -591,24 +591,24 @@ concretifyExpr e = do
                         _ -> throwError $ TypeError $ "Expected datatype as target of EParse, got " ++ (show . owlpretty) t_target'
             case a' ^. tty of
                     FBuf BufPublic _ -> do
-                        (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                        (k', k'Lets) <- scopedMemo $ withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
                         let k'' = exprFromLets' (k', k'Lets)
                         return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromBuf a' [] t_target' otw'' $ bind xtys k''
                     FStruct _ _ -> do
-                        (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                        (k', k'Lets) <- scopedMemo $ withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
                         let k'' = exprFromLets' (k', k'Lets)
                         return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromDatatype a' [] t_target' otw'' $ bind xtys k''
                     FEnum _ _ -> do
-                        (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                        (k', k'Lets) <- scopedMemo $ withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
                         let k'' = exprFromLets' (k', k'Lets)
                         return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromDatatype a' [] t_target' otw'' $ bind xtys k''
                     FBuf BufSecret _ -> do
                         if hasSecParser t_target' then do
-                            (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                            (k', k'Lets) <- scopedMemo $ withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
                             let k'' = exprFromLets' (k', k'Lets)
                             return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromSecBuf a' [] t_target' otw'' $ bind xtys k''
                         else if secrecyOfFTy t_target' == BufPublic then do
-                            (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
+                            (k', k'Lets) <- scopedMemo $ withVars (map (\(x, s, t) -> (x, t)) xtys) $ concretifyExpr k
                             let k'' = exprFromLets' (k', k'Lets)
                             (a'', a''Lets) <- bufcastSecrecy a' BufPublic
                             return $ withLets (alets ++ a''Lets) $ Typed (k'' ^. tty) $ CParse PFromBuf a'' [] t_target' otw'' $ bind xtys k''
@@ -624,7 +624,7 @@ concretifyExpr e = do
                                     let ksubsts = map (\((startX,_,_),(bufcastX,bufcastS,_)) -> (castName startX, (mkSpanned $ AEVar bufcastS $ castName bufcastX))) $ 
                                                 zip xtys xtysForK
                                     let kSubstituted = substs ksubsts k
-                                    (k', k'Lets) <- withVars (map (\(x, s, t) -> (x, t)) xtysForK) $ concretifyExpr kSubstituted
+                                    (k', k'Lets) <- scopedMemo $ withVars (map (\(x, s, t) -> (x, t)) xtysForK) $ concretifyExpr kSubstituted
                                     let k'' = exprFromLets' (k', concat bufcastLets ++ k'Lets)
                                     return $ withLets alets $ Typed (k'' ^. tty) $ CParse PFromSecBuf a' [] t_target'' otw'' $ bind xtysForParse k''
                                 _ -> throwError $ TypeError $ "No secret parser for data type: " ++ (show . owlpretty) t_target'
@@ -660,13 +660,13 @@ concretifyExpr e = do
             cases' <- forM xsk $ \(c, o) ->
                 case o of
                     Left k -> do
-                        k' <- exprFromLets' <$> concretifyExpr k
+                        k' <- exprFromLets' <$> scopedMemo (concretifyExpr k)
                         return (c, Left k')
                     Right (_, xtk) -> do
                         (x, k) <- unbind xtk
                         let x' = castName x
                         caseTy <- caseTyOf c
-                        k' <- withVars [(x', caseTy)] $ concretifyExpr k
+                        k' <- scopedMemo $ withVars [(x', caseTy)] $ concretifyExpr k
                         let k'' = exprFromLets' k'
                         return (c, Right $ bind x' (caseTy, k''))
             -- The typechecker already checked that all branches return compatible types,
@@ -691,7 +691,7 @@ concretifyExpr e = do
                         _ | casevalT == startT -> return (mkCaseStmt ae', [])
                         -- We are parsing as part of the case, so we need PFromBuf
                         _ -> do 
-                            otw' <- exprFromLets' <$> concretifyExpr otw
+                            otw' <- exprFromLets' <$> scopedMemo (concretifyExpr otw)
                             avar' <- fresh $ s2n "parsed_caseval"
                             let avar'Var = Typed casevalT $ CAVar (ignore "parsed_caseval") avar'
                             case secrecyOfFTy startT of
@@ -758,6 +758,15 @@ tySigOfCall p = do
                 t' <- concretifyTy t
                 return (argtys, t')
 
+
+-- A KDF result computed inside a nested block (a branch, or the body of a
+-- parse or case) is bound only in that block, so it must not be reused after it.
+scopedMemo :: EM a -> EM a
+scopedMemo k = do
+    saved <- use memoKDF
+    r <- k
+    memoKDF .= saved
+    return r
 
 concretifyCryptOp :: [AExpr] -> CryptOp -> [CAExpr FormatTy] -> EM (CExpr FormatTy, [CLetBinding])
 concretifyCryptOp resolvedArgs (CKDF _ nks nkidx) [salt, ikm, info] = do
@@ -930,7 +939,8 @@ concretifyDef defName (TB.DefHeader _) = return Nothing
 concretifyDef defName (TB.Def bd) = do
     debugLog $ "Concretifying def: " ++ defName
     let ((sids, pids), dspec) = unsafeUnbind bd
-    when (length sids > 1) $ throwError $ DefWithTooManySids defName
+    -- KDF results are shared only within one def
+    memoKDF .= []
     ores <- 
         TB.withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) sids ++ map (\i -> (i, (ignore $ show i, IdxPId))) pids) $ do
         withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
@@ -940,7 +950,7 @@ concretifyDef defName (TB.Def bd) = do
                     cretT <- concretifyTy retT
                     return $ Just (cretT, Nothing)
                 Just e -> do
-                    ce <- exprFromLets' <$> concretifyExpr e
+                    ce <- exprFromLets' <$> scopedMemo (concretifyExpr e)
                     let cretT = ce ^. tty
                     return $ Just (cretT, Just ce)
     case ores of
