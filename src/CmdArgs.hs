@@ -17,6 +17,7 @@ data Flags = Flags {
     _fExtract :: ExtractionMode,
     _fDebugExtraction :: Bool,
     _fExtractBufOpt :: Bool,
+    _fExtractNoVest :: Bool,
     _fDoTests :: Bool,
     _fLax :: Bool,
     _fSkipRODisj :: Bool,
@@ -49,6 +50,8 @@ parseArgs =
           ( long "debug-extraction" <> long "dbgext" <> help "Debug extraction" )
       <*> switch
           ( long "optimize-buffers" <> long "bufopt" <> help "Optimize buffer usage for extraction where possible" )
+      <*> switch
+          ( long "no-vest" <> help "Do not generate Vest parsers and serializers in extraction, user must provide formats in `src/owl_wire.rs` instead" )
       <*>
           switch
           ( long "test" <> help "Do tests")

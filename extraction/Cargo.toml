@@ -36,6 +36,8 @@ vest_lib = "=0.2.1"
 [features]
 default = [] # ["nonverif-crypto"]
 nonverif-crypto = []
+# MAC: HMAC-SHA256 with 32-byte tags instead of keyed BLAKE2s-128
+mac-hmac-sha256 = []
 
 [package.metadata.verus]
 verify = true
