@@ -2799,9 +2799,13 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                   _ -> mkSpanned <$> enforcePublicArguments "sign ill-typed, so arguments must be public" [t1, t]
       CSigVrfy -> do
           assert ("Wrong number of arguments to vrfy") $ length args == 3
-          let [(_, t1), (_, t2), (_, t3)] = args
+          let [(_, t1), (m, t2), (_, t3)] = args
+          let withMsg t = tRefined t ".res" $ pEq (aeVar ".res") m
+          let publicResult = do
+                  t <- enforcePublicArguments "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
+                  return $ mkSpanned $ TOption $ withMsg $ mkSpanned t
           case extractVKFromType t1 of
-            Nothing -> mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
+            Nothing -> publicResult
             Just k -> do 
                 nt <-  local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
@@ -2811,8 +2815,8 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
                       b1 <- tyFlowsTo t2 l'
                       b2 <- tyFlowsTo t3 l'
                       casePropTy (pFlow (nameLbl k) advLbl) $ \b3 -> 
-                          if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption t')
-                          else mkSpanned <$> enforcePublicArgumentsOption "sig vrfy ill-typed, so arguments must be public" [t1, t2, t3]
+                          if (b1 && b2 && (not b3)) then return (mkSpanned $ TOption $ withMsg t')
+                          else publicResult
                   _ -> typeError $ show $ ErrWrongNameType k "sig" nt
 
 aundup :: Alpha a => [a] -> [a]
