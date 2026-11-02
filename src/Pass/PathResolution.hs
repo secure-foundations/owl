@@ -357,14 +357,14 @@ resolveNameType e = do
                   NT_Enc t -> NT_Enc <$> resolveTy t
                   NT_PKE t -> NT_PKE <$> resolveTy t
                   NT_MAC t -> NT_MAC <$> resolveTy t
-                  NT_StAEAD t xpr p ypat -> do
+                  NT_StAEAD t xpr (p, ps) ypat -> do
                       t' <- resolveTy t
                       (x, pr) <- unbind xpr
                       pr' <- resolveProp pr
                       p' <- resolvePath (e^.spanOf) PTCounter p
                       (y, pat) <- unbind ypat
                       pat' <- resolveAExpr pat
-                      return $ NT_StAEAD t' (bind x pr') p' (bind y pat')
+                      return $ NT_StAEAD t' (bind x pr') (p', ps) (bind y pat')
                   NT_KDF -> return t
 
 resolveTy :: Ty -> Resolve Ty

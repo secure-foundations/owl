@@ -258,12 +258,12 @@ instance  OwlPretty NameTypeX where
     owlpretty (NT_KEM nt) = owlpretty "kemkey" <+> owlpretty nt
     owlpretty NT_KDF = owlpretty "kdfkey"
     owlpretty (NT_Sig ty) = owlpretty "sig" <+> owlpretty ty
-    owlpretty (NT_StAEAD ty xaad p pat) = 
+    owlpretty (NT_StAEAD ty xaad (p, ps) pat) = 
         let (x, aad) = owlprettyBind xaad in
         let (y, ppat) = owlprettyBind pat in 
         owlpretty "st_aead" <+> owlpretty ty <+> 
             nest 4 (owlpretty "aad" <> x <> owlpretty "." <> aad <> line 
-                    <> owlpretty "nonce" <+> owlpretty p <> line <>
+                    <> owlpretty "nonce" <+> owlpretty p <> owlprettyIdxParams ps <> line <>
                     owlpretty "pat" <> y <> ppat
                         )
     owlpretty (NT_Enc ty) = owlpretty "enc" <+> owlpretty ty

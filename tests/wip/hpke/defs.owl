@@ -101,10 +101,10 @@ counter recv_counter<j> @ receiver
 
 
 /* Similar to WireGuard, a "junk secret" that later can be ruled out */
-nametype hpke_corr_key_t =
+nametype hpke_corr_key_t<i> =
      st_aead (x:Data<adv>{false})
           aad x. false
-          nonce send_counter
+          nonce send_counter<i>
 
 
 // =====================================================================
@@ -193,7 +193,7 @@ kdf_scope HPKE_KDF {
          key_kdf_info()
         -> strict st_aead plaintext_t
                           aad x. true
-                          nonce send_counter
+                          nonce send_counter<i>
                           pattern y. xor(y, sched_key_base_nonce<session i>())
 
     // L_sched_export: key_schedule → export key (correct case)
@@ -257,7 +257,7 @@ func AuthDecap_shared_secret(eph) =
 nametype hpke_key_t<i> =
     st_aead plaintext_t
         aad x. true
-        nonce send_counter
+        nonce send_counter<i>
         pattern i. xor(i, gkdf<nonce |counter|; 0>(
                                     AuthEncap_shared_secret<session i>(),
                                     dh_secret_kdf_ikm(get(psk)),

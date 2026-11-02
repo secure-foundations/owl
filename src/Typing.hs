@@ -1415,7 +1415,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
         checkTyPubLen t
       NT_App p ps as -> do
           resolveNameTypeApp p ps as >>= checkNameType
-      NT_StAEAD t xsaad p ypat -> do
+      NT_StAEAD t xsaad (p, ps) ypat -> do
           checkTy t
           checkNoTopTy False t
           checkTyPubLen t
@@ -1430,7 +1430,7 @@ checkNameType nt = withSpan (nt^.spanOf) $
               SMT.smtTypingQuery "pat_injectivity" $ SMT.symAssert $
                   pImpl (pEq pat pat') (pEq (aeVar' y) (aeVar' y'))
           assert ("Pattern injectivity failed") $ pat_inj
-          checkCounter p
+          checkCounterRef p ps
       NT_PKE t -> do
           checkTy t
           checkNoTopTy False t
@@ -1441,13 +1441,18 @@ checkNameType nt = withSpan (nt^.spanOf) $
 
 
 
-checkCounter :: Path -> Check ()
-checkCounter p@(PRes (PDot p0 s)) = do
+-- The counter's indices may only mention the key's index binders
+checkCounterRef :: Path -> ([Idx], [Idx]) -> Check ()
+checkCounterRef p@(PRes (PDot p0 s)) (vs1, vs2) = do
     p' <- curModName
     assert ("Counter must be local: " ++ (show p)) $ p0 `aeq` p'
     md <- openModule p0
     case lookup s (md^.ctrEnv) of
-      Just _ -> return ()
+      Just r -> do
+          ((is1, is2), _) <- unbind r
+          assert ("Wrong index arity for counter " ++ show (owlpretty p)) $ (length vs1, length vs2) == (length is1, length is2)
+          forM_ vs1 checkIdxSession
+          forM_ vs2 checkIdxPId
       Nothing -> typeError $ "Unknown counter: " ++ show p
 
 
@@ -2683,10 +2688,15 @@ checkCryptoOp cop args = pushRoutine ("checkCryptoOp(" ++ show (owlpretty cop) +
             Just k -> do
                 nt <- local (set tcScope $ TcGhost False) $ getNameType k
                 case nt^.val of
-                  NT_StAEAD tm xaad p' ypat' -> do
+                  NT_StAEAD tm xaad (p', iargs') ypat' -> do
                       pnorm <- normalizePath p
                       pnorm' <- normalizePath p'
                       assert ("Wrong counter for AEAD: expected " ++ show (owlpretty p') ++ " but got " ++ show (owlpretty p)) $ pnorm `aeq` pnorm'
+                      sameInst <- if iargs `aeq` iargs' then return True else do
+                          let eqs = zipWith (\i j -> mkSpanned $ PEqIdx i j) (fst iargs ++ snd iargs) (fst iargs' ++ snd iargs')
+                          r <- decideProp $ foldr pAnd pTrue eqs
+                          return $ r == Just True
+                      assert ("Wrong counter instance for AEAD: the key uses " ++ show (owlpretty p' <> owlprettyIdxParams iargs') ++ " but got " ++ show (owlpretty p <> owlprettyIdxParams iargs)) sameInst
                       b1 <- isSubtype t tm
                       ((xa, xslf), aadp) <- unbind xaad
                       b2 <- isSubtype t2 $ tRefined (tData advLbl advLbl) ".res" $
@@ -3022,6 +3032,17 @@ typeError' msg = do
 -- KDF scopes (docs/kdf-scopes.md)
 ------------------------------------------------------------
 
+-- KDF binders are ghost while a rule is checked, so a counter's index kinds are checked here
+checkCounterKinds :: String -> ([IdxVar], [IdxVar]) -> NameType -> Check ()
+checkCounterKinds l (is, ps) nt = withSpan (nt^.spanOf) $
+    case nt^.val of
+      NT_StAEAD _ _ (p, (vs1, vs2)) _ ->
+          assert ("The counter " ++ show (owlpretty p <> owlprettyIdxParams (vs1, vs2)) ++ " of KDF rule '" ++ l ++ "' must take indices from the rule's index binders") $
+              all (`elem` is) (toListOf fv vs1 :: [IdxVar]) && all (`elem` ps) (toListOf fv vs2 :: [IdxVar])
+      NT_App p ps' as -> resolveNameTypeApp p ps' as >>= checkCounterKinds l (is, ps)
+      NT_KEM nt' -> checkCounterKinds l (is, ps) nt'
+      _ -> return ()
+
 withKDFBinders :: ([IdxVar], [DataVar]) -> Ty -> Check a -> Check a
 withKDFBinders (vs, xs) t k = 
     withIndices (map (\i -> (i, (ignore $ show i, IdxGhost))) vs) $ 
@@ -3176,6 +3197,7 @@ checkKDFRule l = do
         forM_ (_kdfOutputs rule) $ \(_, nt) -> do
             checkNameType nt
             nameTypeUniform nt
+            checkCounterKinds l (is, ps) nt
     insts <- kdfInsts pth
     hasDH <- forM insts $ \binst -> do
         (bnds@(vs, xs'), inst) <- unbind binst

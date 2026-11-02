@@ -1,0 +1,11 @@
+// Party indices checked for counters: k<@p> is tied to N<@p>, so encrypting with N<@n> fails.
+locality A : 1
+
+counter N<@n> @ A<n>
+name k<@p> : st_aead Data<adv>
+    aad y. true
+    nonce N<@p>
+    @ A<p>
+
+def send<@n,p>(key : Name(k<@p>)) @ A<n> : Data<adv> =
+    st_aead_enc<N<@n>>(key, 0x01, 0x)
