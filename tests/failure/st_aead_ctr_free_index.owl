@@ -1,0 +1,8 @@
+// The nonce clause may only mention the key's binders.
+locality alice
+
+counter N<j> @ alice
+name mk<k> : st_aead Data<adv>
+    aad x. true
+    nonce N<j>
+    @ alice

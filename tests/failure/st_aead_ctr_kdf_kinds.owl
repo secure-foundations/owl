@@ -1,0 +1,13 @@
+// A KDF output's nonce clause must respect the rule's session/party split.
+locality A : 1
+
+counter C<i@n> @ A<n>
+
+kdf_scope G {
+    name ck<i@n> : kdfkey @ A<n>
+
+    kdf L<i@n> : ck<i@n>, 0x, 0x ->
+        strict st_aead Data<adv>
+            aad x. true
+            nonce C<n@i>
+}

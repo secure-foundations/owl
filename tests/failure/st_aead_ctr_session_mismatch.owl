@@ -1,0 +1,13 @@
+// Encrypting under mk<k> with N<j> fails, since mk<k> is tied to N<k>.
+locality alice
+
+name m<k> : nonce @ alice
+counter N<j> @ alice
+name mk<k> : st_aead Name(m<k>)
+    aad x. true
+    nonce N<k>
+    @ alice
+
+def send<k,j>() @ alice : Unit =
+    let c = st_aead_enc<N<j>>(get(mk<k>), get(m<k>), 0x) in
+    output c

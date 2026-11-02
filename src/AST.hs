@@ -252,7 +252,7 @@ data NameTypeX =
     | NT_Sig Ty
     | NT_Nonce String 
     | NT_Enc Ty
-    | NT_StAEAD Ty (Bind (DataVar, DataVar) Prop) Path (Bind DataVar AExpr) 
+    | NT_StAEAD Ty (Bind (DataVar, DataVar) Prop) (Path, ([Idx], [Idx])) (Bind DataVar AExpr) 
     | NT_PKE Ty
     | NT_MAC Ty
     | NT_KEM NameType

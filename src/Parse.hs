@@ -669,6 +669,7 @@ parseNameType =
         pr <- parseProp
         reserved "nonce"
         p <- parsePath
+        ps <- parseIdxParams
         opat <- optionMaybe $ do
             reserved "pattern"
             y <- identifier
@@ -678,7 +679,7 @@ parseNameType =
         let pat = case opat of
                     Just v -> v
                     Nothing -> bind (s2n "._") $ aeVar' (s2n "._") 
-        return $ NT_StAEAD t (bind (s2n x, s2n self) pr) p pat 
+        return $ NT_StAEAD t (bind (s2n x, s2n self) pr) (p, ps) pat 
     )
     <|>
     (parseSpanned $ do

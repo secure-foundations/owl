@@ -43,6 +43,10 @@ counter N_init_recv<i@n> @ Initiator<n>
 counter N_resp_send<j@m> @ Responder<m>
 counter N_resp_recv<j@m> @ Responder<m>
 
+// No party encrypts under a key with this counter
+locality nobody
+counter useless @ nobody
+
 // These are forward declared methods used to define Owl's authentication
 // guarantees.
 def key_confirm_initiator_send<@n> @ Initiator<n>
@@ -63,34 +67,32 @@ def resp_sent_message<@m> @ Responder<m>
 // From L2 on the chain has two initiator indices: n_eph owns the ephemeral
 // key, n_pk the static key decrypted from msg1. The refinement n_eph =idx n_pk
 // makes the plaintext type uninhabited for a "wrong initiator" key.
-nametype transp_key_init_send<@n_eph,n_pk,m> =
+nametype transp_key_init_send<i@n_eph,n_pk,m> =
                     // This type says: data with label
                     // channel_secret_init_send<@n_pk,m>, and we know that
                     // the initiator actually send that message (the happened
                     // predicate is like CryptoVerif's events)
             st_aead (x : Data<adv /\ [channel_secret_init_send<@n_pk,m>], |adv|> { n_eph =idx n_pk /\ happened(init_sent_message<@n_pk>(x))})
                 aad x self. happened(key_confirm_initiator_send<@n_pk>(self))
-                nonce N_init_send
+                nonce N_init_send<i@n_eph>
 
 // Dual for the responder
-nametype transp_key_resp_send<@n_eph,n_pk,m> =
+nametype transp_key_resp_send<j@n_eph,n_pk,m> =
             st_aead (x : Data<adv /\ [channel_secret_resp_send<@n_pk,m>], |adv|>{ n_eph =idx n_pk /\ happened(resp_sent_message<@m>(x)) })
                 aad x. true
-                nonce N_resp_send
+                nonce N_resp_send<j@m>
 
 nametype transp_key_init_send_corr =
       st_aead (x:Data<adv>{False})
                         aad x. true
-                        nonce N_init_send
+                        nonce useless
 
-nametype transp_key_resp_send_corr =
+nametype transp_key_resp_send_corr<j@m> =
       st_aead (x:Data<adv>{False})
                         aad x. true
-                        nonce N_resp_send
+                        nonce N_resp_send<j@m>
 
 // This is just useful for verification. Incurs no runtime overhead
-locality nobody
-counter useless @ nobody
 nametype useless_enc = st_aead (x:Data<adv> | |group| |{False})
                         aad x. False
                         nonce useless
@@ -217,7 +219,7 @@ kdf_scope WG_KDF {
         strict kdfkey ||
         strict st_aead (dhpk(S_init<@n>))
                        aad x. true
-                       nonce aead_counter_msg1_C2
+                       nonce aead_counter_msg1_C2<i@n>
         
 
     // -----------------------------------------------------------------
@@ -229,7 +231,7 @@ kdf_scope WG_KDF {
         strict kdfkey ||
         strict st_aead (Data<adv> |12|)
                        aad x. h3_pred[x]
-                       nonce aead_counter_msg1_C3
+                       nonce aead_counter_msg1_C3<i@n_eph>
 
     // -----------------------------------------------------------------
     // Rule L3: Derive C4 from C3 using the responder's ephemeral public key
@@ -287,7 +289,7 @@ kdf_scope WG_KDF {
         strict st_aead (Data<adv> |0|)
                aad x. valid_h6[x] /\ happened(key_confirm_responder_recv<@m>(tk1_of_c6(get(KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>), ikm)))
                                    /\ happened(key_confirm_responder_send<@m>(tk2_of_c6(get(KDF<L5<i,j@n_eph,n_pk,m>;kdfkey;0>), ikm)))
-               nonce aead_counter_msg2_C7
+               nonce aead_counter_msg2_C7<j@m>
 
     // No honest party encrypts under the off-chain k0 (the responder's
     // ephemeral is always honest), so its plaintext type is uninhabited and a
@@ -297,7 +299,7 @@ kdf_scope WG_KDF {
         strict kdfkey || public nonce ||
         strict st_aead (y:Data<adv> |0| {False})
                aad y. False
-               nonce aead_counter_msg2_C7
+               nonce useless
 
     // -----------------------------------------------------------------
     // The responder's off-chain C6, for a msg1 ephemeral x that is not an honest
@@ -325,21 +327,21 @@ kdf_scope WG_KDF {
         strict kdfkey || public nonce ||
         strict st_aead (Data<adv> |0|)
                aad y. valid_h6[y]
-               nonce aead_counter_msg2_C7
+               nonce aead_counter_msg2_C7<j@m>
 
     // -----------------------------------------------------------------
     // Rules L7 / L7_corr_resp: Derive transport keys from C7
     // -----------------------------------------------------------------
     kdf L7<i,j@n_eph,n_pk,m>(ikm) : KDF<L6<i,j@n_eph,n_pk,m>(ikm);kdfkey||nonce||enckey;0>, 0x, 0x ->
-        strict transp_key_init_send<@n_eph,n_pk,m> ||
-        strict transp_key_resp_send<@n_eph,n_pk,m>
+        strict transp_key_init_send<i@n_eph,n_pk,m> ||
+        strict transp_key_resp_send<j@n_eph,n_pk,m>
 
     // Secret names with an uninhabited plaintext type, so that resp_recv can
     // close the off-chain branch across the def boundary. The initiator closes
     // its off-chain branch inside init_stage2 and needs no such rule.
     kdf L7_corr_resp<j@n,m>(x) : KDF<L6_corr_resp<j@n,m>(x);kdfkey||nonce||enckey;0>, 0x, 0x ->
         strict transp_key_init_send_corr ||
-        strict transp_key_resp_send_corr
+        strict transp_key_resp_send_corr<j@m>
 
 } // end kdf_scope WG_KDF
 

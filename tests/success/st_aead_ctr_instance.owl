@@ -1,0 +1,58 @@
+// st_aead_enc must use the counter instance that the key's nonce clause names.
+locality alice
+
+// Per-key counter: mk<k,p> is used with N<k,p> only.
+name m<k,p> : nonce @ alice
+counter N<k,p> @ alice
+name mk<k,p> : st_aead Name(m<k,p>)
+    aad x. true
+    nonce N<k,p>
+    @ alice
+
+// A counter shared by all sk<i,j> with the same i.
+counter S<i> @ alice
+name sk<i,j> : st_aead Data<adv>
+    aad x. true
+    nonce S<i>
+    @ alice
+
+// An unindexed counter keeps the bare form.
+counter U @ alice
+name uk<i> : st_aead Data<adv>
+    aad x. true
+    nonce U
+    @ alice
+
+// A KDF rule output: the nonce clause ranges over the rule's binders.
+counter C<i> @ alice
+kdf_scope G {
+    name ck<i> : kdfkey @ alice
+
+    kdf L<i> : ck<i>, 0x, 0x ->
+        strict st_aead Data<adv>
+            aad x. true
+            nonce C<i>
+}
+
+def send<k,p>() @ alice : Unit =
+    let c = st_aead_enc<N<k,p>>(get(mk<k,p>), get(m<k,p>), 0x) in
+    output c
+
+def send_shared<i,j>() @ alice : Unit =
+    let c = st_aead_enc<S<i>>(get(sk<i,j>), 0x01, 0x) in
+    output c
+
+def send_unindexed<i>() @ alice : Unit =
+    let c = st_aead_enc<U>(get(uk<i>), 0x01, 0x) in
+    output c
+
+// Indices that differ syntactically but are provably equal.
+def send_eq<k,p,q>(w : (x:Data<adv>{p =idx q})) @ alice : Unit =
+    let c = st_aead_enc<N<k,q>>(get(mk<k,p>), get(m<k,p>), 0x) in
+    output c
+
+def send_kdf<i>() @ alice : Unit =
+    corr_case ck<i> in
+    let key = kdf<L<i>; enckey; 0>(get(ck<i>), 0x, 0x) in
+    let c = st_aead_enc<C<i>>(key, 0x01, 0x) in
+    output c

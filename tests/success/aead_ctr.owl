@@ -11,7 +11,7 @@ counter N<@i> @ alice<i>
 counter M<@i> @ bob<i>
 name k<@i> : st_aead Name(X<@i>)
     aad x. (x == get(aad_val<@i>))
-    nonce N
+    nonce N<@i>
     @ alice<i>
 
 struct dummy_struct {

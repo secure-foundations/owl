@@ -1,0 +1,19 @@
+// The KDF output KDF<L<i>> is tied to C<i>, so encrypting under it with C<j> fails.
+locality alice
+
+counter C<i> @ alice
+
+kdf_scope G {
+    name ck<i> : kdfkey @ alice
+
+    kdf L<i> : ck<i>, 0x, 0x ->
+        strict st_aead Data<adv>
+            aad x. true
+            nonce C<i>
+}
+
+def send<i,j>() @ alice : Unit =
+    corr_case ck<i> in
+    let key = kdf<L<i>; enckey; 0>(get(ck<i>), 0x, 0x) in
+    let c = st_aead_enc<C<j>>(key, 0x01, 0x) in
+    output c
