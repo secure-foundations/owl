@@ -1,0 +1,12 @@
+// Public keys of a rule's inputs may appear in its payloads: dhpk directly,
+// kem_pk through a predicate.
+locality alice
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ alice
+    name dk<e> : kemkey (kdfkey) @ alice
+    predicate hdr<e>(x) = x == kem_pk(get(dk<e>))
+    odh M : 0x, dh_ss(X, Y), 0x01 -> strict mackey (x:Data<adv>{ x == dhpk(get(X)) })
+    kdf A<e> : 0x, get(KEMName<dk<e>, e>), 0x02 -> strict mackey (x:Data<adv>{ hdr<e>[x] })
+}
+def alice_main() @ alice : Unit = ()

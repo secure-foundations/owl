@@ -1,0 +1,12 @@
+// Auth<succ(e')>'s payload is the KEM secret it is derived from, hidden behind a predicate.
+locality alice
+kdf_scope G {
+    name root : kdfkey @ alice
+    name dk<e> : kemkey (kdfkey) @ alice
+    predicate prev_ss<e>(x) = forall e':idx. (e =idx succ(e')) ==> x == get(KEMName<dk<e'>, e'>)
+    rec_kdf<e> Auth<e>
+        | 0        : 0x, root, 0x01
+        | succ(e') : KDF<Auth<e'>; kdfkey || enckey; 0>, get(KEMName<dk<e'>, e'>), 0x02
+        -> strict kdfkey || strict enckey (x:Data<adv>{ prev_ss<e>[x] })
+}
+def alice_main() @ alice : Unit = ()

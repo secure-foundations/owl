@@ -33,6 +33,7 @@ import Prettyprinter
 import Prettyprinter.Render.Terminal
 import Pretty
 import Control.Lens
+import Data.Graph (stronglyConnComp, SCC(..))
 import LabelChecking
 import TypingBase
 import qualified Data.Map.Strict as M
@@ -3131,7 +3132,7 @@ checkKDFScope scope ds cont = do
     -- Rules may refer to later rules of the scope, so all of them are registered up front
     let ruleDefs = [(l, KDFRuleDef scope pos False b) | (pos, (l, b)) <- zip [0..] rules]
     let setChecked l = map (\(l', rd) -> if l == l' then (l', rd { _kdfRuleChecked = True }) else (l', rd))
-    let go [] = cont
+    let go [] = checkKDFScopeAcyclic scope [(l, d^.spanOf) | d@(Spanned _ (DeclKDFRule l _)) <- ds] >> cont
         go (d : ds') = withSpan (d^.spanOf) $ case d^.val of
             DeclName n _ -> checkDecl d $ local (over (curMod . kdfScopeNames) $ insert n scope) $ go ds'
             DeclKDFRule l _ -> do
@@ -3177,7 +3178,6 @@ pattern DHSecret x y <- AEApp (PRes (PDot PTop "dh_combine")) _ [Spanned _ (AEAp
 -- - parameters distinct and used, where clause is clean
 -- - outputs are uniform
 -- - input keys are from the scope
--- - cannot generate a key cycle
 -- - self-disjointness and cross-disjointness
 checkKDFRule :: String -> Check ()
 checkKDFRule l = do
@@ -3230,7 +3230,6 @@ checkKDFRule l = do
             return $ or [True | Spanned _ (DHSecret _ _) <- atoms]
     -- A rule that relies on the ODH assumption says so
     assert ("KDF rule '" ++ l ++ "' has a DH secret in its ikm, so it must be declared with odh") $ not (or hasDH) || _kdfIsODH rule
-    checkKDFOutputsAcyclic pth
     -- Disjointness: from itself, and from the rules checked so far
     forM_ [(a, b, ia == ib) | (ia, a) <- zip [0 :: Int ..] insts, (ib, b) <- zip [0..] insts, ia <= ib] $ \(a, b, sameCase) -> do
         disj <- kdfDisjoint a b sameCase
@@ -3363,136 +3362,202 @@ checkKDFRulesWellFounded rules = do
                     (Just (_, Nothing), Just e') -> "KDF rule '" ++ l ++ "' refers to rule '" ++ m ++ "' at index '" ++ show (owlpretty e') ++ "' of its recursion slot, which does not decrease the rank (index, declaration position): in the zero case, use 0 or the recursion index for a rule declared earlier"
         assert msg ok
 
--- The output types of a rule must not close a key cycle: in a plaintext
--- position, they may not mention a base name the rule is derived from, nor a
--- derived name the rule is derived from.
-checkKDFOutputsAcyclic :: Path -> Check ()
-checkKDFOutputsAcyclic pth = do
-    rd <- lookupKDFRule pth
-    -- Names in the inputs of a rule
-    let inputsOf l = do
-            insts <- kdfInsts l
-            fmap concat $ forM insts $ \binst -> do
-                (bnds, inst) <- unbind binst
-                let (salt, ikm, info) = _kiCase inst
-                withKDFBinders bnds tGhost $ concatMap aexprNames <$> mapM normalizeAExpr [salt, ikm, info]
-    let down seen [] = return seen
-        down seen (l : ls) | any (aeq l) seen = down seen ls
-                           | otherwise = do
-                               ns <- inputsOf l
-                               down (l : seen) ([m | Spanned _ (KDFName (KDFRuleRef m _ _) _ _) <- ns] ++ ls)
-    below <- down [] [pth]
-    inputs <- concat <$> mapM inputsOf below
-    above <- forM below $ \m -> (,) m <$> down [] [m]
-    (((is, ps), xs), rule) <- unbind $ _kdfRuleBody rd
-    withKDFBinders (is ++ ps, xs) tGhost $ forM_ (zip [0 :: Int ..] $ _kdfOutputs rule) $ \(j, (_, nt)) -> do
-        ns <- nameTypePlaintextNames nt
-        -- The outputs of one instance are ordered: output j may mention only later ones
-        let laterSibling j' = assert ("KDF rule '" ++ show (owlpretty pth) ++ "': output " ++ show j ++ " mentions output " ++ show j' ++ " of the same instance (outputs are numbered from 0), which may form a key cycle; an output may mention only later outputs of its instance") $ j' > j
-        forM_ ns $ \ne -> case ne^.val of
-            KDFName r@(KDFRuleRef m (mis, mps) mas) _ j'
-                | not (any (aeq m) below) -> return ()
-                -- A sibling output of the same instance
-                | m `aeq` pth && isNothing (kdfRecIdx rule) && 
-                    (mis ++ mps) `aeq` map mkIVar (is ++ ps) && mas `aeq` map aeVar' xs -> laterSibling j'
-                | otherwise -> do
-                    -- Under mutual recursion: a later instance
-                    e <- kdfRefRecIdx r
-                    rdm <- lookupKDFRule m
-                    let succs i = case i of
-                                    ISucc i' -> fmap (+ 1) (succs i')
-                                    IVar _ _ v | Just v == kdfRecIdx rule -> Just (0 :: Int)
-                                    _ -> Nothing
-                    let sameGroup = any (aeq pth) $ concat [ms | (m', ms) <- above, m' `aeq` m]
-                    -- At the same index: a later rule of the group, or the rule itself,
-                    -- where the outputs of the instances at that index are ordered
-                    let ok = case e >>= succs of
-                               Just n -> sameGroup && (n >= 1 || m `aeq` pth || _kdfRulePos rdm > _kdfRulePos rd)
-                               Nothing -> False
-                    when (ok && m `aeq` pth && (e >>= succs) == Just 0) $ laterSibling j'
-                    assert ("KDF rule '" ++ show (owlpretty pth) ++ "': output type mentions derived name " ++ show (owlpretty ne) ++ ", which is (transitively) an input of the rule: a key derived from a name may not encrypt, sign or MAC that name (key cycle); under mutual recursion, the index at the recursion slot must be succ^n(i) with n >= 1, or i for a rule declared after '" ++ show (owlpretty pth) ++ "'") ok
-            NameConst _ p _ -> 
-                assert ("KDF rule '" ++ show (owlpretty pth) ++ "': output type mentions name " ++ show (owlpretty ne) ++ ", which is (transitively) an input of the rule: a key derived from a name may not encrypt, sign or MAC that name (key cycle)") $ 
-                    not $ or [p `aeq` p' | Spanned _ (NameConst _ p' _) <- inputs]
-            _ -> return ()
+-- Key cycles: the names of a scope must be idealizable one instance at a time,
+-- a rule's inputs before its outputs and a key before the names in its payload.
+-- Nodes are name families: a base name, the KEM secrets of a KEM key, or a rule output.
+data KCKind = KCDep | KCPayload
+    deriving Eq
 
--- Names in the plaintext positions of a name type. Called on rule outputs,
--- which should be uniform; any other name type is a bug.
-nameTypePlaintextNames :: NameType -> Check [NameExp]
-nameTypePlaintextNames nt =
-    case nt^.val of
-      NT_Enc t -> tyNames t
-      NT_StAEAD t _ _ _ -> tyNames t
-      NT_PKE t -> tyNames t
-      NT_MAC t -> tyNames t
-      NT_Sig t -> tyNames t
-      NT_App p ps as -> resolveNameTypeApp p ps as >>= nameTypePlaintextNames
-      NT_Nonce _ -> return []
-      NT_KDF -> return []
-      _ -> typeError $ "Internal error: called nameTypePlaintextNames on an invalid name type " ++ show (owlpretty nt) ++ ". This is a bug in the Owl typechecker"
+-- An edge u -> v says that u is idealized before v; it comes from the given rule
+data KCEdge = KCEdge { _kceKind :: KCKind, _kceRule :: String, _kceSrc :: String, _kceTgt :: String }
+
+kcOutputNode :: Path -> Int -> String
+kcOutputNode l j = "output " ++ show j ++ " of " ++ show (owlpretty l)
+
+-- The node of a name, and the edge from a KEM key to its KEM secrets
+kcNode :: String -> NameExp -> Check (String, [KCEdge])
+kcNode rl ne0 = do
+    ne <- normalizeNameExp ne0
+    case ne^.val of
+      NameConst _ p _ -> return (show (owlpretty p), [])
+      KDFName (KDFRuleRef l _ _) _ j -> return (kcOutputNode l j, [])
+      KEMName k _ -> do
+          (kn, es) <- kcNode rl k
+          let n = "the KEM secrets of " ++ kn
+          return (n, es ++ [KCEdge KCDep rl kn n])
+
+-- Public projections of a name, which every assumption keyed by the name publishes
+kcProjections :: [String]
+kcProjections = ["dhpk", "kem_pk", "ikem_hdr", "ikem_ek", "vk", "enc_pk"]
+
+-- Names whose values an expression may depend on
+kcAExprNames :: AExpr -> Check [NameExp]
+kcAExprNames a0 = go <$> normalizeAExpr a0
     where
-        nameNames n = aexprNames (aeGet n)
-        labelNames l = case l^.val of
-            LName n -> nameNames n
-            LJoin l1 l2 -> labelNames l1 ++ labelNames l2
-            LRangeIdx b -> labelNames $ snd $ unsafeUnbind b
-            LRangeVar b -> labelNames $ snd $ unsafeUnbind b
-            _ -> []
-        propNames p = case p^.val of
-            PAnd p1 p2 -> propNames p1 ++ propNames p2
-            POr p1 p2 -> propNames p1 ++ propNames p2
-            PImpl p1 p2 -> propNames p1 ++ propNames p2
-            PNot p1 -> propNames p1
-            PEq a b -> aexprNames a ++ aexprNames b
-            PLetIn a b -> aexprNames a ++ propNames (snd $ unsafeUnbind b)
-            PFlow l1 l2 -> labelNames l1 ++ labelNames l2
-            PHappened _ _ as -> concatMap aexprNames as
-            PQuantIdx _ _ b -> propNames $ snd $ unsafeUnbind b
-            PQuantBV _ _ b -> propNames $ snd $ unsafeUnbind b
-            PIsConstant a -> aexprNames a
-            PApp _ _ as -> concatMap aexprNames as
-            PAADOf n a -> nameNames n ++ aexprNames a
-            PHonestPKEnc n a -> nameNames n ++ aexprNames a
-            PHonestKEMEncaps n a -> nameNames n ++ aexprNames a
-            _ -> []
-        paramNames fp = case fp of
-            ParamAExpr a -> return $ aexprNames a
-            ParamLbl l -> return $ labelNames l
-            ParamTy t -> tyNames t
-            ParamName n -> return $ nameNames n
-            _ -> return []
-        -- Every name a value of the type may depend on: refinements, labels,
-        -- and case conditions count, since the payload may be the name itself
-        tyNames t = case t^.val of
-            TName n -> return $ nameNames n
-            TSS n m -> return $ nameNames n ++ nameNames m
-            TData l1 l2 _ -> return $ labelNames l1 ++ labelNames l2
-            TDataWithLength l a -> return $ labelNames l ++ aexprNames a
-            TBool l -> return $ labelNames l
-            TRefined t' _ xp -> (++ propNames (snd $ unsafeUnbind xp)) <$> tyNames t'
-            TOption t' -> tyNames t'
-            TCase p t1 t2 -> (propNames p ++) <$> liftM2 (++) (tyNames t1) (tyNames t2)
-            TExistsIdx _ bt -> do
-                (i, t') <- unbind bt
-                withIndices [(i, (ignore $ show i, IdxGhost))] $ tyNames t'
-            TConst s ps -> (++) <$> (concat <$> mapM paramNames ps) <*> do
-                td <- getTyDef s
-                case td of
-                  TyAbbrev t' -> tyNames t'
-                  EnumDef b -> do
-                      bdy <- extractEnum ps (show s) b
-                      concat <$> mapM tyNames (catMaybes $ map snd bdy)
-                  StructDef b -> do
-                      idxs <- getStructParams ps
-                      (is, dp) <- unbind b
-                      let go d = case d of
-                                   DPDone _ -> return []
-                                   DPVar t' _ xd -> do
-                                       (x, d') <- unbind xd
-                                       liftM2 (++) (tyNames t') (withVars [(x, (ignore $ show x, Nothing, t'))] $ go d')
-                      if length is == length idxs then go (substs (zip is idxs) dp) else return []
-                  TyAbstract -> return []
-            _ -> return []
+        go a = case a^.val of
+                 AEApp (PRes (PDot PTop f)) _ [Spanned _ (AEGet _)] | f `elem` kcProjections -> []
+                 AEGetVK _ -> []
+                 AEGetEncPK _ -> []
+                 AEApp _ fps as -> concat [go x | ParamAExpr x <- fps] ++ concat [n : nameArgs n | ParamName n <- fps] ++ concatMap go as
+                 AEGet n -> n : nameArgs n
+                 AEKDF x y z _ _ -> concatMap go [x, y, z]
+                 _ -> []
+        nameArgs n = case n^.val of
+                       NameConst _ _ as -> concatMap go as
+                       KDFName (KDFRuleRef _ _ as) _ _ -> concatMap go as
+                       KEMName n' _ -> nameArgs n'
+
+kcNameNames :: NameExp -> Check [NameExp]
+kcNameNames n = kcAExprNames $ aeGet n
+
+kcLabelNames :: Label -> Check [NameExp]
+kcLabelNames l = case l^.val of
+    LName n -> kcNameNames n
+    LJoin l1 l2 -> (++) <$> kcLabelNames l1 <*> kcLabelNames l2
+    LRangeIdx b -> do
+        (i, l') <- unbind b
+        withIndices [(i, (ignore $ show i, IdxGhost))] $ kcLabelNames l'
+    LRangeVar b -> do
+        (x, l') <- unbind b
+        withVars [(x, (ignore $ show x, Nothing, tGhost))] $ kcLabelNames l'
+    _ -> return []
+
+-- Predicates are unfolded, which terminates since a predicate isn't in scope in its own body
+kcPropNames :: Prop -> Check [NameExp]
+kcPropNames p = case p^.val of
+    PAnd p1 p2 -> (++) <$> kcPropNames p1 <*> kcPropNames p2
+    POr p1 p2 -> (++) <$> kcPropNames p1 <*> kcPropNames p2
+    PImpl p1 p2 -> (++) <$> kcPropNames p1 <*> kcPropNames p2
+    PNot p1 -> kcPropNames p1
+    PEq a b -> (++) <$> kcAExprNames a <*> kcAExprNames b
+    PLetIn a b -> do
+        (x, p') <- unbind b
+        (++) <$> kcAExprNames a <*> withVars [(x, (ignore $ show x, Nothing, tGhost))] (kcPropNames p')
+    PFlow l1 l2 -> (++) <$> kcLabelNames l1 <*> kcLabelNames l2
+    PHappened _ _ as -> concat <$> mapM kcAExprNames as
+    PQuantIdx _ _ b -> do
+        (i, p') <- unbind b
+        withIndices [(i, (ignore $ show i, IdxGhost))] $ kcPropNames p'
+    PQuantBV _ _ b -> do
+        (x, p') <- unbind b
+        withVars [(x, (ignore $ show x, Nothing, tGhost))] $ kcPropNames p'
+    PIsConstant a -> kcAExprNames a
+    PApp s is as -> extractPredicate s is as >>= kcPropNames
+    PAADOf n a -> (++) <$> kcNameNames n <*> kcAExprNames a
+    PHonestPKEnc n a -> (++) <$> kcNameNames n <*> kcAExprNames a
+    PHonestKEMEncaps n a -> (++) <$> kcNameNames n <*> kcAExprNames a
+    _ -> return []
+
+-- Every name a value of the type may depend on, including through labels,
+-- refinements and case conditions
+kcTyNames :: Ty -> Check [NameExp]
+kcTyNames t = case t^.val of
+    TName n -> kcNameNames n
+    TSS n m -> (++) <$> kcNameNames n <*> kcNameNames m
+    TData l1 l2 _ -> (++) <$> kcLabelNames l1 <*> kcLabelNames l2
+    TDataWithLength l a -> (++) <$> kcLabelNames l <*> kcAExprNames a
+    TBool l -> kcLabelNames l
+    TRefined t' _ xp -> do
+        (x, p) <- unbind xp
+        (++) <$> kcTyNames t' <*> withVars [(x, (ignore $ show x, Nothing, t'))] (kcPropNames p)
+    TOption t' -> kcTyNames t'
+    TCase p t1 t2 -> concat <$> sequence [kcPropNames p, kcTyNames t1, kcTyNames t2]
+    TExistsIdx _ bt -> do
+        (i, t') <- unbind bt
+        withIndices [(i, (ignore $ show i, IdxGhost))] $ kcTyNames t'
+    TConst s ps -> do
+        fromParams <- concat <$> forM ps (\fp -> case fp of
+                          ParamAExpr a -> kcAExprNames a
+                          ParamLbl l -> kcLabelNames l
+                          ParamTy t' -> kcTyNames t'
+                          ParamName n -> kcNameNames n
+                          _ -> return [])
+        td <- getTyDef s
+        fromDef <- case td of
+          TyAbbrev t' -> kcTyNames t'
+          EnumDef b -> do
+              bdy <- extractEnum ps (show s) b
+              concat <$> mapM kcTyNames (catMaybes $ map snd bdy)
+          StructDef b -> do
+              idxs <- getStructParams ps
+              (is, dp) <- unbind b
+              let go d = case d of
+                           DPDone _ -> return []
+                           DPVar t' _ xd -> do
+                               (x, d') <- unbind xd
+                               (++) <$> kcTyNames t' <*> withVars [(x, (ignore $ show x, Nothing, t'))] (go d')
+              if length is == length idxs then go (substs (zip is idxs) dp) else return []
+          TyAbstract -> return []
+        return $ fromParams ++ fromDef
+    _ -> return []
+
+kcPayloadNames :: NameType -> Check [NameExp]
+kcPayloadNames nt = case nt^.val of
+    NT_Enc t -> kcTyNames t
+    NT_StAEAD t _ _ _ -> kcTyNames t
+    NT_PKE t -> kcTyNames t
+    NT_MAC t -> kcTyNames t
+    NT_Sig t -> kcTyNames t
+    NT_App p ps as -> resolveNameTypeApp p ps as >>= kcPayloadNames
+    _ -> return []
+
+-- The edges of a rule, from the names in both cases of a recursive rule
+kcRuleEdges :: String -> Check [KCEdge]
+kcRuleEdges l = do
+    pth <- (\p -> PRes $ PDot p l) <$> curModName
+    rd <- lookupKDFRule pth
+    (((is, ps), xs), rule) <- unbind $ _kdfRuleBody rd
+    let outs = map (kcOutputNode pth) [0 .. length (_kdfOutputs rule) - 1]
+    withKDFBinders (is ++ ps, xs) tGhost $ do
+        ins <- case _kdfCases rule of
+            KDFOneCase c -> caseNames c
+            KDFRecCases _ c0 bc1 -> do
+                (i', c1) <- unbind bc1
+                (++) <$> caseNames c0 <*> withIndices [(i', (ignore $ show i', IdxGhost))] (caseNames c1)
+        ws <- kcPropNames $ _kdfWhere rule
+        deps <- fmap concat $ forM (ins ++ ws) $ \n -> do
+            (src, kem) <- kcNode l n
+            return $ kem ++ [KCEdge KCDep l src o | o <- outs]
+        pays <- fmap concat $ forM (zip outs $ _kdfOutputs rule) $ \(o, (_, nt)) -> do
+            ns <- kcPayloadNames nt
+            fmap concat $ forM ns $ \n -> do
+                (tgt, kem) <- kcNode l n
+                return $ kem ++ [KCEdge KCPayload l o tgt]
+        return $ deps ++ pays
+    where
+        -- Both halves of a DH secret count
+        caseNames (salt, ikm, info) = concatMap aexprNames <$> mapM normalizeAExpr [salt, ikm, info]
+
+-- A shortest path of edges from family a to family b
+kcPath :: [KCEdge] -> String -> String -> Maybe [KCEdge]
+kcPath es a b = go [(a, [])] [a]
+    where
+        go [] _ = Nothing
+        go ((n, p) : q) seen
+          | n == b = Just $ reverse p
+          | otherwise =
+              let next = [(_kceTgt e, e : p) | e <- es, _kceSrc e == n, not $ _kceTgt e `elem` seen]
+                  next' = L.nubBy (\x y -> fst x == fst y) next
+              in go (q ++ next') (seen ++ map fst next')
+
+-- Runs once all rules of a scope are checked; cycles without a payload edge
+-- are left to checkKDFRulesWellFounded
+checkKDFScopeAcyclic :: String -> [(String, Ignore Position)] -> Check ()
+checkKDFScopeAcyclic scope rules = do
+    edges <- concat <$> mapM (kcRuleEdges . fst) rules
+    let fams = L.nub $ concat [[_kceSrc e, _kceTgt e] | e <- edges]
+    let sccs = [ns | CyclicSCC ns <- stronglyConnComp [(n, n, [_kceTgt e | e <- edges, _kceSrc e == n]) | n <- fams]]
+    forM_ sccs $ \scc -> do
+        let inner = [e | e <- edges, _kceSrc e `elem` scc, _kceTgt e `elem` scc]
+        -- Report a shortest cycle through a payload edge
+        let cycles = L.sortOn length [e : p | e <- inner, _kceKind e == KCPayload, Just p <- [kcPath inner (_kceTgt e) (_kceSrc e)]]
+        let showE e = case _kceKind e of
+                        KCDep -> _kceTgt e ++ " depends on " ++ _kceSrc e
+                        KCPayload -> "the payload of " ++ _kceSrc e ++ " mentions " ++ _kceTgt e
+        case cycles of
+          c@(e0 : _) : _ -> withSpan (fromMaybe (ignore def) $ lookup (_kceRule e0) rules) $
+              typeError $ "Key cycle in kdf_scope '" ++ scope ++ "': a key may protect a name it depends on:" ++ concatMap (\e -> "\n    " ++ showE e) c
+          _ -> return ()
 
 -- kdf<hints; nks; j>(salt, ikm, info)
 checkKDFCall :: [KDFRuleRef] -> [NameKind] -> Int -> (AExpr, Ty) -> (AExpr, Ty) -> (AExpr, Ty) -> Check Ty

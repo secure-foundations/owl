@@ -1,0 +1,8 @@
+// The key's payload is its own salt, hidden behind a func.
+locality alice
+kdf_scope G {
+    name k0 : kdfkey @ alice
+    func the_k0() = get(k0)
+    kdf L : k0, 0x, 0x01 -> enckey (x:Data<adv>{ x == the_k0() })
+}
+def alice_main() @ alice : Unit = ()
