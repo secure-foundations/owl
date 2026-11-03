@@ -236,6 +236,7 @@ concretifyPass owlExtrData = do
         Concretify.concretifyTyDef
         (uncurry Concretify.concretifyUserFunc) -- Result is thrown away, since we concretify only the user funcs that are used in concrete code
         owlExtrData
+    Concretify.checkNameIndices
     concreteUserFuncs <- catMaybes <$> concretifyUserFuncs
     return $ cfExtrData & userFuncs .~ concreteUserFuncs
     where

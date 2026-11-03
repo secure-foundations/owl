@@ -435,6 +435,7 @@ concretifyAExpr a =
       AEGet n -> do
           t <- formatTyOfNameExp n
           s <- concretifyNameExpLoc n
+          recordNameUse $ NURead s "get" n
           return $ noLets $ Typed t $ CAGet s
       AELenConst s -> return $ noLets $ Typed FInt $ CAInt $ FLNamed s
       AEInt i ->  return $ noLets $ Typed FInt $ CAInt $ FLConst i
@@ -443,10 +444,12 @@ concretifyAExpr a =
       AEGetEncPK n -> do
           encPKFormatTy <- concretifyTy $ mkSpanned $ TEnc_PK n
           s <- concretifyNameExpLoc n
+          recordNameUse $ NURead ("pk_" ++ s) "get_encpk" n
           return $ noLets $ Typed encPKFormatTy $ CAGetEncPK s
       AEGetVK n -> do
           vkFormatTy <- concretifyTy $ mkSpanned $ TVK n
           s <- concretifyNameExpLoc n
+          recordNameUse $ NURead ("pk_" ++ s) "get_vk" n
           return $ noLets $ Typed vkFormatTy $ CAGetVK s
       AEApp p ps aes -> do
           (vs, argLets) <- concretifyAExprs aes
@@ -564,8 +567,9 @@ concretifyExpr e = do
       ECrypt cop aes -> do
           (cs, argLets) <- concretifyAExprs aes
           addLets argLets <$> concretifyCryptOp aes cop cs
-      ECall p _ aes -> do
+      ECall p is aes -> do
             s <- concretifyPath p
+            recordNameUse $ NUCall s is
             (argtys, t) <- tySigOfCall p
             -- Do not concretify ghost args to calls
             csLets <- forM (zip argtys aes) $ \(at, a) ->
@@ -941,6 +945,7 @@ concretifyDef defName (TB.Def bd) = do
     let ((sids, pids), dspec) = unsafeUnbind bd
     -- KDF results are shared only within one def
     memoKDF .= []
+    curNameUses .= []
     ores <- 
         TB.withIndices (map (\i -> (i, (ignore $ show i, IdxSession))) sids ++ map (\i -> (i, (ignore $ show i, IdxPId))) pids) $ do
         withDepBind (dspec^.TB.preReq_retTy_body) $ \xts (p, retT, oexpr) ->  do
@@ -953,10 +958,74 @@ concretifyDef defName (TB.Def bd) = do
                     ce <- exprFromLets' <$> scopedMemo (concretifyExpr e)
                     let cretT = ce ^. tty
                     return $ Just (cretT, Just ce)
+    uses <- use curNameUses
+    defNameUses %= M.insert defName ((sids, pids), reverse uses)
     case ores of
         Nothing -> return Nothing
         Just res -> return $ Just $ CDef defName res
 
+recordNameUse :: NameUse -> EM ()
+recordNameUse u = curNameUses %= (u :)
+
+-- Check for code that uses the same indexed name at two different indices (directly or through
+-- subroutine calls). Extraction erases indices, so such code cannot be extracted soundly.
+checkNameIndices :: EM ()
+checkNameIndices = do
+    defUses <- use defNameUses
+    let go sums = do
+            sums' <- M.traverseWithKey (summarize defUses sums) defUses
+            if summariesEq sums sums' then return () else go sums'
+    go M.empty
+    where
+        summariesEq a b = flat a `aeq` flat b
+        flat = map (\(d, m) -> (d, map (\(f, fu) -> (f, (fuName fu, fuOpaque fu))) (M.toList m))) . M.toList
+
+        summarize :: M.Map String (([IdxVar], [IdxVar]), [NameUse]) -> M.Map String (M.Map String FieldUse)
+                     -> String -> (([IdxVar], [IdxVar]), [NameUse]) -> EM (M.Map String FieldUse)
+        summarize defUses sums d ((ps1, ps2), uses) = do
+            let params = ps1 ++ ps2
+            let direct = [ (f, FieldUse op ne False []) | NURead f op ne <- uses ]
+            let lifted = concat [ liftUses g is gParams gSum
+                                | NUCall g is <- uses
+                                , Just (gParams, _) <- [M.lookup g defUses]
+                                , Just gSum <- [M.lookup g sums] ]
+            let byField = M.fromListWith (flip (++)) [ (f, [fu]) | (f, fu) <- direct ++ lifted ]
+            M.traverseWithKey (\_ fus -> checkField d params fus) byField
+
+        liftUses :: String -> ([Idx], [Idx]) -> ([IdxVar], [IdxVar]) -> M.Map String FieldUse -> [(String, FieldUse)]
+        liftUses g (is1, is2) (gs1, gs2) m = [ (f, liftOne fu) | (f, fu) <- M.toList m ]
+            where
+                sub = zip gs1 is1 ++ zip gs2 is2
+                call = g ++ show (owlprettyIdxParams (is1, is2))
+                liftOne fu = fu { fuName = if fuOpaque fu then fuName fu else substs sub (fuName fu)
+                                , fuVia = call : fuVia fu }
+
+        checkField :: String -> [IdxVar] -> [FieldUse] -> EM FieldUse
+        checkField _ _ [] = throwError $ ErrSomethingFailed "checkNameIndices: empty field use list"
+        checkField d params (fu1 : rest) = do
+            forM_ rest $ \fu2 ->
+                unless (not (fuOpaque fu1) && not (fuOpaque fu2) && fuName fu1 `aeq` fuName fu2) $
+                    throwError $ NameAtTwoIndices d (describe fu1) (describe fu2)
+            let n = fuName fu1
+            let is = toListOf fv n :: [IdxVar]
+            let xs = toListOf fv n :: [DataVar]
+            let local = not (all (`elem` params) is) || not (null xs)
+            return $ fu1 { fuOpaque = fuOpaque fu1 || local }
+
+        describe fu =
+            let u = fuOp fu ++ "(" ++ show (owlpretty (fuName fu)) ++ ")" in
+            case fuVia fu of
+              [] -> u
+              cs -> u ++ " (through the call " ++ intercalate ", then " cs
+                      ++ (if fuOpaque fu then ", with a variable bound inside that call" else "") ++ ")"
+
+-- One use of a config field.
+data FieldUse = FieldUse {
+      fuOp :: String      -- get, get_vk or get_encpk
+    , fuName :: NameExp   -- which name was read
+    , fuOpaque :: Bool    -- may denote a different instance on each call
+    , fuVia :: [String]   -- the chain of calls to the field use, outermost first
+}
 
 concretifyUserFunc' :: String -> TB.UserFunc -> EM (Maybe (CUserFunc FormatTy), FormatTy, FormatTy)
 concretifyUserFunc' ufName (TB.FunDef bd) = do

@@ -65,7 +65,15 @@ data Env t = Env {
     ,   _genVerusNameEnv :: M.Map String VNameData -- For GenVerus, need to store all the local and shared names so we know their types
     ,   _genVerusPkEnv :: M.Map String VNameData -- For GenVerus, need to store all the public keys so we know their types
     ,   _lengthChecks :: [(ConstUsize, ConstUsize)] -- length equalities to assert in `owlc_length_checks`
+    ,   _curNameUses :: [NameUse] -- name uses in the exec code of the def being concretified
+    ,   _defNameUses :: M.Map String (([IdxVar], [IdxVar]), [NameUse]) -- def name -> (index params, name uses)
 }
+
+-- Record uses of indexed names so that `checkNameIndices` can reject a def that would read
+-- one name at two different indices.
+data NameUse =
+      NURead String String NameExp -- config field, operation (get, get_vk, get_encpk), name read
+    | NUCall String ([Idx], [Idx]) -- call of a def at these index arguments
 
 
 
@@ -88,6 +96,7 @@ data ExtractionError =
     | LiftedError ExtractionError
     | CantCastType String String String
     | UnsupportedKEM
+    | NameAtTwoIndices String String String
     | ErrSomethingFailed String
 
 instance OwlPretty ExtractionError where
@@ -125,6 +134,10 @@ instance OwlPretty ExtractionError where
         owlpretty "Can't cast value" <+> owlpretty v <+> owlpretty "from type" <+> owlpretty t1 <+> owlpretty "to type" <+> owlpretty t2
     owlpretty UnsupportedKEM =
         owlpretty "Extraction does not yet support KEMs"
+    owlpretty (NameAtTwoIndices d u1 u2) =
+        owlpretty "Def" <+> owlpretty d <+> owlpretty "uses one name at two different indices," <+>
+        owlpretty u1 <+> owlpretty "and" <+> owlpretty u2 <> owlpretty "."
+        <+> owlpretty "Extraction cannot generate code for this usage."
     owlpretty (ErrSomethingFailed s) =
         owlpretty "Extraction failed with message:" <+> owlpretty s
 
@@ -174,7 +187,9 @@ liftExtractionMonad m = do
             _memoKDF = [],
             _genVerusNameEnv = M.empty,
             _genVerusPkEnv = M.empty,
-            _lengthChecks = []
+            _lengthChecks = [],
+            _curNameUses = [],
+            _defNameUses = M.empty
         }
     o <- liftIO $ runExtractionMonad tcEnv env m
     case o of 
@@ -207,7 +222,7 @@ instance Fresh (ExtractionMonad t) where
     fresh nm@(Bn {}) = return nm
 
 initEnv :: Flags -> String -> [(String, TB.UserFunc)] -> Env t
-initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty []
+initEnv flags path owlUserFuncs = Env flags path 0 M.empty M.empty (mkUFs owlUserFuncs) [] M.empty M.empty [] [] M.empty
     where
         mkUFs :: [(String, TB.UserFunc)] -> M.Map String (TB.UserFunc, Maybe (FormatTy, FormatTy))
         mkUFs l = M.fromList $ map (\(s, uf) -> (s, (uf, Nothing))) l
