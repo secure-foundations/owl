@@ -403,8 +403,11 @@ tysMatchStructDef pth sname args ps b = do
         where
             go [] (DPDone ()) = return $ Just []
             go ((a, t):args) (DPVar t1 sx xk) = do
-                b1 <- isSubtype t t1 
-                checkTyPubLenOrGhost t
+                b1 <- isSubtype t t1
+                -- A Ghost field is erased, so doesn't need a public length
+                case (stripRefinements t1)^.val of
+                  TGhost -> return ()
+                  _ -> checkTyPubLenOrGhost t
                 case b1 of
                   False -> return Nothing
                   True -> do

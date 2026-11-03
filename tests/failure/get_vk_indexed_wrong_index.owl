@@ -1,0 +1,10 @@
+// get_vk of an indexed name has the type of that index only
+locality alice : 1
+locality bob
+
+name m<@n> : nonce @ alice<n>
+name skA<@n> : sigkey Name(m<@n>) @ alice<n>
+
+def bob_recv<@n, k>() @ bob : Unit =
+    let vkA : vk(skA<@k>) = get_vk(skA<@n>) in
+    ()
