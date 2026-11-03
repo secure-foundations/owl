@@ -1,0 +1,9 @@
+// Each rule's key encrypts the other rule's salt.
+locality alice
+kdf_scope G {
+    name n1 : kdfkey @ alice
+    name n2 : kdfkey @ alice
+    kdf L1 : n2, 0x, 0x01 -> enckey Name(n1)
+    kdf L2 : n1, 0x, 0x02 -> enckey Name(n2)
+}
+def alice_main() @ alice : Unit = ()

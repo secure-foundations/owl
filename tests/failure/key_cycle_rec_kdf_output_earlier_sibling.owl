@@ -1,6 +1,4 @@
-// Output 1 of L<i> mentions output 2 of the same instance, and output 2
-// mentions output 1: the outputs of an instance of a recursive rule are
-// ordered too, and output 2 may not mention the earlier output 1.
+// Outputs 1 and 2 of the same instance of a recursive rule encrypt each other.
 locality alice
 kdf_scope G {
     name k0 : kdfkey @ alice
