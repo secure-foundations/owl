@@ -332,7 +332,7 @@ kdf_scope WG_KDF {
     // -----------------------------------------------------------------
     // Rules L7 / L7_corr_resp: Derive transport keys from C7
     // -----------------------------------------------------------------
-    kdf L7<i,j@n_eph,n_pk,m>(ikm) : KDF<L6<i,j@n_eph,n_pk,m>(ikm);kdfkey||nonce||enckey;0>, 0x, 0x ->
+    kdf L7<i,j@n_eph,n_pk,m>(ikm) where (ikm == 0x0000000000000000000000000000000000000000000000000000000000000000 \/ ikm == get(psk<@n_pk,m>)) : KDF<L6<i,j@n_eph,n_pk,m>(ikm);kdfkey||nonce||enckey;0>, 0x, 0x ->
         strict transp_key_init_send<i@n_eph,n_pk,m> ||
         strict transp_key_resp_send<j@n_eph,n_pk,m>
 
