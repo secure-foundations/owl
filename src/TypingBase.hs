@@ -1124,8 +1124,7 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
           return ot 
       (AEGetEncPK ne) -> do
           case ne^.val of
-            NameConst ([], []) _ _ -> return ()
-            NameConst _ _ _ -> typeError $ "Cannot call get_encpk on indexed name"
+            NameConst _ _ _ -> return ()
             _ -> typeError $ "Cannot call get_encpk on PRF name" 
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of
@@ -1136,8 +1135,7 @@ inferAExpr = withMemoize memoInferAExpr $ \ae -> withSpan (ae^.spanOf) $ pushRou
                     _ -> typeError $ show $ owlpretty "Expected encryption sk: " <> owlpretty ne
       (AEGetVK ne) -> do
           case ne^.val of
-            NameConst ([], []) _ _ -> return ()
-            NameConst _ _ _ -> typeError $ "Cannot call get_vk on indexed name"
+            NameConst _ _ _ -> return ()
             _ -> typeError $ "Cannot call get_vk on PRF name"
           ntLclsOpt <- getNameInfo ne
           case ntLclsOpt of

@@ -513,9 +513,10 @@ concretifyExpr e = do
                 let k'' = exprFromLets' k'
                 return $ noLets $ exprFromLets c1Lets $ Typed (_tty k'') $ CLet c1 oanf $ bind (castName x) k''
       ELetGhost _ s xk -> do
-        -- erase explicit ghost lets
-        (_,k) <- unbind xk
-        concretifyExpr k
+          (x, k) <- unbind xk
+          k' <- withVars [(castName x, FGhost)] $ concretifyExpr k
+          let k'' = exprFromLets' k'
+          return $ noLets $ Typed (_tty k'') $ CLet (Typed FGhost $ CRet ghostUnit) Nothing $ bind (castName x) k''
       EBlock e b -> do
           (c, clets) <- concretifyExpr e
           return $ noLets $ exprFromLets clets $ Typed (_tty c) $ CBlock c

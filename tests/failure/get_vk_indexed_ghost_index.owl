@@ -1,0 +1,13 @@
+// get_vk can't be called on a name at a ghost index outside ghost code
+locality alice : 1
+locality bob
+
+name m<@n> : nonce @ alice<n>
+name skA<@n> : sigkey Name(m<@n>) @ alice<n>
+
+def bob_recv() @ bob : Unit =
+    input h in
+    pcase (exists n:idx. h == vk(get(skA<@n>))) in
+    choose_idx n | h == vk(get(skA<@n>)) in
+    let vkA = get_vk(skA<@n>) in
+    ()
