@@ -1,0 +1,51 @@
+/*
+    Demo 2: like demo 1, plus an authentication guarantee.
+
+        A -> B : {k_data}_psk
+        B -> A : {x}_k_data
+        A      : retrieve x
+
+    We now refine the plaintext types with `happened` events. A key's name
+    type records not only *what* it encrypts but also *who* encrypted it:
+
+      - Whatever is encrypted under psk was sent by alice_main.
+      - Whatever is encrypted under k_data was sent by bob_main.
+
+    So when decryption succeeds (and the key is secret), the receiver knows
+    the other party really ran.
+*/
+
+locality alice
+locality bob
+
+// Forward declarations, so the name types below can mention the defs.
+def alice_main @ alice
+def bob_main   @ bob
+
+name x      : nonce @ bob
+name k_data : enckey (z:Name(x){happened(bob_main())})        @ alice
+name psk    : enckey (z:Name(k_data){happened(alice_main())}) @ alice, bob
+
+// Alice's guarantee: if she gets Some(x), then Bob ran.
+def alice_main () @ alice :
+    if sec(k_data)
+    then Option(z:Name(x){happened(bob_main())})
+    else Data<adv>
+=
+    let c = aenc(get(psk), get(k_data)) in
+    output c;
+    input i in
+    corr_case k_data in
+    adec(get(k_data), i)
+
+// Bob's guarantee: if he returns true and psk is secret, then Alice ran.
+def bob_main () @ bob : (b:Bool<adv>{(b /\ sec(psk)) ==> happened(alice_main())}) =
+    input i in
+    corr_case psk in
+    case adec(get(psk), i) {
+     | Some k =>
+        let c = aenc(k, get(x)) in
+        output c;
+        true
+     | None => false
+    }

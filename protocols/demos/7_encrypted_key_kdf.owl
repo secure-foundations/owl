@@ -1,0 +1,48 @@
+/*
+    Demo 7: derive the data key instead of sending it.
+
+    Alice and Bob share a KDF key psk. Both are given the same public
+    session info `sid` (e.g. a session ID or a transcript). Each derives
+
+        k_data = KDF(psk, 0x, sid)
+
+    on their own, so k_data never goes over the network.
+
+        B -> A : {x}_k_data
+        A      : retrieve x
+
+    New ideas:
+      - A `kdf_scope` lists the KDF's secret keys and its *rules*. Each rule
+        names one use of the KDF and gives the type of its output.
+      - A rule may take parameters: L(sid) is one rule for every sid, whose
+        output is the derived name KDF<L(sid); enckey; 0>.
+      - Calling the KDF: kdf<L(sid); enckey; 0>(salt, ikm, info). The hint
+        says which rule we mean, the kind of the output, and which output.
+*/
+
+locality alice
+locality bob
+
+name x : nonce @ bob
+
+kdf_scope G {
+    name psk : kdfkey @ alice, bob
+
+    //      salt, ikm, info -> output type
+    kdf L(sid) : psk, 0x, sid -> strict enckey Name(x)
+}
+
+// If psk leaks, so do the derived keys, and with them x.
+corr [psk] ==> [x]
+
+def alice_main (sid : Data<adv>) @ alice : if sec(psk) then Option(Name(x)) else Data<adv> =
+    corr_case psk in
+    let k_data = kdf<L(sid); enckey; 0>(get(psk), 0x, sid) in
+    input i in
+    adec(k_data, i)
+
+def bob_main (sid : Data<adv>) @ bob : Unit =
+    corr_case psk in
+    let k_data = kdf<L(sid); enckey; 0>(get(psk), 0x, sid) in
+    let c = aenc(k_data, get(x)) in
+    output c

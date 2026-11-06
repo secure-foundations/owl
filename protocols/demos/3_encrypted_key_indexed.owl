@@ -1,0 +1,46 @@
+/*
+    Demo 3: one data key, many pieces of data.
+
+    Alice runs once; Bob runs many sessions, indexed by i.
+
+        A -> B   : {k_data}_psk
+        B<i> -> A : {x<i>}_k_data      (for every session i)
+        A        : retrieve some x<i>
+
+    New ideas:
+      - Indexed names and defs: x<i>, bob_main<i>.
+      - Existential types: k_data may encrypt x<i> for *any* i, so its
+        plaintext type is `exists i. ...`. Bob packs his index with
+        pack<i>(...); Alice receives a value of the existential type.
+*/
+
+locality alice
+locality bob
+
+def bob_main<i> @ bob
+
+name x<i> : nonce @ bob
+
+// k_data encrypts x<i> for some session i, and that session of Bob sent it.
+name k_data : enckey (exists i. z:Name(x<i>){happened(bob_main<i>())}) @ alice
+name psk    : enckey Name(k_data) @ alice, bob
+
+def alice_main () @ alice : if sec(k_data) then Option(exists i. z:Name(x<i>){happened(bob_main<i>())}) else Data<adv> =
+    let c = aenc(get(psk), get(k_data)) in
+    output c;
+    input i in
+    corr_case k_data in
+    adec(get(k_data), i)
+
+def bob_main<i> () @ bob : Unit =
+    input inp in
+    corr_case psk in
+    case adec(get(psk), inp) {
+     | Some k =>
+        // Give the message its refined type, then hide the index i.
+        let m : z:Name(x<i>){happened(bob_main<i>())} = get(x<i>) in
+        let m = pack<i>(m) in
+        let c = aenc(k, m) in
+        output c
+     | None => ()
+    }

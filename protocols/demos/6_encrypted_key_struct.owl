@@ -1,0 +1,55 @@
+/*
+    Demo 6: like demo 1, but Bob sends a struct with two fields.
+
+        A -> B : {k_data}_psk
+        B -> A : {msg(x, y)}_k_data
+        A      : retrieve y
+
+    New ideas:
+      - `struct` declares a message format; each field has its own type.
+      - Constructing a struct: msg(e1, e2).
+      - Taking one apart: parse e as msg(a, b) in ... otherwise ...
+        (the `otherwise` branch runs when e is not well formed).
+*/
+
+locality alice
+locality bob
+
+name x : nonce @ bob
+name y : nonce @ bob
+
+struct msg {
+    _x : Name(x),
+    _y : Name(y)
+}
+
+name k_data : enckey msg          @ alice
+name psk    : enckey Name(k_data) @ alice, bob
+
+enum Result {
+    | Ok Name(y)
+    | Err
+}
+
+def alice_main () @ alice : if sec(k_data) then Result else Data<adv> =
+    let c = aenc(get(psk), get(k_data)) in
+    output c;
+    input i in
+    corr_case k_data in
+    case adec(get(k_data), i) {
+     | Some m =>
+        // m : msg, so a : Name(x) and b : Name(y).
+        parse m as msg(a, b) in Ok(b)
+        otherwise Err()
+     | None => Err()
+    }
+
+def bob_main () @ bob : Unit =
+    input i in
+    corr_case psk in
+    case adec(get(psk), i) {
+     | Some k =>
+        let c = aenc(k, msg(get(x), get(y))) in
+        output c
+     | None => ()
+    }

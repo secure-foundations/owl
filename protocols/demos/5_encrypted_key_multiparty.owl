@@ -1,0 +1,43 @@
+/*
+    Demo 5: many clients, one server (an N-party protocol).
+
+    There are many Alices, alice<n> for each party ID n. Each one shares its
+    own PSK psk<@n> with Bob, who acts as a server talking to every Alice.
+
+        alice<n> -> B : {k_data<@n>}_psk<@n>
+        B -> alice<n> : {x<@n>}_k_data<@n>
+        alice<n>      : retrieve x<@n>
+
+    New ideas:
+      - `locality alice : 1` declares a locality with one *party* index.
+      - Party indices come after the `@` in index lists: name<@n>, def<@n>.
+      - Each Alice's keys are separate names, so corrupting psk<@n> for one
+        party says nothing about any other party's keys or data.
+*/
+
+locality alice : 1
+locality bob
+
+name x<@n>      : nonce                   @ bob
+name k_data<@n> : enckey Name(x<@n>)      @ alice<n>
+name psk<@n>    : enckey Name(k_data<@n>) @ alice<n>, bob
+
+// Party n of alice.
+def alice_main<@n> () @ alice<n> : if sec(k_data<@n>) then Option(Name(x<@n>)) else Data<adv> =
+    let c = aenc(get(psk<@n>), get(k_data<@n>)) in
+    output c;
+    input i in
+    corr_case k_data<@n> in
+    adec(get(k_data<@n>), i)
+
+// Bob's handler for party n. (A real server would first read n from the
+// message, e.g. a client ID; here the handler is chosen by the index.)
+def bob_main<@n> () @ bob : Unit =
+    input i in
+    corr_case psk<@n> in
+    case adec(get(psk<@n>), i) {
+     | Some k =>
+        let c = aenc(k, get(x<@n>)) in
+        output c
+     | None => ()
+    }

@@ -1,0 +1,62 @@
+/*
+    Demo 4: one PSK, many data keys; each data key encrypts one x.
+
+    Alice runs many sessions i. Session i has a fresh data key k_data<i>,
+    which only ever encrypts the matching secret x<i>.
+
+        A<i> -> B : {k_data<i>}_psk
+        B -> A<i> : {x<i>}_k_data<i>
+        A<i>      : retrieve x<i>
+
+    Since the network is adversarial, Bob can't know in advance which
+    session a ciphertext came from, so psk's plaintext type is an
+    existential: "a data key for *some* session i". Unpacking it gives Bob
+    the index i, but only as a ghost index: it exists in the proof, not at
+    runtime, so Bob can't just write get(x<i>).
+
+    Instead, Bob looks the data key up in his database (lookup_x) to find
+    the matching x at runtime. The lookup's type says the x it returns
+    belongs to the session whose data key was looked up, so Owl can
+    conclude that Bob uses the right x for the key.
+*/
+
+locality alice
+locality bob
+
+name x<i>      : nonce @ bob
+name k_data<i> : enckey Name(x<i>) @ alice
+name psk       : enckey (exists i. Name(k_data<i>)) @ alice, bob
+
+// Bob's database of secrets, keyed by data key. It has no body: like an
+// external function, its behavior is assumed from its type. The argument
+// is either adversary data or one of the data keys, so its label is
+// adv joined with [k_data<i>] for every i.
+def lookup_x(k : Data<adv /\ (/\_i [k_data<i>])>) @ bob : Option (exists j. (z:Name(x<j>){k == get(k_data<j>)}))
+
+def alice_main<i> () @ alice : if sec(k_data<i>) then Option(Name(x<i>)) else Data<adv> =
+    let m = pack<i>(get(k_data<i>)) in
+    let c = aenc(get(psk), m) in
+    output c;
+    input inp in
+    corr_case k_data<i> in
+    adec(get(k_data<i>), inp)
+
+def bob_main () @ bob : Unit =
+    input inp in
+    corr_case psk in
+    case adec(get(psk), inp) {
+     | Some packed =>
+        // packed : exists i. Name(k_data<i>)   (when psk is secret)
+        unpack i, k = packed in
+        let ox = call lookup_x(k) in
+        case ox {
+         | None => ()
+         | Some px =>
+            // xv : Name(x<j>) with k == get(k_data<j>). Since also
+            // k == get(k_data<i>), Owl concludes j = i.
+            unpack j, xv = px in
+            let c = aenc(k, xv) in
+            output c
+        }
+     | None => ()
+    }

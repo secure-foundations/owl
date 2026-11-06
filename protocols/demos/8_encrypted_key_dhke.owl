@@ -1,0 +1,128 @@
+/*
+    Demo 8: no pre-shared key. Signed Diffie-Hellman instead.
+
+    Alice and Bob each have a signing key and know the other's verification
+    key. They each pick a DH secret (X, Y), sign their public share, and
+    derive the data key from the DH shared secret:
+
+        A -> B : g^X, sign_A(g^X)
+        B -> A : g^Y, sign_B(g^Y)
+        k_data = KDF(0x, g^XY, 0x)
+        B -> A : {x}_k_data
+        A      : retrieve x
+
+    New ideas:
+      - DH names, and `odh` rules: a KDF rule whose ikm is a DH secret.
+      - Signatures: sigkey t can only sign values of type t. Here each
+        party's key signs only its own honest DH share, so a valid signature
+        tells the receiver the share is honest.
+      - is_group_elem: received group elements must be checked.
+      - Conditional types: a received share gets the type "the honest
+        share if it equals it, else adversary data", and the rest of the
+        code (dh_combine, kdf, adec) follows those two cases.
+      - Alice's return type combines secrecy and authentication (as in
+        demo 2), under assumptions about which keys are secret.
+*/
+
+locality alice
+locality bob
+
+def alice_main @ alice
+def bob_main   @ bob
+
+name x : nonce @ bob
+
+kdf_scope G {
+    name X : DH @ alice
+    name Y : DH @ bob
+    odh L : 0x, dh_ss(X, Y), 0x -> strict enckey (z:Name(x){happened(bob_main())})
+}
+
+name skA : sigkey dhpk(X) @ alice
+name skB : sigkey dhpk(Y) @ bob
+
+struct share_msg {
+    _share : Data<adv> ||group||,
+    _sig   : Data<adv> ||signature||
+}
+
+// If skA leaks, the adversary can sign its own share and pose as Alice, and
+// Bob will encrypt x under a key the adversary knows. So x may leak.
+corr [skA] ==> [x]
+
+enum Result {
+    | Ok (z:Name(x){happened(bob_main())})
+    | Err
+}
+
+// Alice's guarantee: if her DH secret X, Bob's DH secret Y, and Bob's
+// signing key skB are all secret, then any x she accepts is Bob's secret x,
+// and Bob really ran.
+//
+// Otherwise she can promise less. With skB leaked but X and Y secret, she
+// may still get Bob's real x (if the adversary forwarded Bob's real share),
+// so the fallback type is Data<adv /\ [x]>: "at most as secret as x".
+def alice_main () @ alice :
+    if sec(X) /\ sec(Y) /\ sec(skB)
+    then Result
+    else Data<adv /\ [x]>
+=
+    let vkB = get_vk(skB) in
+    let gx = dhpk(get(X)) in
+    let sg = sign(get(skA), gx) in
+    let m = share_msg(gx, sg) in
+    output m;
+    input inp in
+    parse inp as share_msg(gy, sig) in {
+        corr_case skB in
+        case vrfy(vkB, gy, sig) {
+         | None => Err()
+         | Some gy =>
+            // What the signature buys us: if skB is secret, gy is Bob's
+            // honest share.
+            assert (sec(skB) ==> gy == dhpk(get(Y)));
+            if !is_group_elem(gy) then Err() else {
+                // Give gy a conditional type: Bob's honest share if it is
+                // equal to it, else adversary data. (If skB is secret, the
+                // signature check tells Owl that the first case holds.)
+                let gy : if gy == dhpk(get(Y)) then dhpk(Y) else z:Data<adv>{z == gy} = gy in
+                let ss = dh_combine<name Y, name X>(gy, get(X)) in
+                corr_case X in
+                corr_case Y in
+                let k_data = kdf<L; enckey; 0>(0x, ss, 0x) in
+                input c in
+                // k_data's type is conditional too, so we tell `case` which
+                // option type to read the result as; `otherwise` handles a
+                // result that isn't a well-formed option.
+                case adec(k_data, c) as Option(z:Name(x){happened(bob_main())}) {
+                 | Some j => Ok(j)
+                 | None   => Err()
+                 otherwise => Err()
+                }
+            }
+        }
+    } otherwise Err()
+
+def bob_main () @ bob : Unit =
+    let vkA = get_vk(skA) in
+    input inp in
+    parse inp as share_msg(gx, sig) in {
+        corr_case skA in
+        case vrfy(vkA, gx, sig) {
+         | None => ()
+         | Some gx =>
+            if !is_group_elem(gx) then () else {
+                let gy = dhpk(get(Y)) in
+                let sg = sign(get(skB), gy) in
+                let m = share_msg(gy, sg) in
+                output m;
+                let gx : if gx == dhpk(get(X)) then dhpk(X) else z:Data<adv>{z == gx} = gx in
+                let ss = dh_combine<name X, name Y>(gx, get(Y)) in
+                corr_case X in
+                corr_case Y in
+                let k_data = kdf<L; enckey; 0>(0x, ss, 0x) in
+                let c = aenc(k_data, get(x)) in
+                output c
+            }
+        }
+    } otherwise ()

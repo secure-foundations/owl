@@ -1,0 +1,42 @@
+/*
+    Demo 1: the simplest encrypted-key protocol.
+
+    Alice and Bob already share a key psk.
+
+        A -> B : {k_data}_psk
+        B -> A : {x}_k_data
+        A      : retrieve x
+
+    Secrecy only: if psk and k_data are secret, then the x that Alice
+    gets back is Bob's secret nonce x.
+*/
+
+locality alice
+locality bob
+
+// Name types say what each key may encrypt. This forms a chain:
+//   psk encrypts k_data, and k_data encrypts x.
+name x      : nonce            @ bob
+name k_data : enckey Name(x)   @ alice
+name psk    : enckey Name(k_data) @ alice, bob
+
+// If k_data is corrupt, the adversary can forge ciphertexts under it, so
+// Alice can only promise Data<adv>.
+def alice_main () @ alice : if sec(k_data) then Option(Name(x)) else Data<adv> =
+    let c = aenc(get(psk), get(k_data)) in
+    output c;
+    input i in
+    corr_case k_data in
+    adec(get(k_data), i)
+
+def bob_main () @ bob : Unit =
+    input i in
+    corr_case psk in
+    case adec(get(psk), i) {
+     | Some k =>
+        // When psk is secret, k has type Name(k_data), so it is safe
+        // to encrypt x under it.
+        let c = aenc(k, get(x)) in
+        output c
+     | None => ()
+    }
