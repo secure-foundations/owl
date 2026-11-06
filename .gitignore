@@ -9,3 +9,5 @@ main
 .owl-log/
 .z3log/
 *.smtcache
+
+.cache/

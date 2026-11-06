@@ -371,12 +371,17 @@ typeError x = do
     th <- view typeErrorHook
     th x
 
+-- The SMT cache for `dir/foo.owl` is stored at `dir/.cache/foo.owl.smtcache`.
+smtCacheFile :: FilePath -> FilePath
+smtCacheFile filepath = takeDirectory filepath </> ".cache" </> (takeFileName filepath ++ ".smtcache")
+
 writeSMTCache :: Check' senv ()
 writeSMTCache = do
     cacheref <- view smtCache
     cache <- liftIO $ readIORef cacheref
     filepath <- view $ envFlags . fFilePath
-    let hintsFile = filepath ++ ".smtcache"
+    let hintsFile = smtCacheFile filepath
+    liftIO $ createDirectoryIfMissing True $ takeDirectory hintsFile
     -- Failed queries are not persisted to disk since they include `unknown` results,
     -- which might be dependent on the specific run conditions.
     liftIO $ BS.writeFile hintsFile $ encode $ M.filter id cache
@@ -404,7 +409,7 @@ moduleFingerprint = do
 loadSMTCache :: Check' senv ()
 loadSMTCache = do
     filepath <- view $ envFlags . fFilePath
-    let hintsFile = filepath ++ ".smtcache"
+    let hintsFile = smtCacheFile filepath
     b <- liftIO $ doesFileExist hintsFile
     when b $ do
         clean <- view $ envFlags . fCleanCache
